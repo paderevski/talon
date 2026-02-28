@@ -1,0 +1,100 @@
+export const repoDirectory = [
+  { type: "dir", name: "data/", modified: "2h ago" },
+  { type: "dir", name: "models/", modified: "1d ago" },
+  { type: "dir", name: "utils/", modified: "3d ago" },
+  { type: "file", name: "train.py", size: "4.2 KB", modified: "2h ago" },
+  { type: "file", name: "evaluate.py", size: "1.8 KB", modified: "1d ago" },
+  { type: "file", name: "requirements.txt", size: "312 B", modified: "5d ago" },
+  { type: "file", name: "config.yaml", size: "890 B", modified: "2d ago" },
+  { type: "file", name: "README.md", size: "2.1 KB", modified: "5d ago" },
+  { type: "file", name: ".gitignore", size: "148 B", modified: "2w ago" },
+];
+
+export const jobs = [
+  {
+    id: "job-1",
+    name: "finetune-bert-v4",
+    repo: "jane_smith/bert-nlp",
+    status: "running",
+    gpu: "T4 · 14.2 GB",
+    submitted: "11:03 PM",
+    duration: "1h 12m",
+  },
+  {
+    id: "job-2",
+    name: "yolo-detect-train",
+    repo: "tom_chen/yolo-v8",
+    status: "running",
+    gpu: "T4 · 12.8 GB",
+    submitted: "10:47 PM",
+    duration: "1h 28m",
+  },
+  {
+    id: "job-3",
+    name: "gpt2-essay-gen",
+    repo: "jane_smith/gpt2-finetune",
+    status: "queued",
+    gpu: "—",
+    submitted: "11:15 PM",
+    duration: "—",
+  },
+  {
+    id: "job-4",
+    name: "resnet-transfer-v2",
+    repo: "ali_hassan/resnet-50",
+    status: "completed",
+    gpu: "T4 · 9.3 GB",
+    submitted: "8:12 PM",
+    duration: "47m 18s",
+  },
+  {
+    id: "job-5",
+    name: "sentiment-lstm",
+    repo: "maria_garcia/lstm-nlp",
+    status: "failed",
+    gpu: "T4 · 6.1 GB",
+    submitted: "7:30 PM",
+    duration: "12m 04s",
+  },
+];
+
+export const results = [
+  {
+    id: "result-1",
+    name: "resnet-transfer-v2",
+    status: "completed",
+    repo: "ali_hassan/resnet-50",
+    duration: "47m 18s",
+    output: "~/resnet-transfer-v2/",
+    files: [
+      { name: "best_model.pt", size: "87.4 MB" },
+      { name: "training_log.csv", size: "24 KB" },
+      { name: "confusion_matrix.png", size: "156 KB" },
+    ],
+  },
+  {
+    id: "result-2",
+    name: "wav2vec-asr",
+    status: "completed",
+    repo: "jane_smith/speech-asr",
+    duration: "2h 14m",
+    output: "s3://launchpad-out/wav2vec/",
+    files: [
+      { name: "model_final.pt", size: "1.2 GB" },
+      { name: "checkpoints/", size: "3.6 GB" },
+      { name: "wer_results.json", size: "4.1 KB" },
+    ],
+  },
+  {
+    id: "result-3",
+    name: "sentiment-lstm",
+    status: "failed",
+    repo: "maria_garcia/lstm-nlp",
+    duration: "12m 04s",
+    error: "CUDA OOM at epoch 3",
+    files: [
+      { name: "stderr.log", size: "6.2 KB" },
+      { name: "checkpoint_ep2.pt", size: "45 MB" },
+    ],
+  },
+];

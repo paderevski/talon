@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LaunchPad — GPU Job Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0c0e14;
+            --bg-secondary: #12151e;
+            --bg-card: #161a26;
+            --bg-card-hover: #1a1f2e;
+            --bg-input: #1a1f2e;
+            --bg-elevated: #1e2333;
+            --border: #232938;
+            --border-light: #2a3148;
+            --text-primary: #e8eaf0;
+            --text-secondary: #8b92a8;
+            --text-muted: #555d75;
+            --accent-blue: #3b82f6;
+            --accent-blue-dim: #2563eb;
+            --accent-blue-glow: rgba(59, 130, 246, 0.08);
+            --accent-green: #22c55e;
+            --accent-green-dim: rgba(34, 197, 94, 0.12);
+            --accent-amber: #f59e0b;
+            --accent-amber-dim: rgba(245, 158, 11, 0.12);
+            --accent-red: #ef4444;
+            --accent-red-dim: rgba(239, 68, 68, 0.12);
+            --accent-purple: #a78bfa;
+            --accent-purple-dim: rgba(167, 139, 250, 0.12);
+            --radius: 8px;
+            --radius-lg: 12px;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(59, 130, 246, 0.025) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(59, 130, 246, 0.025) 1px, transparent 1px);
+            background-size: 40px 40px;
+            pointer-events: none;
+        }
+        .app { position: relative; z-index: 1; }
+
+        /* ── Top Bar ── */
+        .topbar {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 28px; height: 52px;
+            background: var(--bg-secondary); border-bottom: 1px solid var(--border);
+            position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+        }
+        .topbar-brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 16px; letter-spacing: -0.02em; }
+        .topbar-brand svg { color: var(--accent-blue); }
+        .topbar-brand span { background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .topbar-right { display: flex; align-items: center; gap: 16px; }
+        .server-pill { display: flex; align-items: center; gap: 7px; padding: 4px 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 20px; font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--text-secondary); }
+        .server-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent-green); box-shadow: 0 0 6px var(--accent-green); }
+        .user-pill { display: flex; align-items: center; gap: 8px; padding: 4px 12px 4px 4px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 20px; font-size: 13px; font-weight: 500; }
+        .user-avatar { width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple)); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: white; }
+
+        /* ── Layout ── */
+        .layout { display: block; min-height: 100vh; padding-top: 52px; }
+
+        /* ── Left Nav ── */
+        .leftnav {
+            position: fixed; top: 52px; left: 0; bottom: 0; width: 200px;
+            background: var(--bg-secondary); border-right: 1px solid var(--border);
+            padding: 16px 10px; overflow-y: auto;
+            display: flex; flex-direction: column; gap: 2px;
+        }
+        .nav-label { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); padding: 14px 10px 5px; }
+        .nav-item {
+            display: flex; align-items: center; gap: 9px;
+            padding: 8px 10px; border-radius: 6px;
+            font-size: 13px; font-weight: 500; color: var(--text-secondary);
+            cursor: pointer; transition: all 0.12s; text-decoration: none;
+        }
+        .nav-item:hover { background: var(--bg-card); color: var(--text-primary); }
+        .nav-item.active { background: var(--accent-blue-glow); color: var(--accent-blue); }
+        .nav-item svg { width: 16px; height: 16px; flex-shrink: 0; opacity: 0.7; }
+        .nav-item.active svg { opacity: 1; }
+        .nav-count { margin-left: auto; font-size: 11px; font-family: 'JetBrains Mono', monospace; color: var(--text-muted); }
+        .nav-item.active .nav-count { color: var(--accent-blue); }
+
+        /* ── Main Scroll Area ── */
+        .main { margin-left: 200px; padding: 28px 36px 60px; }
+
+        /* ── Panels ── */
+        .panel {
+            margin-bottom: 36px;
+            scroll-margin-top: 72px;
+        }
+        .panel-head {
+            display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border);
+        }
+        .panel-title { font-size: 17px; font-weight: 800; letter-spacing: -0.01em; display: flex; align-items: center; gap: 9px; }
+        .panel-title svg { width: 20px; height: 20px; color: var(--accent-blue); }
+        .panel-subtitle { font-size: 13px; color: var(--text-muted); font-weight: 400; margin-left: 4px; }
+
+        /* ── New Job Panel ── */
+        .new-job-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+        }
+        .new-job-grid .full { grid-column: 1 / -1; }
+        .form-group { display: flex; flex-direction: column; gap: 5px; }
+        .form-label { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+        .form-input, .form-select, .form-textarea {
+            width: 100%; padding: 10px 13px;
+            background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius);
+            color: var(--text-primary); font-size: 13.5px; font-family: 'JetBrains Mono', monospace;
+            outline: none; transition: border-color 0.15s;
+        }
+        .form-textarea { resize: vertical; min-height: 60px; }
+        .form-input:focus, .form-select:focus, .form-textarea:focus { border-color: var(--accent-blue); }
+        .form-select { cursor: pointer; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23555d75' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; padding-right: 32px; }
+        .form-hint { font-size: 11px; color: var(--text-muted); }
+        .btn { display: inline-flex; align-items: center; gap: 7px; padding: 9px 20px; border-radius: var(--radius); font-size: 13.5px; font-weight: 600; border: none; cursor: pointer; transition: all 0.15s; font-family: inherit; }
+        .btn-primary { background: var(--accent-blue); color: white; }
+        .btn-primary:hover { background: var(--accent-blue-dim); }
+        .btn-secondary { background: var(--bg-input); color: var(--text-secondary); border: 1px solid var(--border); }
+        .btn-secondary:hover { border-color: var(--text-muted); color: var(--text-primary); }
+        .btn svg { width: 15px; height: 15px; }
+        .form-actions { display: flex; gap: 10px; padding-top: 6px; }
+
+        /* ── Repo Browser Panel ── */
+        .repo-header {
+            display: flex; align-items: center; gap: 12px; margin-bottom: 14px;
+            padding: 12px 16px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg);
+        }
+        .repo-path {
+            font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--accent-blue); font-weight: 500;
+        }
+        .repo-branch {
+            padding: 3px 10px; background: var(--accent-purple-dim); color: var(--accent-purple);
+            border-radius: 12px; font-size: 11.5px; font-weight: 600; font-family: 'JetBrains Mono', monospace;
+        }
+        .repo-meta { margin-left: auto; font-size: 12px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+        .file-tree {
+            background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden;
+        }
+        .file-row {
+            display: flex; align-items: center; gap: 10px;
+            padding: 10px 18px; border-bottom: 1px solid var(--border);
+            font-size: 13.5px; transition: background 0.1s; cursor: pointer;
+        }
+        .file-row:last-child { border-bottom: none; }
+        .file-row:hover { background: var(--bg-card-hover); }
+        .file-icon { width: 16px; height: 16px; flex-shrink: 0; }
+        .file-icon.folder { color: var(--accent-amber); }
+        .file-icon.file { color: var(--text-muted); }
+        .file-icon.python { color: #3572A5; }
+        .file-icon.config { color: var(--accent-green); }
+        .file-name { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 500; }
+        .file-name.dir { color: var(--text-primary); }
+        .file-name.file { color: var(--text-secondary); }
+        .file-size { margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: var(--text-muted); }
+        .file-modified { font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: var(--text-muted); width: 100px; text-align: right; }
+
+        /* ── Job Status Table ── */
+        .table-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+        .table-bar { display: flex; align-items: center; gap: 8px; padding: 12px 18px; border-bottom: 1px solid var(--border); }
+        .filter-chip {
+            padding: 4px 12px; border-radius: 6px; font-size: 12px; font-weight: 600;
+            background: transparent; border: 1px solid var(--border); color: var(--text-secondary);
+            cursor: pointer; font-family: inherit; transition: all 0.15s;
+        }
+        .filter-chip:hover { border-color: var(--text-muted); color: var(--text-primary); }
+        .filter-chip.active { background: var(--accent-blue-glow); border-color: var(--accent-blue); color: var(--accent-blue); }
+        table { width: 100%; border-collapse: collapse; }
+        thead th { text-align: left; padding: 9px 18px; font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-muted); border-bottom: 1px solid var(--border); }
+        tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; }
+        tbody tr:last-child { border-bottom: none; }
+        tbody tr:hover { background: var(--bg-card-hover); }
+        tbody td { padding: 12px 18px; font-size: 13px; }
+        .job-name-cell { font-weight: 600; }
+        .repo-cell { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--accent-blue); }
+        .status-pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 20px; font-size: 11.5px; font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+        .status-pill.running { background: var(--accent-amber-dim); color: var(--accent-amber); }
+        .status-pill.queued { background: var(--accent-purple-dim); color: var(--accent-purple); }
+        .status-pill.completed { background: var(--accent-green-dim); color: var(--accent-green); }
+        .status-pill.failed { background: var(--accent-red-dim); color: var(--accent-red); }
+        .status-pill .sdot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+        .status-pill.running .sdot { animation: pulse 1.5s ease-in-out infinite; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+        .mono-sm { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-secondary); }
+        .act-btn { width: 28px; height: 28px; border-radius: 5px; border: 1px solid var(--border); background: transparent; color: var(--text-secondary); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: all 0.12s; margin-right: 4px; }
+        .act-btn:hover { border-color: var(--text-muted); color: var(--text-primary); background: var(--bg-input); }
+        .act-btn svg { width: 13px; height: 13px; }
+
+        /* ── Results Panel ── */
+        .results-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+        .result-card {
+            background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg);
+            padding: 18px 20px; transition: border-color 0.15s;
+        }
+        .result-card:hover { border-color: var(--border-light); }
+        .result-card-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 12px; }
+        .result-job-name { font-size: 14.5px; font-weight: 700; }
+        .result-status { font-size: 11px; }
+        .result-meta { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+        .result-meta-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+        .result-meta-label { color: var(--text-muted); width: 65px; flex-shrink: 0; }
+        .result-meta-value { color: var(--text-secondary); font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+        .result-files { border-top: 1px solid var(--border); padding-top: 12px; }
+        .result-files-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 8px; }
+        .result-file-row {
+            display: flex; align-items: center; gap: 8px; padding: 6px 10px; margin: 0 -10px;
+            border-radius: 6px; transition: background 0.1s; cursor: pointer;
+        }
+        .result-file-row:hover { background: var(--bg-card-hover); }
+        .result-file-icon { width: 14px; height: 14px; color: var(--text-muted); }
+        .result-file-name { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-secondary); }
+        .result-file-size { margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-muted); }
+        .result-file-dl { margin-left: 6px; color: var(--accent-blue); opacity: 0; transition: opacity 0.15s; }
+        .result-file-row:hover .result-file-dl { opacity: 1; }
+        .result-file-dl svg { width: 13px; height: 13px; }
+
+        /* ── Smooth scroll ── */
+        html { scroll-behavior: smooth; }
+    </style>
+</head>
+<body>
+<div class="app">
+    <!-- Top Bar -->
+    <nav class="topbar">
+        <div class="topbar-brand">
+            <span>Academies of Loudoun</span>
+        </div>
+        <div class="topbar-right">
+            <div class="server-pill"><div class="dot"></div>g4dn.xlarge · us-east-1</div>
+            <div class="user-pill"><div class="user-avatar">JS</div>jane_smith</div>
+        </div>
+    </nav>
+
+    <div class="layout">
+        <!-- Left Nav -->
+        <nav class="leftnav">
+            <div class="topbar-brand">
+                <img src="assets/talon-logo.png" alt="Talon Logo" width="100%" style="object-fit: contain;">
+                <span>Talon</span>
+            </div>
+            <div class="nav-label">Workspace</div>
+            <a href="#new-job" class="nav-item active" data-section="new-job">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+                New Job
+            </a>
+            <a href="#repo-browser" class="nav-item" data-section="repo-browser">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
+                Repo Browser
+            </a>
+            <a href="#job-status" class="nav-item" data-section="job-status">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                Job Status
+                <span class="nav-count">9</span>
+            </a>
+            <a href="#results" class="nav-item" data-section="results">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Results
+                <span class="nav-count">5</span>
+            </a>
+            <div class="nav-label">System</div>
+            <a href="#" class="nav-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+                GPU Monitor
+            </a>
+            <a href="#" class="nav-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+                Storage
+            </a>
+            <a href="#" class="nav-item">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                Settings
+            </a>
+        </nav>
+
+        <!-- Main Content -->
+        <div class="main">
+
+            <!-- ═══ NEW JOB ═══ -->
+            <section class="panel" id="new-job">
+                <div class="panel-head">
+                    <div class="panel-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+                        Submit New Job
+                    </div>
+                </div>
+                <div class="new-job-grid">
+                    <div class="form-group">
+                        <label class="form-label">Job Name</label>
+                        <input class="form-input" type="text" placeholder="e.g. finetune-bert-v3">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Gitea Repository</label>
+                        <input class="form-input" type="text" placeholder="username/repo-name">
+                        <span class="form-hint">Auto-populates file browser below</span>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Branch</label>
+                        <input class="form-input" type="text" value="main">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Entry Script</label>
+                        <input class="form-input" type="text" placeholder="train.py">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">GPU Memory Limit</label>
+                        <select class="form-select"><option>Auto (use available)</option><option>4 GB</option><option>8 GB</option><option>12 GB</option><option>16 GB (full T4)</option></select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Max Runtime</label>
+                        <select class="form-select"><option>1 hour</option><option>2 hours</option><option selected>4 hours</option><option>8 hours</option></select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">S3 Data Source</label>
+                        <input class="form-input" type="text" placeholder="s3://bucket-name/path/to/data">
+                        <span class="form-hint">Optional · Mounts as /data inside the job</span>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Output Destination</label>
+                        <select class="form-select"><option selected>Home Directory (~/$JOB_NAME/)</option><option>S3 (large outputs &gt; 1 GB)</option></select>
+                    </div>
+                    <div class="form-group full">
+                        <label class="form-label">Environment Variables</label>
+                        <textarea class="form-input form-textarea" placeholder="BATCH_SIZE=32&#10;LEARNING_RATE=0.001&#10;EPOCHS=50"></textarea>
+                        <span class="form-hint">One per line · KEY=VALUE format</span>
+                    </div>
+                    <div class="form-group full">
+                        <div class="form-actions">
+                            <button class="btn btn-primary">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                                Submit Job
+                            </button>
+                            <button class="btn btn-secondary">Save as Template</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ═══ REPO BROWSER ═══ -->
+            <section class="panel" id="repo-browser">
+                <div class="panel-head">
+                    <div class="panel-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
+                        Repo Browser
+                        <span class="panel-subtitle">— Preview source before submitting</span>
+                    </div>
+                </div>
+                <div class="repo-header">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue)" stroke-width="2"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
+                    <span class="repo-path">jane_smith/bert-nlp</span>
+                    <span class="repo-branch">main</span>
+                    <span class="repo-meta">Last commit: 2h ago · "fix learning rate scheduler"</span>
+                </div>
+                <div class="file-tree">
+                    <div class="file-row">
+                        <svg class="file-icon folder" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+                        <span class="file-name dir">data/</span>
+                        <span class="file-size"></span>
+                        <span class="file-modified">2h ago</span>
+                    </div>
+                    <div class="file-row">
+                        <svg class="file-icon folder" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+                        <span class="file-name dir">models/</span>
+                        <span class="file-size"></span>
+                        <span class="file-modified">1d ago</span>
+                    </div>
+                    <div class="file-row">
+                        <svg class="file-icon folder" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+                        <span class="file-name dir">utils/</span>
+                        <span class="file-size"></span>
+                        <span class="file-modified">3d ago</span>
+                    </div>
+                    <div class="file-row">
+                        <svg class="file-icon python" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        <span class="file-name file">train.py</span>
+                        <span class="file-size">4.2 KB</span>
+                        <span class="file-modified">2h ago</span>
+                    </div>
+                    <div class="file-row">
+                        <svg class="file-icon python" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        <span class="file-name file">evaluate.py</span>
+                        <span class="file-size">1.8 KB</span>
+                        <span class="file-modified">1d ago</span>
+                    </div>
+                    <div class="file-row">
+                        <svg class="file-icon config" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        <span class="file-name file">requirements.txt</span>
+                        <span class="file-size">312 B</span>
+                        <span class="file-modified">5d ago</span>
+                    </div>
+                    <div class="file-row">
+                        <svg class="file-icon config" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        <span class="file-name file">config.yaml</span>
+                        <span class="file-size">890 B</span>
+                        <span class="file-modified">2d ago</span>
+                    </div>
+                    <div class="file-row">
+                        <svg class="file-icon file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        <span class="file-name file">README.md</span>
+                        <span class="file-size">2.1 KB</span>
+                        <span class="file-modified">5d ago</span>
+                    </div>
+                    <div class="file-row">
+                        <svg class="file-icon file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                        <span class="file-name file">.gitignore</span>
+                        <span class="file-size">148 B</span>
+                        <span class="file-modified">2w ago</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ═══ JOB STATUS ═══ -->
+            <section class="panel" id="job-status">
+                <div class="panel-head">
+                    <div class="panel-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                        Job Status
+                    </div>
+                </div>
+                <div class="table-card">
+                    <div class="table-bar">
+                        <button class="filter-chip active">All</button>
+                        <button class="filter-chip">Running</button>
+                        <button class="filter-chip">Queued</button>
+                        <button class="filter-chip">Completed</button>
+                        <button class="filter-chip">Failed</button>
+                    </div>
+                    <table>
+                        <thead><tr><th>Job</th><th>Repo</th><th>Status</th><th>GPU</th><th>Submitted</th><th>Duration</th><th></th></tr></thead>
+                        <tbody>
+                            <tr>
+                                <td class="job-name-cell">finetune-bert-v3</td>
+                                <td class="repo-cell">jane_smith/bert-nlp</td>
+                                <td><span class="status-pill running"><span class="sdot"></span>Running</span></td>
+                                <td class="mono-sm">T4 · 14.2 GB</td>
+                                <td class="mono-sm">11:03 PM</td>
+                                <td class="mono-sm">1h 12m</td>
+                                <td>
+                                    <button class="act-btn" title="Logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></button>
+                                    <button class="act-btn" title="Cancel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="job-name-cell">yolo-detect-train</td>
+                                <td class="repo-cell">tom_chen/yolo-v8</td>
+                                <td><span class="status-pill running"><span class="sdot"></span>Running</span></td>
+                                <td class="mono-sm">T4 · 12.8 GB</td>
+                                <td class="mono-sm">10:47 PM</td>
+                                <td class="mono-sm">1h 28m</td>
+                                <td>
+                                    <button class="act-btn" title="Logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></button>
+                                    <button class="act-btn" title="Cancel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="job-name-cell">gpt2-essay-gen</td>
+                                <td class="repo-cell">jane_smith/gpt2-finetune</td>
+                                <td><span class="status-pill queued"><span class="sdot"></span>Queued</span></td>
+                                <td class="mono-sm">—</td>
+                                <td class="mono-sm">11:15 PM</td>
+                                <td class="mono-sm">—</td>
+                                <td><button class="act-btn" title="Cancel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button></td>
+                            </tr>
+                            <tr>
+                                <td class="job-name-cell">resnet-transfer-v2</td>
+                                <td class="repo-cell">ali_hassan/resnet-50</td>
+                                <td><span class="status-pill completed"><span class="sdot"></span>Completed</span></td>
+                                <td class="mono-sm">T4 · 9.3 GB</td>
+                                <td class="mono-sm">8:12 PM</td>
+                                <td class="mono-sm">47m 18s</td>
+                                <td>
+                                    <button class="act-btn" title="Logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></button>
+                                    <button class="act-btn" title="Download"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td class="job-name-cell">sentiment-lstm</td>
+                                <td class="repo-cell">maria_garcia/lstm-nlp</td>
+                                <td><span class="status-pill failed"><span class="sdot"></span>Failed</span></td>
+                                <td class="mono-sm">T4 · 6.1 GB</td>
+                                <td class="mono-sm">7:30 PM</td>
+                                <td class="mono-sm">12m 04s</td>
+                                <td>
+                                    <button class="act-btn" title="Logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></button>
+                                    <button class="act-btn" title="Retry"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- ═══ RESULTS ═══ -->
+            <section class="panel" id="results">
+                <div class="panel-head">
+                    <div class="panel-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Results
+                        <span class="panel-subtitle">— Download models, logs, and outputs</span>
+                    </div>
+                </div>
+                <div class="results-grid">
+                    <!-- Result Card 1 -->
+                    <div class="result-card">
+                        <div class="result-card-head">
+                            <div class="result-job-name">resnet-transfer-v2</div>
+                            <span class="status-pill completed" style="font-size:10.5px"><span class="sdot"></span>Completed</span>
+                        </div>
+                        <div class="result-meta">
+                            <div class="result-meta-row"><span class="result-meta-label">Repo</span><span class="result-meta-value">ali_hassan/resnet-50</span></div>
+                            <div class="result-meta-row"><span class="result-meta-label">Duration</span><span class="result-meta-value">47m 18s</span></div>
+                            <div class="result-meta-row"><span class="result-meta-label">Output</span><span class="result-meta-value">~/resnet-transfer-v2/</span></div>
+                        </div>
+                        <div class="result-files">
+                            <div class="result-files-title">Output Files</div>
+                            <div class="result-file-row">
+                                <svg class="result-file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                <span class="result-file-name">best_model.pt</span>
+                                <span class="result-file-size">87.4 MB</span>
+                                <span class="result-file-dl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+                            </div>
+                            <div class="result-file-row">
+                                <svg class="result-file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                <span class="result-file-name">training_log.csv</span>
+                                <span class="result-file-size">24 KB</span>
+                                <span class="result-file-dl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+                            </div>
+                            <div class="result-file-row">
+                                <svg class="result-file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                <span class="result-file-name">confusion_matrix.png</span>
+                                <span class="result-file-size">156 KB</span>
+                                <span class="result-file-dl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+                            </div>
+                            <div class="result-file-row">
+                                <svg class="result-file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                <span class="result-file-name">stdout.log</span>
+                                <span class="result-file-size">18 KB</span>
+                                <span class="result-file-dl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Result Card 2 -->
+                    <div class="result-card">
+                        <div class="result-card-head">
+                            <div class="result-job-name">wav2vec-asr</div>
+                            <span class="status-pill completed" style="font-size:10.5px"><span class="sdot"></span>Completed</span>
+                        </div>
+                        <div class="result-meta">
+                            <div class="result-meta-row"><span class="result-meta-label">Repo</span><span class="result-meta-value">jane_smith/speech-asr</span></div>
+                            <div class="result-meta-row"><span class="result-meta-label">Duration</span><span class="result-meta-value">2h 14m</span></div>
+                            <div class="result-meta-row"><span class="result-meta-label">Output</span><span class="result-meta-value">s3://launchpad-out/wav2vec/</span></div>
+                        </div>
+                        <div class="result-files">
+                            <div class="result-files-title">Output Files (S3)</div>
+                            <div class="result-file-row">
+                                <svg class="result-file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                <span class="result-file-name">model_final.pt</span>
+                                <span class="result-file-size">1.2 GB</span>
+                                <span class="result-file-dl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+                            </div>
+                            <div class="result-file-row">
+                                <svg class="result-file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                <span class="result-file-name">checkpoints/</span>
+                                <span class="result-file-size">3.6 GB</span>
+                                <span class="result-file-dl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+                            </div>
+                            <div class="result-file-row">
+                                <svg class="result-file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                <span class="result-file-name">wer_results.json</span>
+                                <span class="result-file-size">4.1 KB</span>
+                                <span class="result-file-dl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Result Card 3 (failed) -->
+                    <div class="result-card">
+                        <div class="result-card-head">
+                            <div class="result-job-name">sentiment-lstm</div>
+                            <span class="status-pill failed" style="font-size:10.5px"><span class="sdot"></span>Failed</span>
+                        </div>
+                        <div class="result-meta">
+                            <div class="result-meta-row"><span class="result-meta-label">Repo</span><span class="result-meta-value">maria_garcia/lstm-nlp</span></div>
+                            <div class="result-meta-row"><span class="result-meta-label">Duration</span><span class="result-meta-value">12m 04s</span></div>
+                            <div class="result-meta-row"><span class="result-meta-label">Error</span><span class="result-meta-value" style="color:var(--accent-red)">CUDA OOM at epoch 3</span></div>
+                        </div>
+                        <div class="result-files">
+                            <div class="result-files-title">Partial Output</div>
+                            <div class="result-file-row">
+                                <svg class="result-file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                <span class="result-file-name">stderr.log</span>
+                                <span class="result-file-size">6.2 KB</span>
+                                <span class="result-file-dl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+                            </div>
+                            <div class="result-file-row">
+                                <svg class="result-file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                <span class="result-file-name">checkpoint_ep2.pt</span>
+                                <span class="result-file-size">45 MB</span>
+                                <span class="result-file-dl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Result Card 4 -->
+                    <div class="result-card">
+                        <div class="result-card-head">
+                            <div class="result-job-name">bert-classification</div>
+                            <span class="status-pill completed" style="font-size:10.5px"><span class="sdot"></span>Completed</span>
+                        </div>
+                        <div class="result-meta">
+                            <div class="result-meta-row"><span class="result-meta-label">Repo</span><span class="result-meta-value">tom_chen/bert-cls</span></div>
+                            <div class="result-meta-row"><span class="result-meta-label">Duration</span><span class="result-meta-value">1h 33m</span></div>
+                            <div class="result-meta-row"><span class="result-meta-label">Output</span><span class="result-meta-value">~/bert-classification/</span></div>
+                        </div>
+                        <div class="result-files">
+                            <div class="result-files-title">Output Files</div>
+                            <div class="result-file-row">
+                                <svg class="result-file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                <span class="result-file-name">model.safetensors</span>
+                                <span class="result-file-size">438 MB</span>
+                                <span class="result-file-dl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+                            </div>
+                            <div class="result-file-row">
+                                <svg class="result-file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                <span class="result-file-name">metrics.json</span>
+                                <span class="result-file-size">1.8 KB</span>
+                                <span class="result-file-dl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+                            </div>
+                            <div class="result-file-row">
+                                <svg class="result-file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                                <span class="result-file-name">stdout.log</span>
+                                <span class="result-file-size">52 KB</span>
+                                <span class="result-file-dl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+        </div>
+    </div>
+</div>
+
+<script>
+// Highlight active nav on scroll
+const sections = document.querySelectorAll('.panel[id]');
+const navItems = document.querySelectorAll('.nav-item[data-section]');
+
+const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+        if (entry.isIntersecting) {
+            navItems.forEach(n => n.classList.remove('active'));
+            const active = document.querySelector(`.nav-item[data-section="${entry.target.id}"]`);
+            if (active) active.classList.add('active');
+        }
+    });
+}, { rootMargin: '-80px 0px -60% 0px', threshold: 0 });
+
+sections.forEach(s => observer.observe(s));
+
+// Filter chips
+document.querySelectorAll('.filter-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+        chip.closest('.table-bar').querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+    });
+});
+</script>
+</body>
+</html>
