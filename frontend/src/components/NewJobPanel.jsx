@@ -1,21 +1,31 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-const initialForm = {
-  name: "",
-  repo: "jane_smith/bert-nlp",
-  branch: "main",
-  entryScript: "train.py",
-  gpuMemory: "Auto (use available)",
-  maxRuntime: "4 hours",
-  s3DataSource: "",
-  outputDestination: "Home Directory (~/$JOB_NAME/)",
-  environmentVariables: ""
-};
+function makeInitialForm(defaultRepo, defaultBranch) {
+  return {
+    name: "",
+    repo: defaultRepo || "jane_smith/bert-nlp",
+    branch: defaultBranch || "main",
+    entryScript: "train.py",
+    gpuMemory: "Auto (use available)",
+    maxRuntime: "4 hours",
+    s3DataSource: "",
+    outputDestination: "Home Directory (~/$JOB_NAME/)",
+    environmentVariables: ""
+  };
+}
 
-export default function NewJobPanel({ onSubmit }) {
-  const [form, setForm] = useState(initialForm);
+export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch }) {
+  const [form, setForm] = useState(makeInitialForm(defaultRepo, defaultBranch));
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    setForm((prev) => ({
+      ...prev,
+      repo: defaultRepo || "jane_smith/bert-nlp",
+      branch: defaultBranch || "main",
+    }));
+  }, [defaultRepo, defaultBranch]);
 
   const update = (field) => (event) => {
     setForm((prev) => ({ ...prev, [field]: event.target.value }));
@@ -29,7 +39,11 @@ export default function NewJobPanel({ onSubmit }) {
     try {
       await onSubmit(form);
       setMessage("Job submitted to queue.");
-      setForm((prev) => ({ ...initialForm, repo: prev.repo }));
+      setForm((prev) => ({
+        ...makeInitialForm(defaultRepo, defaultBranch),
+        repo: prev.repo,
+        branch: prev.branch,
+      }));
     } catch {
       setMessage("Unable to submit job.");
     } finally {
@@ -49,8 +63,8 @@ export default function NewJobPanel({ onSubmit }) {
         </div>
         <div className="form-group">
           <label className="form-label">Gitea Repository</label>
-          <input className="form-input" value={form.repo} onChange={update("repo")} placeholder="username/repo-name" />
-          <span className="form-hint">Auto-populates file browser below</span>
+          <input className="form-input" value={form.repo} onChange={update("repo")} placeholder="https://github.com/owner/repo" />
+          <span className="form-hint">Accepts full GitHub URL or owner/repo. Auto-populates file browser below.</span>
         </div>
         <div className="form-group">
           <label className="form-label">Branch</label>

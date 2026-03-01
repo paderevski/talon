@@ -4,10 +4,13 @@ import NewJobPanel from "./components/NewJobPanel";
 import RepoBrowserPanel from "./components/RepoBrowserPanel";
 import JobStatusPanel from "./components/JobStatusPanel";
 import ResultsPanel from "./components/ResultsPanel";
+import GitHubCredentialsPanel from "./components/GitHubCredentialsPanel";
 import talonLogo from "../../assets/talon-logo.png";
+import { normalizeRepoInput } from "./utils/repo";
 
 const navSections = [
   { id: "new-job", label: "New Job" },
+  { id: "github-credentials", label: "GitHub Credentials" },
   { id: "repo-browser", label: "Repo Browser" },
   { id: "job-status", label: "Job Status" },
   { id: "results", label: "Results" }
@@ -15,6 +18,13 @@ const navSections = [
 
 const emptyRepo = { repository: "", branch: "main", lastCommit: "", items: [] };
 const authStorageKey = "talon.authUser";
+const githubSettingsStorageKey = "talon.githubSettings";
+
+const defaultGithubSettings = {
+  githubUsername: "",
+  defaultRepo: "jane_smith/bert-nlp",
+  defaultBranch: "main",
+};
 
 function getStoredAuthUser() {
   try {
@@ -34,14 +44,36 @@ function getStoredAuthUser() {
   }
 }
 
+function getStoredGithubSettings() {
+  try {
+    const rawValue = window.localStorage.getItem(githubSettingsStorageKey);
+    if (!rawValue) {
+      return defaultGithubSettings;
+    }
+
+    const parsed = JSON.parse(rawValue);
+    return {
+      githubUsername: String(parsed?.githubUsername ?? "").trim(),
+      defaultRepo: String(parsed?.defaultRepo ?? defaultGithubSettings.defaultRepo).trim() || defaultGithubSettings.defaultRepo,
+      defaultBranch: String(parsed?.defaultBranch ?? defaultGithubSettings.defaultBranch).trim() || defaultGithubSettings.defaultBranch,
+    };
+  } catch {
+    return defaultGithubSettings;
+  }
+}
+
 export default function App() {
   const [authUser, setAuthUser] = useState(getStoredAuthUser);
+  const [githubSettings, setGithubSettings] = useState(getStoredGithubSettings);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
-  const [repoPath, setRepoPath] = useState("jane_smith/bert-nlp");
+  const [repoPath, setRepoPath] = useState(
+    normalizeRepoInput(githubSettings.defaultRepo) || defaultGithubSettings.defaultRepo
+  );
+  const [repoBranch, setRepoBranch] = useState(githubSettings.defaultBranch || defaultGithubSettings.defaultBranch);
   const [repoData, setRepoData] = useState(emptyRepo);
   const [jobs, setJobs] = useState([]);
   const [results, setResults] = useState([]);
@@ -50,7 +82,7 @@ export default function App() {
 
   const load = async () => {
     const [repo, jobsData, resultData] = await Promise.all([
-      fetchRepoTree(repoPath),
+      fetchRepoTree(repoPath, repoBranch),
       fetchJobs(activeFilter),
       fetchResults()
     ]);
@@ -70,7 +102,7 @@ export default function App() {
       setJobs([]);
       setResults([]);
     });
-  }, [authUser, repoPath, activeFilter]);
+  }, [authUser, repoPath, repoBranch, activeFilter]);
 
   useEffect(() => {
     if (!isUserMenuOpen) {
@@ -104,9 +136,18 @@ export default function App() {
   };
 
   const onSubmitJob = async (form) => {
-    await submitJob(form);
-    if (form.repo && form.repo !== repoPath) {
-      setRepoPath(form.repo);
+    const normalizedRepo = normalizeRepoInput(form.repo);
+    const payload = {
+      ...form,
+      repo: normalizedRepo || form.repo,
+    };
+
+    await submitJob(payload);
+    if (normalizedRepo && normalizedRepo !== repoPath) {
+      setRepoPath(normalizedRepo);
+    }
+    if (form.branch) {
+      setRepoBranch(form.branch);
     }
     await refreshJobs();
   };
@@ -155,6 +196,13 @@ export default function App() {
     setJobs([]);
     setResults([]);
     setActiveFilter("all");
+  };
+
+  const onSaveGithubSettings = (nextSettings) => {
+    setGithubSettings(nextSettings);
+    window.localStorage.setItem(githubSettingsStorageKey, JSON.stringify(nextSettings));
+    setRepoPath(normalizeRepoInput(nextSettings.defaultRepo) || defaultGithubSettings.defaultRepo);
+    setRepoBranch(nextSettings.defaultBranch || defaultGithubSettings.defaultBranch);
   };
 
   if (!authUser) {
@@ -220,9 +268,9 @@ export default function App() {
               <button type="button" className="user-menu-item user-menu-item-disabled" role="menuitem" disabled>
                 Settings (coming soon)
               </button>
-              <button type="button" className="user-menu-item user-menu-item-disabled" role="menuitem" disabled>
-                GitHub Credentials (coming soon)
-              </button>
+              <a className="user-menu-item" href="#github-credentials" role="menuitem" onClick={() => setIsUserMenuOpen(false)}>
+                GitHub Credentials
+              </a>
               <button type="button" className="user-menu-item" role="menuitem" onClick={onLogout}>
                 Logout
               </button>
@@ -245,7 +293,12 @@ export default function App() {
         </nav>
 
         <main className="main">
-          <NewJobPanel onSubmit={onSubmitJob} />
+          <NewJobPanel
+            onSubmit={onSubmitJob}
+            defaultRepo={githubSettings.defaultRepo}
+            defaultBranch={githubSettings.defaultBranch}
+          />
+          <GitHubCredentialsPanel settings={githubSettings} onSave={onSaveGithubSettings} />
           <RepoBrowserPanel repoData={repoData} />
           <JobStatusPanel jobs={jobs} activeFilter={activeFilter} setActiveFilter={setActiveFilter} />
           <ResultsPanel results={results} />
