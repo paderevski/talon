@@ -41,11 +41,13 @@ export function fetchRepoTree(
   options = {},
 ) {
   const force = options.force === true;
+  const currentPath = String(options.path ?? "").trim();
   const parsedRepo = splitRepoPath(repoPath);
   if (!parsedRepo) {
     return Promise.resolve({
       repository: repoPath,
       branch,
+      currentPath,
       lastCommit: "unknown",
       items: [],
     });
@@ -57,6 +59,10 @@ export function fetchRepoTree(
 
   if (force) {
     query.set("force", "1");
+  }
+
+  if (currentPath) {
+    query.set("path", currentPath);
   }
 
   return getJson(

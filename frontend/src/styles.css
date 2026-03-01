@@ -312,7 +312,7 @@ body {
   padding: 12px;
   margin-bottom: 10px;
 }
-.repo-path { color: var(--accent-blue); font-family: "JetBrains Mono", monospace; }
+.repo-path { color: var(--accent-blue); font-family: "JetBrains Mono", monospace; font-size: 13px; }
 .repo-branch {
   background: var(--accent-purple-dim);
   color: var(--accent-purple);
@@ -331,7 +331,11 @@ body {
   padding: 8px 10px;
 }
 .repo-name-cell {
-  font-weight: 600;
+  font-weight: inherit;
+}
+.repo-name-cell-navigable {
+  cursor: pointer;
+  user-select: none;
 }
 .repo-commit-cell {
   color: var(--text-secondary);
@@ -358,7 +362,10 @@ body {
 .scroll-focus-region.scroll-focus-active {
   box-shadow: inset 0 0 0 1px var(--accent-blue-glow);
 }
-.repo-browser-scroll-region,
+.repo-browser-scroll-region {
+  height: 420px;
+  max-height: 420px;
+}
 .job-status-scroll-region {
   max-height: 420px;
 }

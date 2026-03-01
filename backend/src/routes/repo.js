@@ -58,6 +58,24 @@ function getGithubHeaders(token) {
   };
 }
 
+function normalizeRepoPath(value) {
+  const normalized = String(value ?? "")
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
+
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.split("/").includes("..")) {
+    return "";
+  }
+
+  return normalized;
+}
+
 function formatBytes(bytes) {
   if (typeof bytes !== "number" || Number.isNaN(bytes)) {
     return "";
@@ -162,7 +180,7 @@ async function mapContentItem(
   );
 
   return {
-    name: item.type === "dir" ? `📁 ${item.name}` : item.name,
+    name: item.type === "dir" ? `${item.name}/` : item.name,
     rawName: item.name,
     path: item.path || item.name,
     type: item.type,
@@ -187,6 +205,7 @@ function buildRepoFallbackPayload(owner, repo, branch, warning, cachedPayload) {
   return {
     repository: `${owner}/${repo}`,
     branch,
+    currentPath: "",
     lastCommit: "unknown",
     items: [],
     stale: true,
@@ -197,8 +216,9 @@ function buildRepoFallbackPayload(owner, repo, branch, warning, cachedPayload) {
 router.get("/:owner/:repo/tree", async (req, res) => {
   const { owner, repo } = req.params;
   const requestedBranch = String(req.query.branch ?? "").trim();
+  const requestedPath = normalizeRepoPath(req.query.path);
   const fallbackBranch = requestedBranch || "main";
-  const fallbackCacheKey = `${owner}/${repo}@${fallbackBranch}`;
+  const fallbackCacheKey = `${owner}/${repo}@${fallbackBranch}:${requestedPath}`;
   const forceRefresh = String(req.query.force ?? "").trim() === "1";
   const talonUser = getTalonUserFromRequest(req);
 
@@ -221,7 +241,7 @@ router.get("/:owner/:repo/tree", async (req, res) => {
     );
 
     const headSha = headCommit?.sha || "";
-    const cacheKey = `${owner}/${repo}@${branch}`;
+    const cacheKey = `${owner}/${repo}@${branch}:${requestedPath}`;
     const cachedTree = repoTreeCache.get(cacheKey);
 
     if (
@@ -233,8 +253,15 @@ router.get("/:owner/:repo/tree", async (req, res) => {
       return res.json(cachedTree.payload);
     }
 
+    const encodedPathSegment = requestedPath
+      ? `/${requestedPath
+          .split("/")
+          .map((segment) => encodeURIComponent(segment))
+          .join("/")}`
+      : "";
+
     const contentsResponse = await fetch(
-      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents?ref=${encodeURIComponent(branch)}`,
+      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents${encodedPathSegment}?ref=${encodeURIComponent(branch)}`,
       { headers: githubHeaders },
     );
 
@@ -263,6 +290,7 @@ router.get("/:owner/:repo/tree", async (req, res) => {
     const payload = {
       repository: `${owner}/${repo}`,
       branch,
+      currentPath: requestedPath,
       lastCommit: headCommit?.commit?.author?.date
         ? `Updated ${new Date(headCommit.commit.author.date).toLocaleString()}`
         : "unknown",

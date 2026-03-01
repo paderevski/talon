@@ -1,6 +1,114 @@
 {
   "items": [
     {
+      "name": "results-persistence-regression",
+      "repo": "paderevski/minimal-rnn",
+      "status": "completed",
+      "hidden": false,
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "cost": "$0.00",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1772406344704-vv3k0t",
+        "submittedAt": "2026-03-01T23:05:44.704Z"
+      },
+      "id": "job-65",
+      "resultSyncKey": "2026-03-01T23:05:45.128Z"
+    },
+    {
+      "name": "hybrid-regression",
+      "repo": "paderevski/minimal-rnn",
+      "status": "completed",
+      "hidden": false,
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "cost": "$0.00",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1772406343349-d2tsw3",
+        "submittedAt": "2026-03-01T23:05:43.349Z"
+      },
+      "id": "job-64",
+      "resultSyncKey": "2026-03-01T23:05:44.215Z"
+    },
+    {
+      "name": "hide-me-1772406343315",
+      "repo": "paderevski/minimal-rnn",
+      "status": "failed",
+      "hidden": false,
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "cost": "$0.00",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1772406343324-vc0ynu",
+        "submittedAt": "2026-03-01T23:05:43.324Z"
+      },
+      "id": "job-63",
+      "resultSyncKey": "2026-03-01T23:05:43.823Z"
+    },
+    {
+      "name": "results-persistence-regression",
+      "repo": "paderevski/minimal-rnn",
+      "status": "completed",
+      "hidden": false,
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "cost": "$0.00",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1772406087094-tpd23t",
+        "submittedAt": "2026-03-01T23:01:27.094Z"
+      },
+      "id": "job-62",
+      "resultSyncKey": "2026-03-01T23:01:27.490Z"
+    },
+    {
+      "name": "hybrid-regression",
+      "repo": "paderevski/minimal-rnn",
+      "status": "completed",
+      "hidden": false,
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "cost": "$0.00",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1772406085743-m2gm6s",
+        "submittedAt": "2026-03-01T23:01:25.743Z"
+      },
+      "id": "job-61",
+      "resultSyncKey": "2026-03-01T23:01:26.589Z"
+    },
+    {
+      "name": "hide-me-1772406085714",
+      "repo": "paderevski/minimal-rnn",
+      "status": "failed",
+      "hidden": false,
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "cost": "$0.00",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1772406085720-qxg3l0",
+        "submittedAt": "2026-03-01T23:01:25.720Z"
+      },
+      "id": "job-60",
+      "resultSyncKey": "2026-03-01T23:01:26.177Z"
+    },
+    {
       "name": "minimal-rnn-2",
       "repo": "paderevski/minimal-rnn",
       "status": "completed",
@@ -1171,5 +1279,5 @@
       "cost": "$0.00"
     }
   ],
-  "updatedAt": "2026-03-01T22:52:26.169Z"
+  "updatedAt": "2026-03-01T23:05:45.574Z"
 }

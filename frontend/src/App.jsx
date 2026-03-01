@@ -113,6 +113,7 @@ export default function App() {
     fallbackRepo
   );
   const [repoBranch, setRepoBranch] = useState(fallbackBranch);
+  const [repoDirectoryPath, setRepoDirectoryPath] = useState("");
   const [repoData, setRepoData] = useState(emptyRepo);
   const [repoError, setRepoError] = useState("");
   const [jobs, setJobs] = useState([]);
@@ -173,7 +174,7 @@ export default function App() {
 
   const load = async () => {
     const [repoResult, jobsResult, allJobsResult, resultsResult] = await Promise.allSettled([
-      fetchRepoTree(repoPath, repoBranch),
+      fetchRepoTree(repoPath, repoBranch, { path: repoDirectoryPath }),
       fetchJobs(activeFilter),
       fetchJobs("all"),
       fetchResults()
@@ -224,7 +225,7 @@ export default function App() {
     }
 
     load();
-  }, [authUser, repoPath, repoBranch, activeFilter]);
+  }, [authUser, repoPath, repoBranch, repoDirectoryPath, activeFilter]);
 
   useEffect(() => {
     if (!authUser) {
@@ -360,7 +361,10 @@ export default function App() {
   const onRefreshRepo = async () => {
     setIsRefreshingRepo(true);
     try {
-      const repo = await fetchRepoTree(repoPath, repoBranch, { force: true });
+      const repo = await fetchRepoTree(repoPath, repoBranch, {
+        force: true,
+        path: repoDirectoryPath,
+      });
       setRepoData(repo);
       setRepoError("");
     } catch (error) {
@@ -381,6 +385,7 @@ export default function App() {
     await submitJob(payload);
     if (normalizedRepo && normalizedRepo !== repoPath) {
       setRepoPath(normalizedRepo);
+      setRepoDirectoryPath("");
     }
     if (form.branch) {
       setRepoBranch(form.branch);
@@ -390,10 +395,19 @@ export default function App() {
 
   const onRepoBranchChange = (nextRepo, nextBranch) => {
     const normalizedRepo = normalizeRepoInput(nextRepo);
+    const nextRepoPath = normalizedRepo || "";
     const normalizedBranch = String(nextBranch ?? "").trim() || fallbackBranch;
 
-    setRepoPath((previous) => (previous === (normalizedRepo || "") ? previous : (normalizedRepo || "")));
+    setRepoPath((previous) => (previous === nextRepoPath ? previous : nextRepoPath));
     setRepoBranch((previous) => (previous === normalizedBranch ? previous : normalizedBranch));
+
+    if (nextRepoPath !== repoPath || normalizedBranch !== repoBranch) {
+      setRepoDirectoryPath("");
+    }
+  };
+
+  const onNavigateRepoPath = (nextPath) => {
+    setRepoDirectoryPath(String(nextPath ?? "").trim());
   };
 
   const statusCount = useMemo(() => jobs.length, [jobs]);
@@ -438,6 +452,7 @@ export default function App() {
     setAuthError("");
     setRepoData(emptyRepo);
     setRepoError("");
+    setRepoDirectoryPath("");
     setJobs([]);
     setResults([]);
     setExecutionByJobId({});
@@ -565,6 +580,7 @@ export default function App() {
             repoData={repoData}
             repoError={repoError}
             onRefresh={onRefreshRepo}
+            onNavigatePath={onNavigateRepoPath}
             isRefreshing={isRefreshingRepo}
             canRefresh={Boolean(repoPath)}
           />

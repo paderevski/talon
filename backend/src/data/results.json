@@ -1,6 +1,144 @@
 {
   "items": [
     {
+      "id": "result-job-65",
+      "jobId": "job-65",
+      "executionId": "local-1772406344704-vv3k0t",
+      "name": "results-persistence-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "result-persist-output-marker.txt",
+          "size": "38 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "12 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "result-persist-repo-marker.txt",
+          "size": "36 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T23:05:45.128Z"
+    },
+    {
+      "id": "result-job-63",
+      "jobId": "job-63",
+      "executionId": "local-1772406343324-vc0ynu",
+      "name": "hide-me-1772406343315",
+      "status": "failed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution failed (exit code 1)",
+      "finalizedAt": "2026-03-01T23:05:43.823Z"
+    },
+    {
+      "id": "result-job-64",
+      "jobId": "job-64",
+      "executionId": "local-1772406343349-d2tsw3",
+      "name": "hybrid-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "test-output-artifact.txt",
+          "size": "25 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "6.4 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "test-repo-artifact.txt",
+          "size": "27 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T23:05:44.215Z"
+    },
+    {
+      "id": "result-job-62",
+      "jobId": "job-62",
+      "executionId": "local-1772406087094-tpd23t",
+      "name": "results-persistence-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "result-persist-output-marker.txt",
+          "size": "38 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "9.6 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "result-persist-repo-marker.txt",
+          "size": "36 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T23:01:27.490Z"
+    },
+    {
+      "id": "result-job-60",
+      "jobId": "job-60",
+      "executionId": "local-1772406085720-qxg3l0",
+      "name": "hide-me-1772406085714",
+      "status": "failed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution failed (exit code 1)",
+      "finalizedAt": "2026-03-01T23:01:26.177Z"
+    },
+    {
+      "id": "result-job-61",
+      "jobId": "job-61",
+      "executionId": "local-1772406085743-m2gm6s",
+      "name": "hybrid-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "test-output-artifact.txt",
+          "size": "25 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "11 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "test-repo-artifact.txt",
+          "size": "27 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T23:01:26.589Z"
+    },
+    {
       "id": "result-job-59",
       "jobId": "job-59",
       "executionId": "local-1772405540697-hbzlsi",
@@ -1225,5 +1363,5 @@
       ]
     }
   ],
-  "updatedAt": "2026-03-01T22:52:26.167Z"
+  "updatedAt": "2026-03-01T23:05:45.574Z"
 }
