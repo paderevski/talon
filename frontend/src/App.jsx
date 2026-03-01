@@ -87,6 +87,11 @@ export default function App() {
   const [isRefreshingRepo, setIsRefreshingRepo] = useState(false);
   const userMenuRef = useRef(null);
 
+  const hasActiveJobs = useMemo(
+    () => jobs.some((job) => job.status === "running" || job.status === "queued"),
+    [jobs],
+  );
+
   useEffect(() => {
     setApiAuthUser(authUser?.username || "");
   }, [authUser]);
@@ -170,14 +175,18 @@ export default function App() {
       return;
     }
 
+    if (!hasActiveJobs) {
+      return;
+    }
+
     const intervalId = window.setInterval(() => {
-      load();
+      pollRuntimeState();
     }, 5000);
 
     return () => {
       window.clearInterval(intervalId);
     };
-  }, [authUser, repoPath, repoBranch, activeFilter]);
+  }, [authUser, activeFilter, hasActiveJobs]);
 
   useEffect(() => {
     if (!isUserMenuOpen) {
@@ -210,6 +219,25 @@ export default function App() {
     const items = jobsData.items || [];
     setJobs(items);
     await hydrateJobRuntime(items);
+  };
+
+    const pollRuntimeState = async () => {
+        console.log("Polling running state....");
+
+    const [jobsResult, resultsResult] = await Promise.allSettled([
+      fetchJobs(activeFilter),
+      fetchResults(),
+    ]);
+
+    if (jobsResult.status === "fulfilled") {
+      const items = jobsResult.value.items || [];
+      setJobs(items);
+      await hydrateJobRuntime(items);
+    }
+
+    if (resultsResult.status === "fulfilled") {
+      setResults(resultsResult.value.items || []);
+    }
   };
 
   const onCancelJob = async (jobId) => {

@@ -26,7 +26,7 @@ router.get("/", async (req, res) => {
   const talonUser = getTalonUserFromRequest(req);
 
   if (!talonUser) {
-    return res.status(400).json({ message: "Missing x-talon-user header" });
+    return res.json({ hasToken: false, tokenLast4: "", updatedAt: null });
   }
 
   const status = await getGithubTokenStatusForUser(talonUser);

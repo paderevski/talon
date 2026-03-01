@@ -1,6 +1,192 @@
 {
   "items": [
     {
+      "id": "result-job-33",
+      "jobId": "job-33",
+      "executionId": "local-1772385960471-kg1ka4",
+      "name": "results-persistence-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "result-persist-output-marker.txt",
+          "size": "38 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "11 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "result-persist-repo-marker.txt",
+          "size": "36 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T17:26:00.983Z"
+    },
+    {
+      "id": "result-job-32",
+      "jobId": "job-32",
+      "executionId": "local-1772385959565-3ec3qq",
+      "name": "hybrid-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "test-output-artifact.txt",
+          "size": "25 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "11 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "test-repo-artifact.txt",
+          "size": "27 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T17:26:00.137Z"
+    },
+    {
+      "id": "result-job-31",
+      "jobId": "job-31",
+      "executionId": "local-1772385242540-ylqfqe",
+      "name": "rnn12",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "output.txt",
+          "size": "9.7 KB",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T17:14:03.436Z"
+    },
+    {
+      "id": "result-job-30",
+      "jobId": "job-30",
+      "executionId": "local-1772385131522-iaxsc8",
+      "name": "results-persistence-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "result-persist-output-marker.txt",
+          "size": "38 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "9.6 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "result-persist-repo-marker.txt",
+          "size": "36 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T17:12:12.221Z"
+    },
+    {
+      "id": "result-job-29",
+      "jobId": "job-29",
+      "executionId": "local-1772385130145-qucrvj",
+      "name": "hybrid-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "test-output-artifact.txt",
+          "size": "25 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "11 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "test-repo-artifact.txt",
+          "size": "27 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T17:12:10.970Z"
+    },
+    {
+      "id": "result-job-28",
+      "jobId": "job-28",
+      "executionId": "local-1772384873313-55r0x9",
+      "name": "results-persistence-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "result-persist-output-marker.txt",
+          "size": "38 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "8.6 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "result-persist-repo-marker.txt",
+          "size": "36 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T17:07:54.208Z"
+    },
+    {
+      "id": "result-job-27",
+      "jobId": "job-27",
+      "executionId": "local-1772384871954-85pzxa",
+      "name": "hybrid-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "test-output-artifact.txt",
+          "size": "25 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "11 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "test-repo-artifact.txt",
+          "size": "27 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T17:07:53.059Z"
+    },
+    {
       "id": "result-job-26",
       "jobId": "job-26",
       "executionId": "local-1772384536581-ykq18i",
@@ -491,5 +677,5 @@
       ]
     }
   ],
-  "updatedAt": "2026-03-01T17:02:19.953Z"
+  "updatedAt": "2026-03-01T17:26:01.300Z"
 }

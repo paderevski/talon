@@ -241,7 +241,12 @@ router.get("/debug/executions", async (_req, res) => {
 router.get("/:id", async (req, res) => {
   const job = jobsRepository.findById(req.params.id);
   if (!job) {
-    return res.status(404).json({ message: "Job not found" });
+    return res.json({
+      job: null,
+      execution: null,
+      noData: true,
+      message: "No job data available",
+    });
   }
 
   if (!job.executionRef) {
@@ -290,6 +295,15 @@ router.get("/:id", async (req, res) => {
       });
     }
 
+    if (error?.status === 404) {
+      return res.json({
+        job,
+        execution: null,
+        noData: true,
+        message: "Execution data is no longer available",
+      });
+    }
+
     return res.status(error?.status || 500).json({
       message: error?.message || "Unable to load job status",
     });
@@ -299,7 +313,12 @@ router.get("/:id", async (req, res) => {
 router.get("/:id/logs", async (req, res) => {
   const job = jobsRepository.findById(req.params.id);
   if (!job) {
-    return res.status(404).json({ message: "Job not found" });
+    return res.json({
+      lines: [],
+      nextCursor: Number(req.query.cursor ?? 0) || 0,
+      noData: true,
+      message: "No job data available",
+    });
   }
 
   if (!job.executionRef) {
@@ -315,6 +334,15 @@ router.get("/:id/logs", async (req, res) => {
     );
     return res.json(logs);
   } catch (error) {
+    if (error?.status === 404) {
+      return res.json({
+        lines: [],
+        nextCursor: Number.isFinite(cursor) ? cursor : 0,
+        noData: true,
+        message: "Execution logs are no longer available",
+      });
+    }
+
     return res.status(error?.status || 500).json({
       message: error?.message || "Unable to load job logs",
     });
@@ -324,7 +352,11 @@ router.get("/:id/logs", async (req, res) => {
 router.get("/:id/files", async (req, res) => {
   const job = jobsRepository.findById(req.params.id);
   if (!job) {
-    return res.status(404).json({ message: "Job not found" });
+    return res.json({
+      items: [],
+      noData: true,
+      message: "No job data available",
+    });
   }
 
   if (!job.executionRef) {
@@ -335,6 +367,14 @@ router.get("/:id/files", async (req, res) => {
     const items = await getExecutionOutputFiles(job.executionRef);
     return res.json({ items });
   } catch (error) {
+    if (error?.status === 404) {
+      return res.json({
+        items: [],
+        noData: true,
+        message: "Execution output files are no longer available",
+      });
+    }
+
     return res.status(error?.status || 500).json({
       message: error?.message || "Unable to load output files",
     });
