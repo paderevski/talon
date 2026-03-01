@@ -1,3 +1,5 @@
+import FocusScrollRegion from "./FocusScrollRegion";
+
 export default function RepoBrowserPanel({ repoData, repoError, onRefresh, isRefreshing }) {
   return (
     <section className="panel" id="repo-browser">
@@ -16,32 +18,34 @@ export default function RepoBrowserPanel({ repoData, repoError, onRefresh, isRef
       {repoError ? <div className="repo-error">{repoError}</div> : null}
 
       <div className="table-card">
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Size</th>
-              <th>Last Commit Message</th>
-              <th>Updated</th>
-            </tr>
-          </thead>
-          <tbody>
-            {repoData.items?.length ? (
-              repoData.items.map((item) => (
-                <tr key={item.name}>
-                  <td className="repo-name-cell">{item.name}</td>
-                  <td className="mono-sm">{item.size || "—"}</td>
-                  <td className="repo-commit-cell">{item.lastCommitMessage || "—"}</td>
-                  <td className="mono-sm">{item.updated || "—"}</td>
-                </tr>
-              ))
-            ) : (
+        <FocusScrollRegion className="repo-browser-scroll-region" ariaLabel="Repo browser table">
+          <table>
+            <thead>
               <tr>
-                <td colSpan={4} className="repo-empty-cell">No files found</td>
+                <th>Name</th>
+                <th>Size</th>
+                <th>Last Commit Message</th>
+                <th>Updated</th>
               </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {repoData.items?.length ? (
+                repoData.items.map((item) => (
+                  <tr key={item.name}>
+                    <td className="repo-name-cell">{item.name}</td>
+                    <td className="mono-sm">{item.size || "—"}</td>
+                    <td className="repo-commit-cell">{item.lastCommitMessage || "—"}</td>
+                    <td className="mono-sm">{item.updated || "—"}</td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={4} className="repo-empty-cell">No files found</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </FocusScrollRegion>
       </div>
     </section>
   );
