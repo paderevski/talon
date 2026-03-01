@@ -333,6 +333,13 @@ body {
   border-bottom: 1px solid var(--border);
   background: var(--bg-card);
 }
+.debug-inline-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
 .filter-chip {
   margin-right: 8px;
   border: 1px solid var(--border);

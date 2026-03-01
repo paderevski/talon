@@ -6,7 +6,9 @@
   "main": "src/server.js",
   "scripts": {
     "dev": "nodemon src/server.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "test": "node tests/run.mjs",
+    "test:regression": "node tests/run.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",

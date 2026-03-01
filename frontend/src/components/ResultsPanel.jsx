@@ -2,14 +2,35 @@ function label(status) {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
-export default function ResultsPanel({ results }) {
+function formatOutputFile(file, index) {
+  const value = typeof file === "string" ? { name: file, size: "" } : file;
+  return {
+    key: `${value?.name || "file"}-${index}`,
+    name: value?.name || "unnamed",
+    size: value?.size || "",
+  };
+}
+
+export default function ResultsPanel({ results, jobs, filesByJobId }) {
+  const runtimeResults = (jobs || []).map((job) => ({
+    id: job.id,
+    name: job.name,
+    status: job.status,
+    repo: job.repo,
+    duration: job.duration,
+    output: "Run output files",
+    files: filesByJobId?.[job.id] || [],
+  }));
+
+  const cards = runtimeResults.length ? runtimeResults : results;
+
   return (
     <section className="panel" id="results">
       <div className="panel-head">
         <h2 className="panel-title">Results</h2>
       </div>
       <div className="results-grid">
-        {results.map((result) => (
+        {cards.map((result) => (
           <div className="result-card" key={result.id}>
             <div className="result-card-head">
               <div className="result-job-name">{result.name}</div>
@@ -30,12 +51,16 @@ export default function ResultsPanel({ results }) {
               </div>
             </div>
             <div className="result-files">
-              {result.files?.map((file) => (
-                <div className="result-file-row" key={file.name}>
-                  <span className="result-file-name">{file.name}</span>
-                  <span className="result-file-size">{file.size}</span>
+              {(result.files || []).length ? (result.files || []).map((file, index) => {
+                const normalizedFile = formatOutputFile(file, index);
+
+                return (
+                <div className="result-file-row" key={normalizedFile.key}>
+                  <span className="result-file-name">{normalizedFile.name}</span>
+                  <span className="result-file-size">{normalizedFile.size}</span>
                 </div>
-              ))}
+                );
+              }) : <div className="result-file-row">No output files yet</div>}
             </div>
           </div>
         ))}

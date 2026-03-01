@@ -67,6 +67,43 @@ export function fetchResults() {
   return getJson("/api/results");
 }
 
+export function fetchExecutionDebugSnapshot() {
+  return getJson("/api/jobs/debug/executions");
+}
+
+export function fetchJobDetails(jobId) {
+  return getJson(`/api/jobs/${encodeURIComponent(jobId)}`);
+}
+
+export function fetchJobFiles(jobId) {
+  return getJson(`/api/jobs/${encodeURIComponent(jobId)}/files`);
+}
+
+export async function cancelJob(jobId) {
+  const response = await fetch(
+    `/api/jobs/${encodeURIComponent(jobId)}/cancel`,
+    {
+      method: "POST",
+      headers: getRequestHeaders(),
+    },
+  );
+
+  if (!response.ok) {
+    let message = `Unable to cancel job (${response.status})`;
+    try {
+      const body = await response.json();
+      if (body?.message) {
+        message = body.message;
+      }
+    } catch {
+      // Ignore parse errors and keep fallback message.
+    }
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
 export async function submitJob(payload) {
   const response = await fetch("/api/jobs", {
     method: "POST",

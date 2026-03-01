@@ -25,7 +25,31 @@ These sections are mapped directly into frontend components and backend routes.
 - `GET /api/repos/:owner/:repo/tree`
 - `GET /api/jobs?status=all|running|queued|completed|failed`
 - `POST /api/jobs`
+- `GET /api/jobs/:id`
+- `GET /api/jobs/:id/logs?cursor=0`
+- `GET /api/jobs/:id/files`
+- `POST /api/jobs/:id/cancel`
+- `GET /api/jobs/debug/executions`
 - `GET /api/results`
+
+### Execution provider scaffold
+
+Backend job submission now routes through an execution adapter seam so local process execution can be swapped with Kubernetes later.
+
+- Default provider: `local`
+- Future provider: `kubernetes` (placeholder adapter)
+
+Set provider with environment variable:
+
+```bash
+EXECUTION_PROVIDER=local
+```
+
+or
+
+```bash
+EXECUTION_PROVIDER=kubernetes
+```
 
 ## Run locally
 

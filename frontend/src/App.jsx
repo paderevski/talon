@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fetchJobs, fetchRepoTree, fetchResults, login, setApiAuthUser, submitJob } from "./api/client";
+import { cancelJob, fetchJobDetails, fetchJobFiles, fetchJobs, fetchRepoTree, fetchResults, login, setApiAuthUser, submitJob } from "./api/client";
 import NewJobPanel from "./components/NewJobPanel";
 import RepoBrowserPanel from "./components/RepoBrowserPanel";
 import JobStatusPanel from "./components/JobStatusPanel";
 import ResultsPanel from "./components/ResultsPanel";
 import GitHubCredentialsPanel from "./components/GitHubCredentialsPanel";
+import ExecutionDebugPanel from "./components/ExecutionDebugPanel";
 import talonLogo from "../../assets/talon-logo.png";
 import { normalizeRepoInput } from "./utils/repo";
 
@@ -63,6 +64,7 @@ function getStoredGithubSettings() {
 }
 
 export default function App() {
+  const showDebugPanel = new URLSearchParams(window.location.search).get("debug") === "1";
   const [authUser, setAuthUser] = useState(getStoredAuthUser);
   const [githubSettings, setGithubSettings] = useState(getStoredGithubSettings);
   const [username, setUsername] = useState("");
@@ -78,6 +80,9 @@ export default function App() {
   const [repoError, setRepoError] = useState("");
   const [jobs, setJobs] = useState([]);
   const [results, setResults] = useState([]);
+  const [executionByJobId, setExecutionByJobId] = useState({});
+  const [filesByJobId, setFilesByJobId] = useState({});
+  const [jobActionError, setJobActionError] = useState("");
   const [activeFilter, setActiveFilter] = useState("all");
   const [isRefreshingRepo, setIsRefreshingRepo] = useState(false);
   const userMenuRef = useRef(null);
@@ -85,6 +90,40 @@ export default function App() {
   useEffect(() => {
     setApiAuthUser(authUser?.username || "");
   }, [authUser]);
+
+  const hydrateJobRuntime = async (jobList) => {
+    if (!jobList.length) {
+      setExecutionByJobId({});
+      setFilesByJobId({});
+      return;
+    }
+
+    const detailResults = await Promise.allSettled(
+      jobList.map((job) => fetchJobDetails(job.id))
+    );
+    const fileResults = await Promise.allSettled(
+      jobList.map((job) => fetchJobFiles(job.id))
+    );
+
+    const nextExecutionByJobId = {};
+    const nextFilesByJobId = {};
+
+    jobList.forEach((job, index) => {
+      const detailResult = detailResults[index];
+      const fileResult = fileResults[index];
+
+      if (detailResult.status === "fulfilled") {
+        nextExecutionByJobId[job.id] = detailResult.value.execution || null;
+      }
+
+      if (fileResult.status === "fulfilled") {
+        nextFilesByJobId[job.id] = fileResult.value.items || [];
+      }
+    });
+
+    setExecutionByJobId(nextExecutionByJobId);
+    setFilesByJobId(nextFilesByJobId);
+  };
 
   const load = async () => {
     const [repoResult, jobsResult, resultsResult] = await Promise.allSettled([
@@ -102,9 +141,13 @@ export default function App() {
     }
 
     if (jobsResult.status === "fulfilled") {
-      setJobs(jobsResult.value.items || []);
+      const items = jobsResult.value.items || [];
+      setJobs(items);
+      await hydrateJobRuntime(items);
     } else {
       setJobs([]);
+      setExecutionByJobId({});
+      setFilesByJobId({});
     }
 
     if (resultsResult.status === "fulfilled") {
@@ -120,6 +163,20 @@ export default function App() {
     }
 
     load();
+  }, [authUser, repoPath, repoBranch, activeFilter]);
+
+  useEffect(() => {
+    if (!authUser) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      load();
+    }, 5000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
   }, [authUser, repoPath, repoBranch, activeFilter]);
 
   useEffect(() => {
@@ -150,7 +207,20 @@ export default function App() {
 
   const refreshJobs = async () => {
     const jobsData = await fetchJobs(activeFilter);
-    setJobs(jobsData.items || []);
+    const items = jobsData.items || [];
+    setJobs(items);
+    await hydrateJobRuntime(items);
+  };
+
+  const onCancelJob = async (jobId) => {
+    setJobActionError("");
+
+    try {
+      await cancelJob(jobId);
+      await refreshJobs();
+    } catch (error) {
+      setJobActionError(error?.message || "Unable to cancel job");
+    }
   };
 
   const onRefreshRepo = async () => {
@@ -228,6 +298,9 @@ export default function App() {
     setRepoError("");
     setJobs([]);
     setResults([]);
+    setExecutionByJobId({});
+    setFilesByJobId({});
+    setJobActionError("");
     setActiveFilter("all");
   };
 
@@ -334,8 +407,16 @@ export default function App() {
           />
           <GitHubCredentialsPanel settings={githubSettings} onSave={onSaveGithubSettings} />
           <RepoBrowserPanel repoData={repoData} repoError={repoError} onRefresh={onRefreshRepo} isRefreshing={isRefreshingRepo} />
-          <JobStatusPanel jobs={jobs} activeFilter={activeFilter} setActiveFilter={setActiveFilter} />
-          <ResultsPanel results={results} />
+          <JobStatusPanel
+            jobs={jobs}
+            activeFilter={activeFilter}
+            setActiveFilter={setActiveFilter}
+            executionByJobId={executionByJobId}
+            onCancelJob={onCancelJob}
+            jobActionError={jobActionError}
+          />
+          <ResultsPanel results={results} jobs={jobs} filesByJobId={filesByJobId} />
+          {showDebugPanel ? <ExecutionDebugPanel /> : null}
         </main>
       </div>
     </div>

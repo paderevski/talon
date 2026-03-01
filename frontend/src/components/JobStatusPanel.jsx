@@ -4,7 +4,7 @@ function toLabel(status) {
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
-export default function JobStatusPanel({ jobs, activeFilter, setActiveFilter }) {
+export default function JobStatusPanel({ jobs, activeFilter, setActiveFilter, executionByJobId, onCancelJob, jobActionError }) {
   return (
     <section className="panel" id="job-status">
       <div className="panel-head">
@@ -29,9 +29,11 @@ export default function JobStatusPanel({ jobs, activeFilter, setActiveFilter }) 
               <th>Job</th>
               <th>Repo</th>
               <th>Status</th>
+              <th>Execution</th>
               <th>GPU</th>
               <th>Submitted</th>
               <th>Duration</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -45,14 +47,23 @@ export default function JobStatusPanel({ jobs, activeFilter, setActiveFilter }) 
                     {toLabel(job.status)}
                   </span>
                 </td>
+                <td className="mono-sm">{executionByJobId?.[job.id]?.state || "—"}</td>
                 <td className="mono-sm">{job.gpu}</td>
                 <td className="mono-sm">{job.submitted}</td>
                 <td className="mono-sm">{job.duration}</td>
+                <td>
+                  {(job.status === "running" || job.status === "queued") ? (
+                    <button className="btn btn-secondary btn-sm" type="button" onClick={() => onCancelJob(job.id)}>
+                      Cancel
+                    </button>
+                  ) : null}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {jobActionError ? <div className="repo-error">{jobActionError}</div> : null}
     </section>
   );
 }

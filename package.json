@@ -10,7 +10,9 @@
     "dev": "npm-run-all --parallel dev:*",
     "dev:frontend": "npm run dev --workspace frontend",
     "dev:backend": "npm run dev --workspace backend",
-    "build": "npm run build --workspace frontend"
+    "build": "npm run build --workspace frontend",
+    "test:backend": "npm run test --workspace backend",
+    "test:regression": "npm run test:regression --workspace backend"
   },
   "devDependencies": {
     "npm-run-all": "^4.1.5"
