@@ -1,4 +1,4 @@
-export default function RepoBrowserPanel({ repoData, onRefresh, isRefreshing }) {
+export default function RepoBrowserPanel({ repoData, repoError, onRefresh, isRefreshing }) {
   return (
     <section className="panel" id="repo-browser">
       <div className="panel-head">
@@ -12,6 +12,8 @@ export default function RepoBrowserPanel({ repoData, onRefresh, isRefreshing }) 
         <span className="repo-branch">{repoData.branch}</span>
         <span className="repo-meta">{repoData.lastCommit}</span>
       </div>
+
+      {repoError ? <div className="repo-error">{repoError}</div> : null}
 
       <div className="table-card">
         <table>

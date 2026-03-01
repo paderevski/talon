@@ -2,15 +2,34 @@ const headers = {
   "Content-Type": "application/json",
 };
 
+let currentApiUser = "";
+
 const githubRepoCacheTtlMs = 5 * 60 * 1000;
 const githubRepoCache = new Map();
 
 async function getJson(path) {
-  const response = await fetch(path);
+  const requestHeaders = {
+    ...(currentApiUser ? { "x-talon-user": currentApiUser } : {}),
+  };
+
+  const response = await fetch(path, {
+    headers: requestHeaders,
+  });
   if (!response.ok) {
     throw new Error(`Request failed: ${response.status}`);
   }
   return response.json();
+}
+
+function getRequestHeaders(includeJsonContentType = false) {
+  return {
+    ...(includeJsonContentType ? headers : {}),
+    ...(currentApiUser ? { "x-talon-user": currentApiUser } : {}),
+  };
+}
+
+export function setApiAuthUser(username) {
+  currentApiUser = String(username ?? "").trim();
 }
 
 export function fetchRepoTree(
@@ -51,7 +70,7 @@ export function fetchResults() {
 export async function submitJob(payload) {
   const response = await fetch("/api/jobs", {
     method: "POST",
-    headers,
+    headers: getRequestHeaders(true),
     body: JSON.stringify(payload),
   });
 
@@ -65,7 +84,7 @@ export async function submitJob(payload) {
 export async function login(username, password) {
   const response = await fetch("/api/auth/login", {
     method: "POST",
-    headers,
+    headers: getRequestHeaders(true),
     body: JSON.stringify({ username, password }),
   });
 
@@ -98,7 +117,10 @@ export async function fetchGithubPublicRepos(username) {
   }
 
   const response = await fetch(
-    `https://api.github.com/users/${encodeURIComponent(normalizedUsername)}/repos?type=public&sort=updated&per_page=100`,
+    `/api/github-credentials/repos/${encodeURIComponent(normalizedUsername)}`,
+    {
+      headers: getRequestHeaders(),
+    },
   );
 
   if (!response.ok) {
@@ -110,13 +132,19 @@ export async function fetchGithubPublicRepos(username) {
     throw new Error(`Unable to load repositories (${response.status})`);
   }
 
-  const items = await response.json();
+  const body = await response.json();
+  const items = Array.isArray(body) ? body : body?.items;
   if (!Array.isArray(items)) {
     return [];
   }
 
   const repos = items
-    .map((item) => String(item?.full_name ?? "").trim())
+    .map((item) => {
+      if (typeof item === "string") {
+        return item.trim();
+      }
+      return String(item?.full_name ?? "").trim();
+    })
     .filter(Boolean);
 
   githubRepoCache.set(cacheKey, {
@@ -125,4 +153,52 @@ export async function fetchGithubPublicRepos(username) {
   });
 
   return repos;
+}
+
+export async function getGithubTokenStatus() {
+  const response = await fetch("/api/github-credentials", {
+    headers: getRequestHeaders(),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Unable to load token status (${response.status})`);
+  }
+
+  return response.json();
+}
+
+export async function saveGithubToken(token) {
+  const response = await fetch("/api/github-credentials", {
+    method: "PUT",
+    headers: getRequestHeaders(true),
+    body: JSON.stringify({ token }),
+  });
+
+  if (!response.ok) {
+    let message = `Unable to save token (${response.status})`;
+    try {
+      const body = await response.json();
+      if (body?.message) {
+        message = body.message;
+      }
+    } catch {
+      // Ignore parse errors and keep fallback message.
+    }
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+export async function deleteGithubToken() {
+  const response = await fetch("/api/github-credentials", {
+    method: "DELETE",
+    headers: getRequestHeaders(),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Unable to delete token (${response.status})`);
+  }
+
+  return response.json();
 }

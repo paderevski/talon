@@ -303,6 +303,15 @@ body {
   padding: 3px 8px;
 }
 .repo-meta { margin-left: auto; color: var(--text-muted); font-size: 12px; }
+.repo-error {
+  margin-bottom: 10px;
+  border: 1px solid var(--accent-red);
+  background: var(--accent-red-dim);
+  color: var(--accent-red);
+  border-radius: 8px;
+  font-size: 12px;
+  padding: 8px 10px;
+}
 .repo-name-cell {
   font-weight: 600;
 }

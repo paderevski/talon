@@ -46,6 +46,74 @@ Current demo credentials:
 - username: `jane_smith`
 - password: `talon123`
 
+## GitHub PAT setup (current MVP)
+
+Talon now supports saving a GitHub PAT in the backend and using it for GitHub API calls.
+
+### How it works
+
+- User pastes PAT in the **GitHub Credentials** panel.
+- Frontend sends token to backend with `x-talon-user` set to the logged-in Talon username.
+- Backend validates token (`GET https://api.github.com/user`).
+- Backend stores token encrypted-at-rest in `backend/src/data/githubCredentials.json`.
+- Token can be replaced or deleted from the same UI.
+
+### Encryption key (important)
+
+Set `TALON_CREDENTIALS_KEY` for backend in every non-dev environment.
+
+Example for systemd service:
+
+```ini
+Environment=TALON_CREDENTIALS_KEY=change-this-to-a-strong-secret
+```
+
+If not set, backend falls back to a development default key.
+
+### API endpoints
+
+- `GET /api/github-credentials` → token status (`hasToken`, `tokenLast4`, `updatedAt`)
+- `PUT /api/github-credentials` with `{ "token": "..." }` → validate + save/replace token
+- `DELETE /api/github-credentials` → delete saved token
+- `GET /api/github-credentials/repos/:username` → public repos list (uses saved PAT if present)
+
+These endpoints expect request header `x-talon-user` so credentials are scoped per Talon user.
+
+### Security notes
+
+- Do not log PAT values in backend logs.
+- Restrict file permissions for `backend/src/data/githubCredentials.json` (service user only).
+- Use a strong, unique `TALON_CREDENTIALS_KEY` per environment.
+- Rotate PATs regularly and delete unused tokens.
+- If you change `TALON_CREDENTIALS_KEY`, previously stored encrypted tokens must be re-saved.
+
+### End-user guide: Create a GitHub PAT
+
+This section is for Talon users who just need to connect GitHub.
+
+1. Sign in to GitHub.
+2. Open **Settings**.
+3. In the left menu, open **Developer settings**.
+4. Open **Personal access tokens**.
+5. Choose **Fine-grained tokens** (recommended) and click **Generate new token**.
+6. Select your account/organization, set an expiration date, and add a name (for example, `talon-access`).
+7. Grant minimum permissions for Talon read access:
+	- **Repository permissions** → **Contents: Read-only**
+	- **Repository permissions** → **Metadata: Read-only**
+8. Click **Generate token**.
+9. Copy the token immediately (GitHub only shows it once).
+
+### End-user guide: Add PAT in Talon
+
+1. Log in to Talon.
+2. Open **GitHub Credentials** from the left nav (or user menu).
+3. Paste your token into **GitHub Personal Access Token (PAT)**.
+4. Click **Save Token**.
+5. You should see token status updated (masked suffix like `...abcd`).
+
+If your token expires or you rotate it, paste the new token and click **Replace Token**.
+If you no longer want Talon to use it, click **Delete Token**.
+
 ## Deploy (AWS, single EC2 instance)
 
 If it has been a while, this is the simplest production setup for this repo:

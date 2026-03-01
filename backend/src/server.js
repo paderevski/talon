@@ -4,6 +4,7 @@ import jobsRouter from "./routes/jobs.js";
 import repoRouter from "./routes/repo.js";
 import resultsRouter from "./routes/results.js";
 import authRouter from "./routes/auth.js";
+import githubCredentialsRouter from "./routes/githubCredentials.js";
 
 const app = express();
 const port = Number(process.env.PORT || 5174);
@@ -19,6 +20,7 @@ app.use("/api/jobs", jobsRouter);
 app.use("/api/repos", repoRouter);
 app.use("/api/results", resultsRouter);
 app.use("/api/auth", authRouter);
+app.use("/api/github-credentials", githubCredentialsRouter);
 
 app.listen(port, () => {
   // eslint-disable-next-line no-console

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { getGithubTokenForUser } from "../utils/githubCredentialsStore.js";
 
 const router = Router();
 const repoTreeCache = new Map();
@@ -33,6 +34,30 @@ async function getJsonOrThrow(url, errorMessage) {
   return response.json();
 }
 
+async function getJsonWithHeadersOrThrow(url, errorMessage, headers = {}) {
+  const response = await fetch(url, { headers });
+  if (!response.ok) {
+    const error = new Error(errorMessage);
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
+
+function getTalonUserFromRequest(req) {
+  return String(req.get("x-talon-user") ?? "").trim();
+}
+
+function getGithubHeaders(token) {
+  if (!token) {
+    return {};
+  }
+
+  return {
+    Authorization: `Bearer ${token}`,
+  };
+}
+
 function formatBytes(bytes) {
   if (typeof bytes !== "number" || Number.isNaN(bytes)) {
     return "";
@@ -60,6 +85,7 @@ async function fetchLatestCommitForPath(
   branch,
   headSha,
   path,
+  githubHeaders,
   skipCache = false,
 ) {
   const cacheKey = `${owner}/${repo}@${branch}#${headSha}:${path}`;
@@ -74,9 +100,10 @@ async function fetchLatestCommitForPath(
   }
 
   try {
-    const commits = await getJsonOrThrow(
+    const commits = await getJsonWithHeadersOrThrow(
       `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits?sha=${encodeURIComponent(branch)}&path=${encodeURIComponent(path)}&per_page=1`,
       "Unable to fetch latest commit for path",
+      githubHeaders,
     );
     const latestCommit = Array.isArray(commits) ? commits[0] : null;
 
@@ -121,6 +148,7 @@ async function mapContentItem(
   branch,
   headSha,
   item,
+  githubHeaders,
   skipCache = false,
 ) {
   const commitInfo = await fetchLatestCommitForPath(
@@ -129,6 +157,7 @@ async function mapContentItem(
     branch,
     headSha,
     item.path || item.name,
+    githubHeaders,
     skipCache,
   );
 
@@ -150,19 +179,24 @@ router.get("/:owner/:repo/tree", async (req, res) => {
   const { owner, repo } = req.params;
   const requestedBranch = String(req.query.branch ?? "").trim();
   const forceRefresh = String(req.query.force ?? "").trim() === "1";
+  const talonUser = getTalonUserFromRequest(req);
 
   try {
     pruneExpiredCaches();
+    const githubToken = talonUser ? await getGithubTokenForUser(talonUser) : "";
+    const githubHeaders = getGithubHeaders(githubToken);
 
-    const repoInfo = await getJsonOrThrow(
+    const repoInfo = await getJsonWithHeadersOrThrow(
       `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
       "Repository lookup failed",
+      githubHeaders,
     );
     const branch = requestedBranch || repoInfo.default_branch || "main";
 
-    const headCommit = await getJsonOrThrow(
+    const headCommit = await getJsonWithHeadersOrThrow(
       `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(branch)}`,
       "Unable to fetch branch head",
+      githubHeaders,
     );
 
     const headSha = headCommit?.sha || "";
@@ -180,6 +214,7 @@ router.get("/:owner/:repo/tree", async (req, res) => {
 
     const contentsResponse = await fetch(
       `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents?ref=${encodeURIComponent(branch)}`,
+      { headers: githubHeaders },
     );
 
     if (!contentsResponse.ok) {
@@ -192,7 +227,15 @@ router.get("/:owner/:repo/tree", async (req, res) => {
     const contentItems = Array.isArray(contents) ? contents : [contents];
     const items = await Promise.all(
       contentItems.map((item) =>
-        mapContentItem(owner, repo, branch, headSha, item, forceRefresh),
+        mapContentItem(
+          owner,
+          repo,
+          branch,
+          headSha,
+          item,
+          githubHeaders,
+          forceRefresh,
+        ),
       ),
     );
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fetchJobs, fetchRepoTree, fetchResults, login, submitJob } from "./api/client";
+import { fetchJobs, fetchRepoTree, fetchResults, login, setApiAuthUser, submitJob } from "./api/client";
 import NewJobPanel from "./components/NewJobPanel";
 import RepoBrowserPanel from "./components/RepoBrowserPanel";
 import JobStatusPanel from "./components/JobStatusPanel";
@@ -75,22 +75,43 @@ export default function App() {
   );
   const [repoBranch, setRepoBranch] = useState(githubSettings.defaultBranch || defaultGithubSettings.defaultBranch);
   const [repoData, setRepoData] = useState(emptyRepo);
+  const [repoError, setRepoError] = useState("");
   const [jobs, setJobs] = useState([]);
   const [results, setResults] = useState([]);
   const [activeFilter, setActiveFilter] = useState("all");
   const [isRefreshingRepo, setIsRefreshingRepo] = useState(false);
   const userMenuRef = useRef(null);
 
+  useEffect(() => {
+    setApiAuthUser(authUser?.username || "");
+  }, [authUser]);
+
   const load = async () => {
-    const [repo, jobsData, resultData] = await Promise.all([
+    const [repoResult, jobsResult, resultsResult] = await Promise.allSettled([
       fetchRepoTree(repoPath, repoBranch),
       fetchJobs(activeFilter),
       fetchResults()
     ]);
 
-    setRepoData(repo);
-    setJobs(jobsData.items || []);
-    setResults(resultData.items || []);
+    if (repoResult.status === "fulfilled") {
+      setRepoData(repoResult.value);
+      setRepoError("");
+    } else {
+      setRepoData(emptyRepo);
+      setRepoError(repoResult.reason?.message || "Unable to load repository data");
+    }
+
+    if (jobsResult.status === "fulfilled") {
+      setJobs(jobsResult.value.items || []);
+    } else {
+      setJobs([]);
+    }
+
+    if (resultsResult.status === "fulfilled") {
+      setResults(resultsResult.value.items || []);
+    } else {
+      setResults([]);
+    }
   };
 
   useEffect(() => {
@@ -98,11 +119,7 @@ export default function App() {
       return;
     }
 
-    load().catch(() => {
-      setRepoData(emptyRepo);
-      setJobs([]);
-      setResults([]);
-    });
+    load();
   }, [authUser, repoPath, repoBranch, activeFilter]);
 
   useEffect(() => {
@@ -141,6 +158,10 @@ export default function App() {
     try {
       const repo = await fetchRepoTree(repoPath, repoBranch, { force: true });
       setRepoData(repo);
+      setRepoError("");
+    } catch (error) {
+      setRepoData(emptyRepo);
+      setRepoError(error?.message || "Unable to load repository data");
     } finally {
       setIsRefreshingRepo(false);
     }
@@ -204,6 +225,7 @@ export default function App() {
     setPassword("");
     setAuthError("");
     setRepoData(emptyRepo);
+    setRepoError("");
     setJobs([]);
     setResults([]);
     setActiveFilter("all");
@@ -311,7 +333,7 @@ export default function App() {
             githubUsername={githubSettings.githubUsername}
           />
           <GitHubCredentialsPanel settings={githubSettings} onSave={onSaveGithubSettings} />
-          <RepoBrowserPanel repoData={repoData} onRefresh={onRefreshRepo} isRefreshing={isRefreshingRepo} />
+          <RepoBrowserPanel repoData={repoData} repoError={repoError} onRefresh={onRefreshRepo} isRefreshing={isRefreshingRepo} />
           <JobStatusPanel jobs={jobs} activeFilter={activeFilter} setActiveFilter={setActiveFilter} />
           <ResultsPanel results={results} />
         </main>
