@@ -44,3 +44,26 @@ export async function submitJob(payload) {
 
   return response.json();
 }
+
+export async function login(username, password) {
+  const response = await fetch("/api/auth/login", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ username, password }),
+  });
+
+  if (!response.ok) {
+    let message = `Login failed: ${response.status}`;
+    try {
+      const body = await response.json();
+      if (body?.message) {
+        message = body.message;
+      }
+    } catch {
+      // Ignore JSON parse errors and keep fallback message.
+    }
+    throw new Error(message);
+  }
+
+  return response.json();
+}

@@ -29,6 +29,58 @@ body {
   color: var(--text-primary);
 }
 
+.login-shell {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+}
+
+.login-card {
+  width: min(440px, 100%);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-card);
+  padding: 26px;
+}
+
+.login-kicker {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.login-title {
+  margin: 6px 0 18px;
+  font-size: 24px;
+}
+
+.login-logo {
+  display: block;
+  width: min(240px, 75%);
+  height: auto;
+  margin: 0 auto 20px;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.login-error {
+  font-size: 13px;
+  color: var(--accent-red);
+  margin-top: 4px;
+}
+
+.login-button {
+  margin-top: 10px;
+}
+
 .topbar {
   position: fixed;
   top: 0;
@@ -50,6 +102,78 @@ body {
   border-radius: 20px;
   padding: 6px 10px;
   font-size: 12px;
+}
+.user-menu-wrap {
+  position: relative;
+}
+.user-pill-button {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+.user-menu-hint {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+  padding: 6px 10px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  z-index: 19;
+}
+.user-menu-wrap:hover .user-menu-hint,
+.user-menu-wrap:focus-within .user-menu-hint {
+  opacity: 1;
+  transform: translateY(0);
+}
+.user-menu-wrap.menu-open .user-menu-hint {
+  opacity: 0;
+}
+.user-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 160px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  border-radius: 10px;
+  padding: 6px;
+  display: none;
+  z-index: 20;
+}
+.user-menu.open {
+  display: block;
+}
+.user-menu-item {
+  width: 100%;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.user-menu-item:hover {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+}
+.user-menu-item-disabled,
+.user-menu-item-disabled:hover {
+  color: var(--text-muted);
+  background: transparent;
+  cursor: not-allowed;
 }
 .user-avatar {
   width: 20px;

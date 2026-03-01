@@ -1,0 +1,3 @@
+# Demo credentials for local development
+jane_smith:talon123
+admin:admin123

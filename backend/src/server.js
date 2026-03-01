@@ -3,6 +3,7 @@ import cors from "cors";
 import jobsRouter from "./routes/jobs.js";
 import repoRouter from "./routes/repo.js";
 import resultsRouter from "./routes/results.js";
+import authRouter from "./routes/auth.js";
 
 const app = express();
 const port = Number(process.env.PORT || 5174);
@@ -17,6 +18,7 @@ app.get("/api/health", (_, res) => {
 app.use("/api/jobs", jobsRouter);
 app.use("/api/repos", repoRouter);
 app.use("/api/results", resultsRouter);
+app.use("/api/auth", authRouter);
 
 app.listen(port, () => {
   // eslint-disable-next-line no-console

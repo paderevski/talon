@@ -38,6 +38,14 @@ This starts:
 - frontend on `http://localhost:5173`
 - backend on `http://localhost:5174`
 
+### Demo login (local)
+
+The login screen authenticates against a simple backend text file at `backend/src/data/users.txt`.
+
+Current demo credentials:
+- username: `jane_smith`
+- password: `talon123`
+
 ## Deploy (AWS, single EC2 instance)
 
 If it has been a while, this is the simplest production setup for this repo:
