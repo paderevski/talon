@@ -1,6 +1,106 @@
 {
   "items": [
     {
+      "id": "result-job-38",
+      "jobId": "job-38",
+      "executionId": "local-1772386909802-qvww6w",
+      "name": "results-persistence-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "result-persist-output-marker.txt",
+          "size": "38 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "6.6 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "result-persist-repo-marker.txt",
+          "size": "36 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T17:41:51.226Z"
+    },
+    {
+      "id": "result-job-36",
+      "jobId": "job-36",
+      "executionId": "local-1772386907501-o34bhw",
+      "name": "hide-me-1772386907496",
+      "status": "failed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution failed (exit code 1)",
+      "finalizedAt": "2026-03-01T17:41:48.471Z"
+    },
+    {
+      "id": "result-job-37",
+      "jobId": "job-37",
+      "executionId": "local-1772386907515-s03k4s",
+      "name": "hybrid-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "test-output-artifact.txt",
+          "size": "25 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "10 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "test-repo-artifact.txt",
+          "size": "27 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T17:41:49.482Z"
+    },
+    {
+      "id": "result-job-35",
+      "jobId": "job-35",
+      "executionId": "local-1772386728845-1dkzgi",
+      "name": "minimal-rnn-1",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "output.txt",
+          "size": "12 KB",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T17:38:49.811Z"
+    },
+    {
+      "id": "result-job-34",
+      "jobId": "job-34",
+      "executionId": "local-1772386699292-3xf1a4",
+      "name": "talon-1",
+      "status": "failed",
+      "repo": "paderevski/talon",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution failed (exit code 1)",
+      "finalizedAt": "2026-03-01T17:38:19.927Z"
+    },
+    {
       "id": "result-job-33",
       "jobId": "job-33",
       "executionId": "local-1772385960471-kg1ka4",
@@ -677,5 +777,5 @@
       ]
     }
   ],
-  "updatedAt": "2026-03-01T17:26:01.300Z"
+  "updatedAt": "2026-03-01T17:41:51.649Z"
 }

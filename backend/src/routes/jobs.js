@@ -65,6 +65,15 @@ function normalizeResultFiles(items) {
   }));
 }
 
+function isTruthyQuery(value) {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
 async function markJobAsExecutionLost(job) {
   const nextJob = {
     ...job,
@@ -161,6 +170,7 @@ async function synchronizeJobFromExecution(job) {
 
 router.get("/", async (req, res) => {
   const status = req.query.status;
+  const includeHidden = isTruthyQuery(String(req.query.includeHidden ?? ""));
   const jobs = jobsRepository.list();
 
   let didMutateStatus = false;
@@ -195,12 +205,16 @@ router.get("/", async (req, res) => {
     await jobsRepository.setAll(itemsWithExecution);
   }
 
+  const visibleItems = includeHidden
+    ? itemsWithExecution
+    : itemsWithExecution.filter((job) => !job.hidden);
+
   if (!status || status === "all") {
-    return res.json({ items: itemsWithExecution });
+    return res.json({ items: visibleItems });
   }
 
   return res.json({
-    items: itemsWithExecution.filter((job) => job.status === status),
+    items: visibleItems.filter((job) => job.status === status),
   });
 });
 
@@ -218,6 +232,7 @@ router.post("/", async (req, res) => {
     name: payload.name || "untitled-job",
     repo: payload.repo || "unknown/repo",
     status: "queued",
+    hidden: false,
     gpu: "—",
     submitted: "just now",
     duration: "—",
@@ -399,6 +414,43 @@ router.post("/:id/cancel", async (req, res) => {
       message: error?.message || "Unable to cancel job",
     });
   }
+});
+
+router.delete("/:id", async (req, res) => {
+  const jobs = jobsRepository.list();
+  const index = jobs.findIndex((job) => job.id === req.params.id);
+
+  if (index < 0) {
+    return res.status(404).json({ message: "Job not found" });
+  }
+
+  const currentJob = jobs[index];
+  if (currentJob.hidden) {
+    return res.json({
+      message: "Job already hidden",
+      job: currentJob,
+    });
+  }
+
+  const hiddenBy = String(req.get("x-auth-user") || "").trim() || "unknown";
+  const hiddenReason = String(req.body?.reason ?? "").trim() || undefined;
+  const hiddenJob = {
+    ...currentJob,
+    hidden: true,
+    hiddenAt: new Date().toISOString(),
+    hiddenBy,
+    hiddenReason,
+  };
+
+  const nextJobs = jobs.map((job) =>
+    job.id === hiddenJob.id ? hiddenJob : job,
+  );
+  await jobsRepository.setAll(nextJobs);
+
+  return res.json({
+    message: "Job hidden from default history",
+    job: hiddenJob,
+  });
 });
 
 export default router;

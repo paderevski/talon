@@ -20,11 +20,11 @@ const navSections = [
 const emptyRepo = { repository: "", branch: "main", lastCommit: "", items: [] };
 const authStorageKey = "talon.authUser";
 const githubSettingsStorageKey = "talon.githubSettings";
+const fallbackRepo = "jane_smith/bert-nlp";
+const fallbackBranch = "main";
 
 const defaultGithubSettings = {
   githubUsername: "",
-  defaultRepo: "jane_smith/bert-nlp",
-  defaultBranch: "main",
 };
 
 function getStoredAuthUser() {
@@ -53,12 +53,20 @@ function getStoredGithubSettings() {
     }
 
     const parsed = JSON.parse(rawValue);
-    return {
+    const sanitizedSettings = {
       githubUsername: String(parsed?.githubUsername ?? "").trim(),
-      defaultRepo: String(parsed?.defaultRepo ?? defaultGithubSettings.defaultRepo).trim() || defaultGithubSettings.defaultRepo,
-      defaultBranch: String(parsed?.defaultBranch ?? defaultGithubSettings.defaultBranch).trim() || defaultGithubSettings.defaultBranch,
     };
+
+    const hasLegacyKeys = Object.prototype.hasOwnProperty.call(parsed || {}, "defaultRepo")
+      || Object.prototype.hasOwnProperty.call(parsed || {}, "defaultBranch");
+
+    if (hasLegacyKeys) {
+      window.localStorage.setItem(githubSettingsStorageKey, JSON.stringify(sanitizedSettings));
+    }
+
+    return sanitizedSettings;
   } catch {
+    window.localStorage.removeItem(githubSettingsStorageKey);
     return defaultGithubSettings;
   }
 }
@@ -73,9 +81,9 @@ export default function App() {
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [repoPath, setRepoPath] = useState(
-    normalizeRepoInput(githubSettings.defaultRepo) || defaultGithubSettings.defaultRepo
+    fallbackRepo
   );
-  const [repoBranch, setRepoBranch] = useState(githubSettings.defaultBranch || defaultGithubSettings.defaultBranch);
+  const [repoBranch, setRepoBranch] = useState(fallbackBranch);
   const [repoData, setRepoData] = useState(emptyRepo);
   const [repoError, setRepoError] = useState("");
   const [jobs, setJobs] = useState([]);
@@ -221,8 +229,7 @@ export default function App() {
     await hydrateJobRuntime(items);
   };
 
-    const pollRuntimeState = async () => {
-        console.log("Polling running state....");
+  const pollRuntimeState = async () => {
 
     const [jobsResult, resultsResult] = await Promise.allSettled([
       fetchJobs(activeFilter),
@@ -282,6 +289,14 @@ export default function App() {
     await refreshJobs();
   };
 
+  const onRepoBranchChange = (nextRepo, nextBranch) => {
+    const normalizedRepo = normalizeRepoInput(nextRepo) || fallbackRepo;
+    const normalizedBranch = String(nextBranch ?? "").trim() || fallbackBranch;
+
+    setRepoPath((previous) => (previous === normalizedRepo ? previous : normalizedRepo));
+    setRepoBranch((previous) => (previous === normalizedBranch ? previous : normalizedBranch));
+  };
+
   const statusCount = useMemo(() => jobs.length, [jobs]);
 
   const avatar = useMemo(() => {
@@ -333,10 +348,12 @@ export default function App() {
   };
 
   const onSaveGithubSettings = (nextSettings) => {
-    setGithubSettings(nextSettings);
-    window.localStorage.setItem(githubSettingsStorageKey, JSON.stringify(nextSettings));
-    setRepoPath(normalizeRepoInput(nextSettings.defaultRepo) || defaultGithubSettings.defaultRepo);
-    setRepoBranch(nextSettings.defaultBranch || defaultGithubSettings.defaultBranch);
+    const sanitizedSettings = {
+      githubUsername: String(nextSettings?.githubUsername ?? "").trim(),
+    };
+
+    setGithubSettings(sanitizedSettings);
+    window.localStorage.setItem(githubSettingsStorageKey, JSON.stringify(sanitizedSettings));
   };
 
   if (!authUser) {
@@ -429,9 +446,10 @@ export default function App() {
         <main className="main">
           <NewJobPanel
             onSubmit={onSubmitJob}
-            defaultRepo={githubSettings.defaultRepo}
-            defaultBranch={githubSettings.defaultBranch}
+            defaultRepo={repoPath}
+            defaultBranch={repoBranch}
             githubUsername={githubSettings.githubUsername}
+            onRepoBranchChange={onRepoBranchChange}
           />
           <GitHubCredentialsPanel settings={githubSettings} onSave={onSaveGithubSettings} />
           <RepoBrowserPanel repoData={repoData} repoError={repoError} onRefresh={onRefreshRepo} isRefreshing={isRefreshingRepo} />

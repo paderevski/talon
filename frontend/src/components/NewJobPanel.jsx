@@ -2,10 +2,69 @@ import { useEffect, useState } from "react";
 import { fetchGithubPublicRepos, fetchRepoTree } from "../api/client";
 import { normalizeRepoInput } from "../utils/repo";
 
+const jobNameCountersStorageKey = "talon.jobNameCounters";
+
+function toRepoKey(repo) {
+  return normalizeRepoInput(repo) || "job";
+}
+
+function toRepoNameBase(repo) {
+  const normalizedRepo = toRepoKey(repo);
+  const rawRepoName = normalizedRepo.split("/").pop() || normalizedRepo;
+  const cleaned = rawRepoName
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+
+  return cleaned || "job";
+}
+
+function readJobNameCounters() {
+  try {
+    const raw = window.localStorage.getItem(jobNameCountersStorageKey);
+    if (!raw) {
+      return {};
+    }
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+
+function writeJobNameCounters(counters) {
+  window.localStorage.setItem(jobNameCountersStorageKey, JSON.stringify(counters));
+}
+
+function getNextJobName(repo) {
+  const repoKey = toRepoKey(repo);
+  const counters = readJobNameCounters();
+  const current = Number(counters[repoKey] ?? 0);
+  const next = Number.isFinite(current) ? current + 1 : 1;
+  return `${toRepoNameBase(repo)}-${next}`;
+}
+
+function consumeNextJobName(repo) {
+  const repoKey = toRepoKey(repo);
+  const counters = readJobNameCounters();
+  const current = Number(counters[repoKey] ?? 0);
+  const next = Number.isFinite(current) ? current + 1 : 1;
+  counters[repoKey] = next;
+  writeJobNameCounters(counters);
+  return `${toRepoNameBase(repo)}-${next}`;
+}
+
 function makeInitialForm(defaultRepo, defaultBranch) {
+  const repo = defaultRepo || "jane_smith/bert-nlp";
   return {
-    name: "",
-    repo: defaultRepo || "jane_smith/bert-nlp",
+    name: getNextJobName(repo),
+    repo,
     branch: defaultBranch || "main",
     entryScript: "train.py",
     gpuMemory: "Auto (use available)",
@@ -16,8 +75,9 @@ function makeInitialForm(defaultRepo, defaultBranch) {
   };
 }
 
-export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, githubUsername }) {
+export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, githubUsername, onRepoBranchChange }) {
   const [form, setForm] = useState(makeInitialForm(defaultRepo, defaultBranch));
+  const [isAutoName, setIsAutoName] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
   const [repoOptions, setRepoOptions] = useState([]);
@@ -36,8 +96,47 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
     }));
   }, [defaultRepo, defaultBranch]);
 
+  useEffect(() => {
+    setForm((prev) => {
+      const currentName = String(prev.name ?? "").trim();
+      if (!isAutoName && currentName) {
+        return prev;
+      }
+
+      const nextName = getNextJobName(prev.repo);
+      if (nextName === prev.name) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        name: nextName,
+      };
+    });
+  }, [form.repo, isAutoName]);
+
+  useEffect(() => {
+    if (typeof onRepoBranchChange !== "function") {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      onRepoBranchChange(form.repo, form.branch);
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [form.repo, form.branch, onRepoBranchChange]);
+
   const update = (field) => (event) => {
     setForm((prev) => ({ ...prev, [field]: event.target.value }));
+  };
+
+  const onJobNameChange = (event) => {
+    const nextName = event.target.value;
+    setForm((prev) => ({ ...prev, name: nextName }));
+    setIsAutoName(!nextName.trim());
   };
 
   useEffect(() => {
@@ -154,14 +253,31 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
     setSubmitting(true);
     setMessage("");
 
+    const normalizedRepo = normalizeRepoInput(form.repo) || form.repo;
+    const trimmedName = String(form.name ?? "").trim();
+    const shouldUseAutoName = isAutoName || !trimmedName;
+    const generatedName = shouldUseAutoName ? getNextJobName(normalizedRepo) : "";
+    const nameForSubmit = shouldUseAutoName ? generatedName : trimmedName;
+
     try {
-      await onSubmit(form);
+      await onSubmit({
+        ...form,
+        repo: normalizedRepo,
+        name: nameForSubmit,
+      });
+
+      if (shouldUseAutoName) {
+        consumeNextJobName(normalizedRepo);
+      }
+
       setMessage("Job submitted to queue.");
       setForm((prev) => ({
         ...makeInitialForm(defaultRepo, defaultBranch),
+        name: getNextJobName(prev.repo),
         repo: prev.repo,
         branch: prev.branch,
       }));
+      setIsAutoName(true);
     } catch {
       setMessage("Unable to submit job.");
     } finally {
@@ -177,7 +293,7 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
       <form className="new-job-grid" onSubmit={handleSubmit}>
         <div className="form-group">
           <label className="form-label">Job Name</label>
-          <input className="form-input" value={form.name} onChange={update("name")} placeholder="e.g. finetune-bert-v3" />
+          <input className="form-input" value={form.name} onChange={onJobNameChange} placeholder="e.g. bert-nlp-7" />
         </div>
         <div className="form-group">
           <label className="form-label">Repository</label>

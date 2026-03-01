@@ -4,6 +4,92 @@
       "name": "results-persistence-regression",
       "repo": "paderevski/minimal-rnn",
       "status": "completed",
+      "hidden": false,
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1772386909802-qvww6w",
+        "submittedAt": "2026-03-01T17:41:49.802Z"
+      },
+      "id": "job-38",
+      "resultSyncKey": "2026-03-01T17:41:51.226Z"
+    },
+    {
+      "name": "hybrid-regression",
+      "repo": "paderevski/minimal-rnn",
+      "status": "completed",
+      "hidden": false,
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1772386907515-s03k4s",
+        "submittedAt": "2026-03-01T17:41:47.515Z"
+      },
+      "id": "job-37",
+      "resultSyncKey": "2026-03-01T17:41:49.482Z"
+    },
+    {
+      "name": "hide-me-1772386907496",
+      "repo": "paderevski/minimal-rnn",
+      "status": "failed",
+      "hidden": true,
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1772386907501-o34bhw",
+        "submittedAt": "2026-03-01T17:41:47.501Z"
+      },
+      "id": "job-36",
+      "hiddenAt": "2026-03-01T17:41:47.506Z",
+      "hiddenBy": "test-user",
+      "hiddenReason": "cleanup test",
+      "resultSyncKey": "2026-03-01T17:41:48.471Z"
+    },
+    {
+      "name": "minimal-rnn-1",
+      "repo": "paderevski/minimal-rnn",
+      "status": "completed",
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1772386728845-1dkzgi",
+        "submittedAt": "2026-03-01T17:38:48.845Z"
+      },
+      "id": "job-35",
+      "resultSyncKey": "2026-03-01T17:38:49.811Z"
+    },
+    {
+      "name": "talon-1",
+      "repo": "paderevski/talon",
+      "status": "failed",
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1772386699292-3xf1a4",
+        "submittedAt": "2026-03-01T17:38:19.292Z"
+      },
+      "id": "job-34",
+      "resultSyncKey": "2026-03-01T17:38:19.927Z"
+    },
+    {
+      "name": "results-persistence-regression",
+      "repo": "paderevski/minimal-rnn",
+      "status": "completed",
       "gpu": "—",
       "submitted": "just now",
       "duration": "1s",
@@ -494,5 +580,5 @@
       "duration": "12m 04s"
     }
   ],
-  "updatedAt": "2026-03-01T17:26:01.301Z"
+  "updatedAt": "2026-03-01T17:41:51.649Z"
 }
