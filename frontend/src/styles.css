@@ -417,6 +417,9 @@ body {
   display: inline-block;
   margin-right: 8px;
 }
+.job-status-filters-mobile {
+  display: none;
+}
 .filter-chip.active {
   border-color: var(--accent-blue);
   color: var(--accent-blue);
@@ -614,5 +617,44 @@ td:last-child, th:last-child { border-right: none; }
     margin-left: 0;
     width: 100%;
     padding: 16px;
+  }
+}
+
+@media (max-width: 430px) {
+  #results .result-card:nth-child(n + 3) {
+    display: none;
+  }
+
+  .job-status-filters-desktop {
+    display: none;
+  }
+
+  .job-status-filters-mobile {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .job-status-filters-mobile .form-label {
+    margin: 0;
+    white-space: nowrap;
+  }
+
+  .job-status-filters-mobile .form-select {
+    min-width: 140px;
+    padding: 6px 8px;
+  }
+
+  #job-status table th:nth-child(2),
+  #job-status table td:nth-child(2),
+  #job-status table th:nth-child(3),
+  #job-status table td:nth-child(3),
+  #job-status table th:nth-child(4),
+  #job-status table td:nth-child(4),
+  #job-status table th:nth-child(6),
+  #job-status table td:nth-child(6),
+  #job-status table th:nth-child(8),
+  #job-status table td:nth-child(8) {
+    display: none;
   }
 }

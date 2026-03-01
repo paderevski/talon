@@ -77,8 +77,6 @@ export default function RepoBrowserPanel({
             <thead>
               <tr>
                 <th>Name</th>
-                <th>Size</th>
-                <th>Last Commit Message</th>
                 <th>Updated</th>
               </tr>
             </thead>
@@ -93,15 +91,13 @@ export default function RepoBrowserPanel({
                       className={isNavigable ? "repo-row-navigable" : ""}
                     >
                       <td className={`repo-name-cell${isNavigable ? " repo-name-cell-navigable" : ""}`}>{item.name}</td>
-                      <td className="mono-sm">{item.size || "—"}</td>
-                      <td className="repo-commit-cell">{item.lastCommitMessage || "—"}</td>
                       <td className="mono-sm">{item.updated || "—"}</td>
                     </tr>
                   );
                 })
               ) : (
                 <tr>
-                  <td colSpan={4} className="repo-empty-cell">No files found</td>
+                  <td colSpan={2} className="repo-empty-cell">No files found</td>
                 </tr>
               )}
             </tbody>

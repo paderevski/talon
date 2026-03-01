@@ -78,27 +78,44 @@ export default function JobStatusPanel({
       </div>
       <div className="table-card job-status-table-card">
         <div className="table-bar">
-          {jobStatusFilters.map((filter) => {
-            const disabled = isFilterDisabled(filter);
-            const tooltip = getFilterTooltip(filter);
+          <div className="job-status-filters-desktop">
+            {jobStatusFilters.map((filter) => {
+              const disabled = isFilterDisabled(filter);
+              const tooltip = getFilterTooltip(filter);
 
-            return (
-              <span
-                key={filter}
-                className={`filter-chip-wrap ${tooltip ? "has-tooltip" : ""}`}
-                data-tooltip={tooltip || ""}
-              >
-                <button
-                  className={`filter-chip ${activeFilter === filter ? "active" : ""}`}
-                  disabled={disabled}
-                  onClick={() => setActiveFilter(filter)}
-                  type="button"
+              return (
+                <span
+                  key={filter}
+                  className={`filter-chip-wrap ${tooltip ? "has-tooltip" : ""}`}
+                  data-tooltip={tooltip || ""}
                 >
+                  <button
+                    className={`filter-chip ${activeFilter === filter ? "active" : ""}`}
+                    disabled={disabled}
+                    onClick={() => setActiveFilter(filter)}
+                    type="button"
+                  >
+                    {statusLabel(filter)}
+                  </button>
+                </span>
+              );
+            })}
+          </div>
+          <div className="job-status-filters-mobile">
+            <label className="form-label" htmlFor="job-status-filter-select">Filter</label>
+            <select
+              id="job-status-filter-select"
+              className="form-select"
+              value={activeFilter}
+              onChange={(event) => setActiveFilter(event.target.value)}
+            >
+              {jobStatusFilters.map((filter) => (
+                <option key={filter} value={filter} disabled={isFilterDisabled(filter)}>
                   {statusLabel(filter)}
-                </button>
-              </span>
-            );
-          })}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
         <FocusScrollRegion className="job-status-scroll-region" ariaLabel="Job status table">
           <table>
