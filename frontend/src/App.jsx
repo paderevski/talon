@@ -109,6 +109,7 @@ export default function App() {
   const [authError, setAuthError] = useState("");
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [repoPath, setRepoPath] = useState(
     fallbackRepo
   );
@@ -270,6 +271,19 @@ export default function App() {
       document.removeEventListener("keydown", onDocumentKeyDown);
     };
   }, [isUserMenuOpen]);
+
+  useEffect(() => {
+    const onResize = () => {
+      if (window.innerWidth > 900) {
+        setIsMobileNavOpen(false);
+      }
+    };
+
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+    };
+  }, []);
 
   const refreshJobs = async () => {
     const [jobsData, allJobsData] = await Promise.all([
@@ -448,6 +462,7 @@ export default function App() {
     setAuthUser(null);
     window.localStorage.removeItem(authStorageKey);
     setIsUserMenuOpen(false);
+    setIsMobileNavOpen(false);
     setPassword("");
     setAuthError("");
     setRepoData(emptyRepo);
@@ -514,7 +529,18 @@ export default function App() {
   return (
     <div className="app">
       <nav className="topbar">
-        <div className="topbar-brand">Academies of Loudoun</div>
+        <div className="topbar-left">
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm mobile-nav-toggle"
+            aria-expanded={isMobileNavOpen}
+            aria-label="Toggle navigation"
+            onClick={() => setIsMobileNavOpen((previous) => !previous)}
+          >
+            Menu
+          </button>
+          <div className="topbar-brand">Academies of Loudoun</div>
+        </div>
         <div className="topbar-right">
           <div className="server-pill">g4dn.xlarge · us-east-1</div>
           <div className={`user-menu-wrap${isUserMenuOpen ? " menu-open" : ""}`} ref={userMenuRef}>
@@ -545,12 +571,17 @@ export default function App() {
       </nav>
 
       <div className="layout">
-        <nav className="leftnav">
+        <nav className={`leftnav ${isMobileNavOpen ? "mobile-open" : ""}`}>
           <div className="side-title">
             <img src={talonLogo} alt="Talon" className="side-logo" />
           </div>
           {navSections.map((section) => (
-            <a key={section.id} href={`#${section.id}`} className="nav-item">
+            <a
+              key={section.id}
+              href={`#${section.id}`}
+              className="nav-item"
+              onClick={() => setIsMobileNavOpen(false)}
+            >
               {section.label}
               {section.id === "job-status" ? <span className="nav-count">{statusCount}</span> : null}
             </a>

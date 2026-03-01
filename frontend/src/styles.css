@@ -95,6 +95,7 @@ body {
   background: var(--bg-secondary);
 }
 .topbar-brand { font-weight: 800; }
+.topbar-left { display: flex; align-items: center; gap: 10px; }
 .topbar-right { display: flex; gap: 12px; align-items: center; }
 .server-pill, .user-pill {
   border: 1px solid var(--border);
@@ -300,6 +301,9 @@ body {
 .btn-sm {
   padding: 6px 10px;
   font-size: 12px;
+}
+.mobile-nav-toggle {
+  display: none;
 }
 
 .repo-header {
@@ -553,5 +557,62 @@ td:last-child, th:last-child { border-right: none; }
   }
   .submit-actions-row {
     flex-wrap: nowrap;
+  }
+}
+
+@media (max-width: 900px) {
+  .mobile-nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .topbar {
+    padding: 0 12px;
+    gap: 8px;
+  }
+
+  .topbar-brand {
+    font-size: 14px;
+  }
+
+  .server-pill {
+    display: none;
+  }
+
+  .layout {
+    display: block;
+  }
+
+  .leftnav {
+    display: none;
+  }
+
+  .leftnav.mobile-open {
+    display: block;
+    position: fixed;
+    top: 52px;
+    left: 0;
+    right: 0;
+    bottom: auto;
+    width: 100%;
+    min-height: 0;
+    max-height: calc(100vh - 52px);
+    overflow: auto;
+    z-index: 30;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 10px;
+    background: var(--bg-secondary);
+  }
+
+  .leftnav.mobile-open .side-title {
+    display: none;
+  }
+
+  .main {
+    margin-left: 0;
+    width: 100%;
+    padding: 16px;
   }
 }
