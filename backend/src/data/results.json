@@ -1,6 +1,249 @@
 {
   "items": [
     {
+      "id": "result-job-52",
+      "jobId": "job-52",
+      "executionId": "local-1772389866233-zs2mwl",
+      "name": "results-persistence-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "result-persist-output-marker.txt",
+          "size": "38 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "8.1 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "result-persist-repo-marker.txt",
+          "size": "36 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T18:31:06.830Z"
+    },
+    {
+      "id": "result-job-50",
+      "jobId": "job-50",
+      "executionId": "local-1772389864298-eys30j",
+      "name": "hide-me-1772389864292",
+      "status": "failed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution failed (exit code 1)",
+      "finalizedAt": "2026-03-01T18:31:04.824Z"
+    },
+    {
+      "id": "result-job-51",
+      "jobId": "job-51",
+      "executionId": "local-1772389864315-vtqg92",
+      "name": "hybrid-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "test-output-artifact.txt",
+          "size": "25 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "7.1 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "test-repo-artifact.txt",
+          "size": "27 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T18:31:05.605Z"
+    },
+    {
+      "id": "result-job-49",
+      "jobId": "job-49",
+      "executionId": "local-1772389767300-yyx2ww",
+      "name": "results-persistence-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "result-persist-output-marker.txt",
+          "size": "38 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "6.7 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "result-persist-repo-marker.txt",
+          "size": "36 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T18:29:28.300Z"
+    },
+    {
+      "id": "result-job-47",
+      "jobId": "job-47",
+      "executionId": "local-1772389765094-oi0dam",
+      "name": "hide-me-1772389765088",
+      "status": "failed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution failed (exit code 1)",
+      "finalizedAt": "2026-03-01T18:29:25.979Z"
+    },
+    {
+      "id": "result-job-48",
+      "jobId": "job-48",
+      "executionId": "local-1772389765109-rjzik9",
+      "name": "hybrid-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "test-output-artifact.txt",
+          "size": "25 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "7.2 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "test-repo-artifact.txt",
+          "size": "27 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T18:29:26.980Z"
+    },
+    {
+      "id": "result-job-46",
+      "jobId": "job-46",
+      "executionId": "local-1772389616128-oqet3s",
+      "name": "minimal-rnn-3",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "output.txt",
+          "size": "6.9 KB",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T18:26:56.932Z"
+    },
+    {
+      "id": "result-job-45",
+      "jobId": "job-45",
+      "executionId": "local-1772389287959-4am1ps",
+      "name": "results-persistence-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "result-persist-output-marker.txt",
+          "size": "38 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "9.8 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "result-persist-repo-marker.txt",
+          "size": "36 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T18:21:28.524Z"
+    },
+    {
+      "id": "result-job-43",
+      "jobId": "job-43",
+      "executionId": "local-1772389285937-0nody0",
+      "name": "hide-me-1772389285929",
+      "status": "failed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution failed (exit code 1)",
+      "finalizedAt": "2026-03-01T18:21:26.661Z"
+    },
+    {
+      "id": "result-job-44",
+      "jobId": "job-44",
+      "executionId": "local-1772389285954-j96bm1",
+      "name": "hybrid-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "test-output-artifact.txt",
+          "size": "25 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "9.0 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "test-repo-artifact.txt",
+          "size": "27 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T18:21:27.275Z"
+    },
+    {
+      "id": "result-job-42",
+      "jobId": "job-42",
+      "executionId": "local-1772389151723-lfw8vo",
+      "name": "minimal-rnn-2",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "output.txt",
+          "size": "6.8 KB",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T18:19:12.521Z"
+    },
+    {
       "id": "result-job-41",
       "jobId": "job-41",
       "executionId": "local-1772387614417-nsel8t",
@@ -846,5 +1089,5 @@
       ]
     }
   ],
-  "updatedAt": "2026-03-01T17:53:35.779Z"
+  "updatedAt": "2026-03-01T18:31:07.071Z"
 }

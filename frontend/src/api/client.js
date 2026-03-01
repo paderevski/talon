@@ -91,6 +91,18 @@ export function fetchJobFiles(jobId) {
   return getJson(`/api/jobs/${encodeURIComponent(jobId)}/files`);
 }
 
+export function getJobFileDownloadUrl(jobId, fileName, source) {
+  const query = new URLSearchParams({
+    name: String(fileName || ""),
+  });
+
+  if (source) {
+    query.set("source", String(source));
+  }
+
+  return `/api/jobs/${encodeURIComponent(jobId)}/files/download?${query.toString()}`;
+}
+
 export async function cancelJob(jobId) {
   const response = await fetch(
     `/api/jobs/${encodeURIComponent(jobId)}/cancel`,

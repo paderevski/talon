@@ -1,4 +1,8 @@
 import { Router } from "express";
+import { access } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { mapExecutionStateToJobStatus } from "talon-shared/status";
 import {
   cancelExecution,
@@ -13,6 +17,10 @@ import { getJobsRepository } from "../repositories/jobsRepository.js";
 import { getResultsRepository } from "../repositories/resultsRepository.js";
 
 const router = Router();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const runsRootDir = path.resolve(__dirname, "../../data/runs");
 
 const jobsRepository = await getJobsRepository();
 const resultsRepository = await getResultsRepository();
@@ -63,6 +71,64 @@ function normalizeResultFiles(items) {
     size: String(item?.size ?? "").trim(),
     source: item?.source || undefined,
   }));
+}
+
+async function resolveDownloadFilePath(job, source, relativeName) {
+  const executionId = String(job?.executionRef?.executionId || "").trim();
+  if (!executionId) {
+    const error = new Error("Job execution reference is missing");
+    error.status = 400;
+    throw error;
+  }
+
+  const normalizedSource = String(source || "output_dir")
+    .trim()
+    .toLowerCase();
+  const sourceDirNames =
+    normalizedSource === "repo_changed"
+      ? ["repo", "output"]
+      : ["output", "repo"];
+
+  const normalizedName = String(relativeName || "")
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "");
+
+  if (
+    !normalizedName ||
+    path.isAbsolute(normalizedName) ||
+    normalizedName.split("/").includes("..")
+  ) {
+    const error = new Error("Invalid file name");
+    error.status = 400;
+    throw error;
+  }
+
+  for (const sourceDirName of sourceDirNames) {
+    const sourceRootDir = path.resolve(runsRootDir, executionId, sourceDirName);
+    const absolutePath = path.resolve(sourceRootDir, normalizedName);
+    const insideRootDir =
+      absolutePath === sourceRootDir ||
+      absolutePath.startsWith(`${sourceRootDir}${path.sep}`);
+
+    if (!insideRootDir) {
+      continue;
+    }
+
+    try {
+      await access(absolutePath, fsConstants.R_OK);
+      return {
+        absolutePath,
+        downloadName: path.basename(normalizedName),
+      };
+    } catch {
+      // Try the alternate source root before failing.
+    }
+  }
+
+  const error = new Error("File not found");
+  error.status = 404;
+  throw error;
 }
 
 function isTruthyQuery(value) {
@@ -399,6 +465,37 @@ router.get("/:id/files", async (req, res) => {
     return res.status(error?.status || 500).json({
       message: error?.message || "Unable to load output files",
     });
+  }
+});
+
+router.get("/:id/files/download", async (req, res) => {
+  const job = jobsRepository.findById(req.params.id);
+  if (!job) {
+    return res.status(404).json({ message: "Job not found" });
+  }
+
+  if (!job.executionRef) {
+    return res.status(400).json({ message: "Job has no execution reference" });
+  }
+
+  try {
+    const resolved = await resolveDownloadFilePath(
+      job,
+      req.query.source,
+      req.query.name,
+    );
+
+    return res.download(resolved.absolutePath, resolved.downloadName);
+  } catch (error) {
+    const message = error?.message || "Unable to download file";
+    const lowerMessage = message.toLowerCase();
+    const status =
+      error?.status ||
+      (lowerMessage.includes("enoent") || lowerMessage.includes("not found")
+        ? 404
+        : 500);
+
+    return res.status(status).json({ message });
   }
 });
 
