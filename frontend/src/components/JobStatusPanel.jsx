@@ -4,24 +4,69 @@ import {
   statusLabel,
 } from "talon-shared/status";
 
-export default function JobStatusPanel({ jobs, activeFilter, setActiveFilter, executionByJobId, onCancelJob, jobActionError }) {
+export default function JobStatusPanel({
+  jobs,
+  activeFilter,
+  setActiveFilter,
+  statusAvailability,
+  executionByJobId,
+  onCancelJob,
+  onHideJob,
+  onUnhideJob,
+  jobActionError,
+}) {
+  const isFilterDisabled = (filter) => {
+    if (filter === "running") {
+      return !statusAvailability?.hasRunning;
+    }
+
+    if (filter === "queued") {
+      return !statusAvailability?.hasQueued;
+    }
+
+    return false;
+  };
+
+  const getFilterTooltip = (filter) => {
+    if (filter === "running" && !statusAvailability?.hasRunning) {
+      return "No running jobs";
+    }
+
+    if (filter === "queued" && !statusAvailability?.hasQueued) {
+      return "No queued jobs";
+    }
+
+    return undefined;
+  };
+
   return (
     <section className="panel" id="job-status">
       <div className="panel-head">
         <h2 className="panel-title">Job Status</h2>
       </div>
-      <div className="table-card">
+      <div className="table-card job-status-table-card">
         <div className="table-bar">
-          {jobStatusFilters.map((filter) => (
-            <button
-              key={filter}
-              className={`filter-chip ${activeFilter === filter ? "active" : ""}`}
-              onClick={() => setActiveFilter(filter)}
-              type="button"
-            >
-              {statusLabel(filter)}
-            </button>
-          ))}
+          {jobStatusFilters.map((filter) => {
+            const disabled = isFilterDisabled(filter);
+            const tooltip = getFilterTooltip(filter);
+
+            return (
+              <span
+                key={filter}
+                className={`filter-chip-wrap ${tooltip ? "has-tooltip" : ""}`}
+                data-tooltip={tooltip || ""}
+              >
+                <button
+                  className={`filter-chip ${activeFilter === filter ? "active" : ""}`}
+                  disabled={disabled}
+                  onClick={() => setActiveFilter(filter)}
+                  type="button"
+                >
+                  {statusLabel(filter)}
+                </button>
+              </span>
+            );
+          })}
         </div>
         <table>
           <thead>
@@ -57,6 +102,15 @@ export default function JobStatusPanel({ jobs, activeFilter, setActiveFilter, ex
                       Cancel
                     </button>
                   ) : null}
+                  {job.hidden ? (
+                    <button className="btn btn-secondary btn-sm" type="button" onClick={() => onUnhideJob(job.id)}>
+                      Unhide
+                    </button>
+                  ) : (
+                    <button className="btn btn-secondary btn-sm" type="button" onClick={() => onHideJob(job.id)}>
+                      Hide
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}

@@ -64,7 +64,15 @@ export function fetchRepoTree(
 }
 
 export function fetchJobs(filter = "all") {
-  return getJson(`/api/jobs?status=${encodeURIComponent(filter)}`);
+  const query = new URLSearchParams({
+    status: String(filter || "all"),
+  });
+
+  if (filter === "hidden") {
+    query.set("includeHidden", "1");
+  }
+
+  return getJson(`/api/jobs?${query.toString()}`);
 }
 
 export function fetchResults() {
@@ -94,6 +102,54 @@ export async function cancelJob(jobId) {
 
   if (!response.ok) {
     let message = `Unable to cancel job (${response.status})`;
+    try {
+      const body = await response.json();
+      if (body?.message) {
+        message = body.message;
+      }
+    } catch {
+      // Ignore parse errors and keep fallback message.
+    }
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+export async function hideJob(jobId, reason) {
+  const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
+    method: "DELETE",
+    headers: getRequestHeaders(true),
+    body: JSON.stringify({ reason }),
+  });
+
+  if (!response.ok) {
+    let message = `Unable to hide job (${response.status})`;
+    try {
+      const body = await response.json();
+      if (body?.message) {
+        message = body.message;
+      }
+    } catch {
+      // Ignore parse errors and keep fallback message.
+    }
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+export async function unhideJob(jobId) {
+  const response = await fetch(
+    `/api/jobs/${encodeURIComponent(jobId)}/unhide`,
+    {
+      method: "POST",
+      headers: getRequestHeaders(),
+    },
+  );
+
+  if (!response.ok) {
+    let message = `Unable to unhide job (${response.status})`;
     try {
       const body = await response.json();
       if (body?.message) {

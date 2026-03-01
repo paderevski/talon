@@ -1,11 +1,12 @@
 export const jobStatusValues = ["queued", "running", "completed", "failed"];
 
 export const jobStatusFilters = [
-  "all",
+  "completed",
   "running",
   "queued",
-  "completed",
   "failed",
+  "hidden",
+  "all",
 ];
 
 export function statusLabel(value) {

@@ -68,4 +68,50 @@ export async function run({ baseUrl }) {
   );
   assert(hiddenJob, "Expected hidden job included when includeHidden=true");
   assert(hiddenJob.hidden === true, "Expected hidden job retained for audit");
+
+  const hiddenFilterResponse = await fetch(
+    `${baseUrl}/api/jobs?status=hidden&includeHidden=true`,
+  );
+  assert(
+    hiddenFilterResponse.ok,
+    `Expected hidden filter list 200, got ${hiddenFilterResponse.status}`,
+  );
+  const hiddenFilterBody = await hiddenFilterResponse.json();
+  const hiddenFilterIds = new Set(
+    (hiddenFilterBody?.items || []).map((item) => item.id),
+  );
+  assert(
+    hiddenFilterIds.has(jobId),
+    "Expected hidden filter endpoint to include hidden job",
+  );
+
+  const unhideResponse = await fetch(`${baseUrl}/api/jobs/${jobId}/unhide`, {
+    method: "POST",
+    headers: {
+      "x-auth-user": "test-user",
+    },
+  });
+  assert(
+    unhideResponse.ok,
+    `Expected unhide endpoint 200, got ${unhideResponse.status}`,
+  );
+  const unhideBody = await unhideResponse.json();
+  assert(
+    unhideBody?.job?.hidden === false,
+    "Expected hidden=false after unhide",
+  );
+
+  const afterUnhideDefault = await fetch(`${baseUrl}/api/jobs?status=all`);
+  assert(
+    afterUnhideDefault.ok,
+    `Expected default list after unhide 200, got ${afterUnhideDefault.status}`,
+  );
+  const afterUnhideDefaultBody = await afterUnhideDefault.json();
+  const afterUnhideIds = new Set(
+    (afterUnhideDefaultBody?.items || []).map((item) => item.id),
+  );
+  assert(
+    afterUnhideIds.has(jobId),
+    "Expected unhidden job to be visible in default jobs list",
+  );
 }

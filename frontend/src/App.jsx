@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { cancelJob, fetchJobDetails, fetchJobFiles, fetchJobs, fetchRepoTree, fetchResults, login, setApiAuthUser, submitJob } from "./api/client";
+import { cancelJob, fetchJobDetails, fetchJobFiles, fetchJobs, fetchRepoTree, fetchResults, hideJob, login, setApiAuthUser, submitJob, unhideJob } from "./api/client";
 import NewJobPanel from "./components/NewJobPanel";
 import RepoBrowserPanel from "./components/RepoBrowserPanel";
 import JobStatusPanel from "./components/JobStatusPanel";
@@ -26,6 +26,35 @@ const fallbackBranch = "main";
 const defaultGithubSettings = {
   githubUsername: "",
 };
+
+const autoStatusFilters = new Set(["completed", "queued", "running"]);
+
+function getPreferredStatusFilter(jobItems) {
+  const visibleJobs = Array.isArray(jobItems)
+    ? jobItems.filter((job) => !job.hidden)
+    : [];
+
+  if (visibleJobs.some((job) => job.status === "running")) {
+    return "running";
+  }
+
+  if (visibleJobs.some((job) => job.status === "queued")) {
+    return "queued";
+  }
+
+  return "completed";
+}
+
+function getStatusAvailability(jobItems) {
+  const visibleJobs = Array.isArray(jobItems)
+    ? jobItems.filter((job) => !job.hidden)
+    : [];
+
+  return {
+    hasRunning: visibleJobs.some((job) => job.status === "running"),
+    hasQueued: visibleJobs.some((job) => job.status === "queued"),
+  };
+}
 
 function getStoredAuthUser() {
   try {
@@ -91,7 +120,11 @@ export default function App() {
   const [executionByJobId, setExecutionByJobId] = useState({});
   const [filesByJobId, setFilesByJobId] = useState({});
   const [jobActionError, setJobActionError] = useState("");
-  const [activeFilter, setActiveFilter] = useState("all");
+  const [activeFilter, setActiveFilter] = useState("completed");
+  const [statusAvailability, setStatusAvailability] = useState({
+    hasRunning: false,
+    hasQueued: false,
+  });
   const [isRefreshingRepo, setIsRefreshingRepo] = useState(false);
   const userMenuRef = useRef(null);
 
@@ -139,9 +172,10 @@ export default function App() {
   };
 
   const load = async () => {
-    const [repoResult, jobsResult, resultsResult] = await Promise.allSettled([
+    const [repoResult, jobsResult, allJobsResult, resultsResult] = await Promise.allSettled([
       fetchRepoTree(repoPath, repoBranch),
       fetchJobs(activeFilter),
+      fetchJobs("all"),
       fetchResults()
     ]);
 
@@ -161,6 +195,20 @@ export default function App() {
       setJobs([]);
       setExecutionByJobId({});
       setFilesByJobId({});
+    }
+
+    if (
+      allJobsResult.status === "fulfilled" &&
+      autoStatusFilters.has(activeFilter)
+    ) {
+      const allJobs = allJobsResult.value.items || [];
+      setStatusAvailability(getStatusAvailability(allJobs));
+      const preferredFilter = getPreferredStatusFilter(allJobs);
+      if (preferredFilter !== activeFilter) {
+        setActiveFilter(preferredFilter);
+      }
+    } else if (allJobsResult.status === "fulfilled") {
+      setStatusAvailability(getStatusAvailability(allJobsResult.value.items || []));
     }
 
     if (resultsResult.status === "fulfilled") {
@@ -223,16 +271,31 @@ export default function App() {
   }, [isUserMenuOpen]);
 
   const refreshJobs = async () => {
-    const jobsData = await fetchJobs(activeFilter);
+    const [jobsData, allJobsData] = await Promise.all([
+      fetchJobs(activeFilter),
+      fetchJobs("all"),
+    ]);
     const items = jobsData.items || [];
     setJobs(items);
     await hydrateJobRuntime(items);
+
+    if (autoStatusFilters.has(activeFilter)) {
+      const allJobs = allJobsData.items || [];
+      setStatusAvailability(getStatusAvailability(allJobs));
+      const preferredFilter = getPreferredStatusFilter(allJobs);
+      if (preferredFilter !== activeFilter) {
+        setActiveFilter(preferredFilter);
+      }
+    } else {
+      setStatusAvailability(getStatusAvailability(allJobsData.items || []));
+    }
   };
 
   const pollRuntimeState = async () => {
 
-    const [jobsResult, resultsResult] = await Promise.allSettled([
+    const [jobsResult, allJobsResult, resultsResult] = await Promise.allSettled([
       fetchJobs(activeFilter),
+      fetchJobs("all"),
       fetchResults(),
     ]);
 
@@ -240,6 +303,20 @@ export default function App() {
       const items = jobsResult.value.items || [];
       setJobs(items);
       await hydrateJobRuntime(items);
+    }
+
+    if (
+      allJobsResult.status === "fulfilled" &&
+      autoStatusFilters.has(activeFilter)
+    ) {
+      const allJobs = allJobsResult.value.items || [];
+      setStatusAvailability(getStatusAvailability(allJobs));
+      const preferredFilter = getPreferredStatusFilter(allJobs);
+      if (preferredFilter !== activeFilter) {
+        setActiveFilter(preferredFilter);
+      }
+    } else if (allJobsResult.status === "fulfilled") {
+      setStatusAvailability(getStatusAvailability(allJobsResult.value.items || []));
     }
 
     if (resultsResult.status === "fulfilled") {
@@ -255,6 +332,28 @@ export default function App() {
       await refreshJobs();
     } catch (error) {
       setJobActionError(error?.message || "Unable to cancel job");
+    }
+  };
+
+  const onHideJob = async (jobId) => {
+    setJobActionError("");
+
+    try {
+      await hideJob(jobId, "Hidden from Job Status panel");
+      await refreshJobs();
+    } catch (error) {
+      setJobActionError(error?.message || "Unable to hide job");
+    }
+  };
+
+  const onUnhideJob = async (jobId) => {
+    setJobActionError("");
+
+    try {
+      await unhideJob(jobId);
+      await refreshJobs();
+    } catch (error) {
+      setJobActionError(error?.message || "Unable to unhide job");
     }
   };
 
@@ -344,7 +443,7 @@ export default function App() {
     setExecutionByJobId({});
     setFilesByJobId({});
     setJobActionError("");
-    setActiveFilter("all");
+    setActiveFilter("completed");
   };
 
   const onSaveGithubSettings = (nextSettings) => {
@@ -457,8 +556,11 @@ export default function App() {
             jobs={jobs}
             activeFilter={activeFilter}
             setActiveFilter={setActiveFilter}
+            statusAvailability={statusAvailability}
             executionByJobId={executionByJobId}
             onCancelJob={onCancelJob}
+            onHideJob={onHideJob}
+            onUnhideJob={onUnhideJob}
             jobActionError={jobActionError}
           />
           <ResultsPanel results={results} jobs={jobs} filesByJobId={filesByJobId} />

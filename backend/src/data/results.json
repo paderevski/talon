@@ -1,6 +1,75 @@
 {
   "items": [
     {
+      "id": "result-job-41",
+      "jobId": "job-41",
+      "executionId": "local-1772387614417-nsel8t",
+      "name": "results-persistence-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "result-persist-output-marker.txt",
+          "size": "38 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "12 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "result-persist-repo-marker.txt",
+          "size": "36 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T17:53:35.386Z"
+    },
+    {
+      "id": "result-job-39",
+      "jobId": "job-39",
+      "executionId": "local-1772387612203-jwz0oe",
+      "name": "hide-me-1772387612196",
+      "status": "failed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution failed (exit code 1)",
+      "finalizedAt": "2026-03-01T17:53:33.100Z"
+    },
+    {
+      "id": "result-job-40",
+      "jobId": "job-40",
+      "executionId": "local-1772387612218-7ju38j",
+      "name": "hybrid-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "test-output-artifact.txt",
+          "size": "25 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "12 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "test-repo-artifact.txt",
+          "size": "27 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T17:53:34.007Z"
+    },
+    {
       "id": "result-job-38",
       "jobId": "job-38",
       "executionId": "local-1772386909802-qvww6w",
@@ -777,5 +846,5 @@
       ]
     }
   ],
-  "updatedAt": "2026-03-01T17:41:51.649Z"
+  "updatedAt": "2026-03-01T17:53:35.779Z"
 }

@@ -209,6 +209,12 @@ router.get("/", async (req, res) => {
     ? itemsWithExecution
     : itemsWithExecution.filter((job) => !job.hidden);
 
+  if (status === "hidden") {
+    return res.json({
+      items: itemsWithExecution.filter((job) => job.hidden),
+    });
+  }
+
   if (!status || status === "all") {
     return res.json({ items: visibleItems });
   }
@@ -450,6 +456,41 @@ router.delete("/:id", async (req, res) => {
   return res.json({
     message: "Job hidden from default history",
     job: hiddenJob,
+  });
+});
+
+router.post("/:id/unhide", async (req, res) => {
+  const jobs = jobsRepository.list();
+  const index = jobs.findIndex((job) => job.id === req.params.id);
+
+  if (index < 0) {
+    return res.status(404).json({ message: "Job not found" });
+  }
+
+  const currentJob = jobs[index];
+  if (!currentJob.hidden) {
+    return res.json({
+      message: "Job already visible",
+      job: currentJob,
+    });
+  }
+
+  const visibleJob = {
+    ...currentJob,
+    hidden: false,
+    hiddenAt: undefined,
+    hiddenBy: undefined,
+    hiddenReason: undefined,
+  };
+
+  const nextJobs = jobs.map((job) =>
+    job.id === visibleJob.id ? visibleJob : job,
+  );
+  await jobsRepository.setAll(nextJobs);
+
+  return res.json({
+    message: "Job restored to default history",
+    job: visibleJob,
   });
 });
 

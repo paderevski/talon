@@ -341,7 +341,6 @@ body {
   font-size: 12px;
 }
 .filter-chip {
-  margin-right: 8px;
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-secondary);
@@ -349,10 +348,50 @@ body {
   padding: 5px 9px;
   cursor: pointer;
 }
+.filter-chip-wrap {
+  position: relative;
+  display: inline-block;
+  margin-right: 8px;
+}
 .filter-chip.active {
   border-color: var(--accent-blue);
   color: var(--accent-blue);
   background: var(--accent-blue-glow);
+}
+.filter-chip:disabled {
+  color: var(--text-muted);
+  border-color: var(--border);
+  background: transparent;
+  opacity: 0.62;
+  cursor: default;
+}
+.filter-chip-wrap.has-tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translate(-50%, 2px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  font-size: 11px;
+  padding: 4px 8px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 90ms ease, transform 90ms ease;
+  transition-delay: 140ms;
+  z-index: 12;
+}
+.filter-chip-wrap.has-tooltip:hover::after,
+.filter-chip-wrap.has-tooltip:focus-within::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  transition-delay: 0ms;
+}
+.job-status-table-card {
+  overflow: visible;
 }
 
 table {
