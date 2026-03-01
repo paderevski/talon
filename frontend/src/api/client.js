@@ -1,3 +1,5 @@
+import { splitRepoPath } from "../utils/repo";
+
 const headers = {
   "Content-Type": "application/json",
 };
@@ -38,8 +40,8 @@ export function fetchRepoTree(
   options = {},
 ) {
   const force = options.force === true;
-  const [owner, repo] = repoPath.split("/");
-  if (!owner || !repo) {
+  const parsedRepo = splitRepoPath(repoPath);
+  if (!parsedRepo) {
     return Promise.resolve({
       repository: repoPath,
       branch,
@@ -56,7 +58,9 @@ export function fetchRepoTree(
     query.set("force", "1");
   }
 
-  return getJson(`/api/repos/${owner}/${repo}/tree?${query.toString()}`);
+  return getJson(
+    `/api/repos/${parsedRepo.owner}/${parsedRepo.repo}/tree?${query.toString()}`,
+  );
 }
 
 export function fetchJobs(filter = "all") {

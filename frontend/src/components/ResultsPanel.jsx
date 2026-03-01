@@ -1,6 +1,4 @@
-function label(status) {
-  return status.charAt(0).toUpperCase() + status.slice(1);
-}
+import { statusLabel } from "talon-shared/status";
 
 function formatOutputFile(file, index) {
   const value = typeof file === "string" ? { name: file, size: "" } : file;
@@ -34,7 +32,7 @@ export default function ResultsPanel({ results, jobs, filesByJobId }) {
           <div className="result-card" key={result.id}>
             <div className="result-card-head">
               <div className="result-job-name">{result.name}</div>
-              <span className={`status-pill ${result.status}`}>{label(result.status)}</span>
+              <span className={`status-pill ${result.status}`}>{statusLabel(result.status)}</span>
             </div>
             <div className="result-meta">
               <div className="result-meta-row">

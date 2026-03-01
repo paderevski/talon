@@ -1,8 +1,8 @@
-const filters = ["all", "running", "queued", "completed", "failed"];
-
-function toLabel(status) {
-  return status.charAt(0).toUpperCase() + status.slice(1);
-}
+import {
+  isCancelableJobStatus,
+  jobStatusFilters,
+  statusLabel,
+} from "talon-shared/status";
 
 export default function JobStatusPanel({ jobs, activeFilter, setActiveFilter, executionByJobId, onCancelJob, jobActionError }) {
   return (
@@ -12,14 +12,14 @@ export default function JobStatusPanel({ jobs, activeFilter, setActiveFilter, ex
       </div>
       <div className="table-card">
         <div className="table-bar">
-          {filters.map((filter) => (
+          {jobStatusFilters.map((filter) => (
             <button
               key={filter}
               className={`filter-chip ${activeFilter === filter ? "active" : ""}`}
               onClick={() => setActiveFilter(filter)}
               type="button"
             >
-              {toLabel(filter)}
+              {statusLabel(filter)}
             </button>
           ))}
         </div>
@@ -44,7 +44,7 @@ export default function JobStatusPanel({ jobs, activeFilter, setActiveFilter, ex
                 <td>
                   <span className={`status-pill ${job.status}`}>
                     <span className="sdot" />
-                    {toLabel(job.status)}
+                    {statusLabel(job.status)}
                   </span>
                 </td>
                 <td className="mono-sm">{executionByJobId?.[job.id]?.state || "—"}</td>
@@ -52,7 +52,7 @@ export default function JobStatusPanel({ jobs, activeFilter, setActiveFilter, ex
                 <td className="mono-sm">{job.submitted}</td>
                 <td className="mono-sm">{job.duration}</td>
                 <td>
-                  {(job.status === "running" || job.status === "queued") ? (
+                  {isCancelableJobStatus(job.status) ? (
                     <button className="btn btn-secondary btn-sm" type="button" onClick={() => onCancelJob(job.id)}>
                       Cancel
                     </button>

@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { mapExecutionStateToJobStatus } from "talon-shared/status";
 import { jobs } from "../data/mockData.js";
 import {
   cancelExecution,
@@ -14,30 +15,6 @@ const router = Router();
 
 function findJobById(jobId) {
   return jobs.find((job) => job.id === jobId);
-}
-
-function mapExecutionStateToJobStatus(executionState) {
-  if (!executionState) {
-    return "queued";
-  }
-
-  if (executionState === "running") {
-    return "running";
-  }
-
-  if (executionState === "completed") {
-    return "completed";
-  }
-
-  if (executionState === "failed") {
-    return "failed";
-  }
-
-  if (executionState === "cancelled") {
-    return "failed";
-  }
-
-  return "queued";
 }
 
 router.get("/", async (req, res) => {

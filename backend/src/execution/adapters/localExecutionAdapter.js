@@ -10,6 +10,7 @@ import {
 import { constants as fsConstants } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { assertRepoPath } from "talon-shared/repo";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,14 +33,6 @@ const excludedArtifactPrefixes = [
 
 function makeExecutionId() {
   return `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function assertRepoFormat(repo) {
-  const normalized = String(repo ?? "").trim();
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(normalized)) {
-    throw new Error("Invalid repository format. Expected owner/repo");
-  }
-  return normalized;
 }
 
 function assertEntryScriptPath(entryScript) {
@@ -399,7 +392,7 @@ export default function createLocalExecutionAdapter() {
     provider: "local",
 
     async start(jobSpec) {
-      const normalizedRepo = assertRepoFormat(jobSpec?.repo);
+      const normalizedRepo = assertRepoPath(jobSpec?.repo);
       const normalizedBranch =
         String(jobSpec?.branch || "main").trim() || "main";
       const normalizedEntryScript = assertEntryScriptPath(jobSpec?.entryScript);
