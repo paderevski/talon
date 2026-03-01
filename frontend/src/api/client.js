@@ -2,6 +2,9 @@ const headers = {
   "Content-Type": "application/json",
 };
 
+const githubRepoCacheTtlMs = 5 * 60 * 1000;
+const githubRepoCache = new Map();
+
 async function getJson(path) {
   const response = await fetch(path);
   if (!response.ok) {
@@ -13,7 +16,9 @@ async function getJson(path) {
 export function fetchRepoTree(
   repoPath = "jane_smith/bert-nlp",
   branch = "main",
+  options = {},
 ) {
+  const force = options.force === true;
   const [owner, repo] = repoPath.split("/");
   if (!owner || !repo) {
     return Promise.resolve({
@@ -23,9 +28,16 @@ export function fetchRepoTree(
       items: [],
     });
   }
-  return getJson(
-    `/api/repos/${owner}/${repo}/tree?branch=${encodeURIComponent(branch || "main")}`,
-  );
+
+  const query = new URLSearchParams({
+    branch: branch || "main",
+  });
+
+  if (force) {
+    query.set("force", "1");
+  }
+
+  return getJson(`/api/repos/${owner}/${repo}/tree?${query.toString()}`);
 }
 
 export function fetchJobs(filter = "all") {
@@ -79,11 +91,22 @@ export async function fetchGithubPublicRepos(username) {
     return [];
   }
 
+  const cacheKey = normalizedUsername.toLowerCase();
+  const cached = githubRepoCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < githubRepoCacheTtlMs) {
+    return cached.repos;
+  }
+
   const response = await fetch(
     `https://api.github.com/users/${encodeURIComponent(normalizedUsername)}/repos?type=public&sort=updated&per_page=100`,
   );
 
   if (!response.ok) {
+    if (response.status === 403) {
+      throw new Error(
+        "GitHub API rate limit reached (403). Try again in a few minutes",
+      );
+    }
     throw new Error(`Unable to load repositories (${response.status})`);
   }
 
@@ -92,7 +115,14 @@ export async function fetchGithubPublicRepos(username) {
     return [];
   }
 
-  return items
+  const repos = items
     .map((item) => String(item?.full_name ?? "").trim())
     .filter(Boolean);
+
+  githubRepoCache.set(cacheKey, {
+    timestamp: Date.now(),
+    repos,
+  });
+
+  return repos;
 }

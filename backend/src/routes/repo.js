@@ -1,6 +1,37 @@
 import { Router } from "express";
 
 const router = Router();
+const repoTreeCache = new Map();
+const pathCommitCache = new Map();
+
+const repoTreeCacheTtlMs = 10 * 60 * 1000;
+const pathCommitCacheTtlMs = 60 * 60 * 1000;
+
+function pruneExpiredCaches() {
+  const now = Date.now();
+
+  for (const [key, entry] of repoTreeCache.entries()) {
+    if (now - entry.cachedAt > repoTreeCacheTtlMs) {
+      repoTreeCache.delete(key);
+    }
+  }
+
+  for (const [key, entry] of pathCommitCache.entries()) {
+    if (now - entry.cachedAt > pathCommitCacheTtlMs) {
+      pathCommitCache.delete(key);
+    }
+  }
+}
+
+async function getJsonOrThrow(url, errorMessage) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    const error = new Error(errorMessage);
+    error.status = response.status;
+    throw error;
+  }
+  return response.json();
+}
 
 function formatBytes(bytes) {
   if (typeof bytes !== "number" || Number.isNaN(bytes)) {
@@ -23,53 +54,89 @@ function formatBytes(bytes) {
   return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unitIndex]}`;
 }
 
-async function fetchLatestCommitForPath(owner, repo, branch, path) {
+async function fetchLatestCommitForPath(
+  owner,
+  repo,
+  branch,
+  headSha,
+  path,
+  skipCache = false,
+) {
+  const cacheKey = `${owner}/${repo}@${branch}#${headSha}:${path}`;
+  const cached = pathCommitCache.get(cacheKey);
+
+  if (
+    !skipCache &&
+    cached &&
+    Date.now() - cached.cachedAt <= pathCommitCacheTtlMs
+  ) {
+    return cached.value;
+  }
+
   try {
-    const response = await fetch(
+    const commits = await getJsonOrThrow(
       `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits?sha=${encodeURIComponent(branch)}&path=${encodeURIComponent(path)}&per_page=1`,
+      "Unable to fetch latest commit for path",
     );
-
-    if (!response.ok) {
-      return {
-        lastCommitMessage: "—",
-        updated: "—",
-      };
-    }
-
-    const commits = await response.json();
     const latestCommit = Array.isArray(commits) ? commits[0] : null;
 
     if (!latestCommit) {
-      return {
+      const emptyValue = {
         lastCommitMessage: "—",
         updated: "—",
       };
+      pathCommitCache.set(cacheKey, {
+        cachedAt: Date.now(),
+        value: emptyValue,
+      });
+      return emptyValue;
     }
 
-    return {
+    const value = {
       lastCommitMessage: latestCommit.commit?.message?.split("\n")[0] || "—",
       updated: latestCommit.commit?.author?.date
         ? new Date(latestCommit.commit.author.date).toLocaleString()
         : "—",
     };
+
+    pathCommitCache.set(cacheKey, { cachedAt: Date.now(), value });
+    return value;
   } catch {
-    return {
+    const fallbackValue = {
       lastCommitMessage: "—",
       updated: "—",
     };
+
+    pathCommitCache.set(cacheKey, {
+      cachedAt: Date.now(),
+      value: fallbackValue,
+    });
+    return fallbackValue;
   }
 }
 
-async function mapContentItem(owner, repo, branch, item) {
+async function mapContentItem(
+  owner,
+  repo,
+  branch,
+  headSha,
+  item,
+  skipCache = false,
+) {
   const commitInfo = await fetchLatestCommitForPath(
     owner,
     repo,
     branch,
+    headSha,
     item.path || item.name,
+    skipCache,
   );
 
   return {
     name: item.type === "dir" ? `📁 ${item.name}` : item.name,
+    rawName: item.name,
+    path: item.path || item.name,
+    type: item.type,
     size:
       item.type === "file" && typeof item.size === "number"
         ? formatBytes(item.size)
@@ -82,20 +149,34 @@ async function mapContentItem(owner, repo, branch, item) {
 router.get("/:owner/:repo/tree", async (req, res) => {
   const { owner, repo } = req.params;
   const requestedBranch = String(req.query.branch ?? "").trim();
+  const forceRefresh = String(req.query.force ?? "").trim() === "1";
 
   try {
-    const repoResponse = await fetch(
+    pruneExpiredCaches();
+
+    const repoInfo = await getJsonOrThrow(
       `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+      "Repository lookup failed",
+    );
+    const branch = requestedBranch || repoInfo.default_branch || "main";
+
+    const headCommit = await getJsonOrThrow(
+      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(branch)}`,
+      "Unable to fetch branch head",
     );
 
-    if (!repoResponse.ok) {
-      return res
-        .status(repoResponse.status)
-        .json({ message: "Repository lookup failed" });
-    }
+    const headSha = headCommit?.sha || "";
+    const cacheKey = `${owner}/${repo}@${branch}`;
+    const cachedTree = repoTreeCache.get(cacheKey);
 
-    const repoInfo = await repoResponse.json();
-    const branch = requestedBranch || repoInfo.default_branch || "main";
+    if (
+      !forceRefresh &&
+      cachedTree &&
+      cachedTree.headSha === headSha &&
+      Date.now() - cachedTree.cachedAt <= repoTreeCacheTtlMs
+    ) {
+      return res.json(cachedTree.payload);
+    }
 
     const contentsResponse = await fetch(
       `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents?ref=${encodeURIComponent(branch)}`,
@@ -110,18 +191,34 @@ router.get("/:owner/:repo/tree", async (req, res) => {
     const contents = await contentsResponse.json();
     const contentItems = Array.isArray(contents) ? contents : [contents];
     const items = await Promise.all(
-      contentItems.map((item) => mapContentItem(owner, repo, branch, item)),
+      contentItems.map((item) =>
+        mapContentItem(owner, repo, branch, headSha, item, forceRefresh),
+      ),
     );
 
-    return res.json({
+    const payload = {
       repository: `${owner}/${repo}`,
       branch,
-      lastCommit: repoInfo.pushed_at
-        ? `Updated ${new Date(repoInfo.pushed_at).toLocaleString()}`
+      lastCommit: headCommit?.commit?.author?.date
+        ? `Updated ${new Date(headCommit.commit.author.date).toLocaleString()}`
         : "unknown",
       items,
+    };
+
+    repoTreeCache.set(cacheKey, {
+      cachedAt: Date.now(),
+      headSha,
+      payload,
     });
-  } catch {
+
+    return res.json(payload);
+  } catch (error) {
+    if (error?.status) {
+      return res
+        .status(error.status)
+        .json({ message: error.message || "Repository lookup failed" });
+    }
+
     return res.status(500).json({ message: "Unable to load repository data" });
   }
 });

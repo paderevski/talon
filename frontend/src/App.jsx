@@ -78,6 +78,7 @@ export default function App() {
   const [jobs, setJobs] = useState([]);
   const [results, setResults] = useState([]);
   const [activeFilter, setActiveFilter] = useState("all");
+  const [isRefreshingRepo, setIsRefreshingRepo] = useState(false);
   const userMenuRef = useRef(null);
 
   const load = async () => {
@@ -133,6 +134,16 @@ export default function App() {
   const refreshJobs = async () => {
     const jobsData = await fetchJobs(activeFilter);
     setJobs(jobsData.items || []);
+  };
+
+  const onRefreshRepo = async () => {
+    setIsRefreshingRepo(true);
+    try {
+      const repo = await fetchRepoTree(repoPath, repoBranch, { force: true });
+      setRepoData(repo);
+    } finally {
+      setIsRefreshingRepo(false);
+    }
   };
 
   const onSubmitJob = async (form) => {
@@ -297,9 +308,10 @@ export default function App() {
             onSubmit={onSubmitJob}
             defaultRepo={githubSettings.defaultRepo}
             defaultBranch={githubSettings.defaultBranch}
+            githubUsername={githubSettings.githubUsername}
           />
           <GitHubCredentialsPanel settings={githubSettings} onSave={onSaveGithubSettings} />
-          <RepoBrowserPanel repoData={repoData} />
+          <RepoBrowserPanel repoData={repoData} onRefresh={onRefreshRepo} isRefreshing={isRefreshingRepo} />
           <JobStatusPanel jobs={jobs} activeFilter={activeFilter} setActiveFilter={setActiveFilter} />
           <ResultsPanel results={results} />
         </main>

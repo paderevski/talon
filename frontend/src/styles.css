@@ -279,6 +279,10 @@ body {
   color: var(--text-secondary);
   border: 1px solid var(--border);
 }
+.btn-sm {
+  padding: 6px 10px;
+  font-size: 12px;
+}
 
 .repo-header {
   display: flex;

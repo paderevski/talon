@@ -1,8 +1,11 @@
-export default function RepoBrowserPanel({ repoData }) {
+export default function RepoBrowserPanel({ repoData, onRefresh, isRefreshing }) {
   return (
     <section className="panel" id="repo-browser">
       <div className="panel-head">
         <h2 className="panel-title">Repo Browser</h2>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={onRefresh} disabled={isRefreshing}>
+          {isRefreshing ? "Refreshing..." : "Refresh"}
+        </button>
       </div>
       <div className="repo-header">
         <span className="repo-path">{repoData.repository}</span>

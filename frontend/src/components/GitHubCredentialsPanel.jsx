@@ -12,6 +12,7 @@ export default function GitHubCredentialsPanel({ settings, onSave }) {
   const [repoOptions, setRepoOptions] = useState([]);
   const [isLoadingRepos, setIsLoadingRepos] = useState(false);
   const [repoError, setRepoError] = useState("");
+  const canUseRepoDropdown = githubUsername.trim() && !repoError && repoOptions.length > 0;
 
   useEffect(() => {
     setGithubUsername(settings.githubUsername || "");
@@ -116,7 +117,7 @@ export default function GitHubCredentialsPanel({ settings, onSave }) {
 
         <div className="form-group full">
           <label className="form-label" htmlFor="github-default-repo">Default Repository</label>
-          {githubUsername.trim() ? (
+          {canUseRepoDropdown ? (
             <select
               id="github-default-repo"
               className="form-select"
@@ -144,10 +145,10 @@ export default function GitHubCredentialsPanel({ settings, onSave }) {
             />
           )}
           {repoError ? (
-            <span className="form-hint">{repoError}. You can still type a repo URL manually by clearing username.</span>
+            <span className="form-hint">{repoError}. Using manual repository input for now.</span>
           ) : (
             <span className="form-hint">
-              {githubUsername.trim()
+              {canUseRepoDropdown
                 ? "Showing public repositories for this username."
                 : "Paste full GitHub URL or use owner/repo. Stored in local browser storage for now."}
             </span>

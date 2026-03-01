@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { fetchGithubPublicRepos, fetchRepoTree } from "../api/client";
+import { normalizeRepoInput } from "../utils/repo";
 
 function makeInitialForm(defaultRepo, defaultBranch) {
   return {
@@ -14,10 +16,17 @@ function makeInitialForm(defaultRepo, defaultBranch) {
   };
 }
 
-export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch }) {
+export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, githubUsername }) {
   const [form, setForm] = useState(makeInitialForm(defaultRepo, defaultBranch));
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
+  const [repoOptions, setRepoOptions] = useState([]);
+  const [isLoadingRepos, setIsLoadingRepos] = useState(false);
+  const [repoError, setRepoError] = useState("");
+  const [scriptOptions, setScriptOptions] = useState([]);
+  const [isLoadingScripts, setIsLoadingScripts] = useState(false);
+  const [scriptError, setScriptError] = useState("");
+  const canUseRepoDropdown = githubUsername && !repoError && repoOptions.length > 0;
 
   useEffect(() => {
     setForm((prev) => ({
@@ -30,6 +39,115 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch }) {
   const update = (field) => (event) => {
     setForm((prev) => ({ ...prev, [field]: event.target.value }));
   };
+
+  useEffect(() => {
+    const normalizedUsername = String(githubUsername ?? "").trim();
+
+    if (!normalizedUsername) {
+      setRepoOptions([]);
+      setIsLoadingRepos(false);
+      setRepoError("");
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingRepos(true);
+    setRepoError("");
+
+    fetchGithubPublicRepos(normalizedUsername)
+      .then((repos) => {
+        if (cancelled) {
+          return;
+        }
+
+        setRepoOptions(repos);
+        setForm((prev) => {
+          const normalizedCurrentRepo = normalizeRepoInput(prev.repo);
+          if (!repos.length || (normalizedCurrentRepo && repos.includes(normalizedCurrentRepo))) {
+            return prev;
+          }
+
+          return {
+            ...prev,
+            repo: repos[0],
+          };
+        });
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+
+        setRepoOptions([]);
+        setRepoError(error.message || "Unable to load repositories");
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingRepos(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [githubUsername]);
+
+  useEffect(() => {
+    const normalizedRepo = normalizeRepoInput(form.repo);
+    const branch = String(form.branch ?? "").trim() || "main";
+
+    if (!normalizedRepo) {
+      setScriptOptions([]);
+      setIsLoadingScripts(false);
+      setScriptError("");
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingScripts(true);
+    setScriptError("");
+
+    fetchRepoTree(normalizedRepo, branch)
+      .then((repoData) => {
+        if (cancelled) {
+          return;
+        }
+
+        const pythonFiles = (repoData.items || [])
+          .filter((item) => item?.type === "file")
+          .map((item) => String(item.path || item.rawName || item.name || "").trim())
+          .filter((filePath) => filePath && !filePath.includes("/") && filePath.toLowerCase().endsWith(".py"));
+
+        setScriptOptions(pythonFiles);
+        setForm((prev) => {
+          if (!pythonFiles.length || (prev.entryScript && pythonFiles.includes(prev.entryScript))) {
+            return prev;
+          }
+
+          return {
+            ...prev,
+            entryScript: pythonFiles[0],
+          };
+        });
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+
+        setScriptOptions([]);
+        setScriptError(error.message || "Unable to load Python scripts");
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingScripts(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [form.repo, form.branch]);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -62,9 +180,23 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch }) {
           <input className="form-input" value={form.name} onChange={update("name")} placeholder="e.g. finetune-bert-v3" />
         </div>
         <div className="form-group">
-          <label className="form-label">Gitea Repository</label>
-          <input className="form-input" value={form.repo} onChange={update("repo")} placeholder="https://github.com/owner/repo" />
-          <span className="form-hint">Accepts full GitHub URL or owner/repo. Auto-populates file browser below.</span>
+          <label className="form-label">Repository</label>
+          {canUseRepoDropdown ? (
+            <select className="form-select" value={normalizeRepoInput(form.repo)} onChange={update("repo")} disabled={isLoadingRepos || !repoOptions.length}>
+              {isLoadingRepos ? <option>Loading repositories...</option> : null}
+              {!isLoadingRepos && !repoOptions.length ? <option>No public repositories found</option> : null}
+              {repoOptions.map((repo) => (
+                <option key={repo} value={repo}>{repo}</option>
+              ))}
+            </select>
+          ) : (
+            <input className="form-input" value={form.repo} onChange={update("repo")} placeholder="https://github.com/owner/repo" />
+          )}
+          <span className="form-hint">
+            {repoError
+              ? `${repoError}. You can paste a repo URL manually.`
+              : (canUseRepoDropdown ? "Using public repositories for configured GitHub username." : "Accepts full GitHub URL or owner/repo.")}
+          </span>
         </div>
         <div className="form-group">
           <label className="form-label">Branch</label>
@@ -72,7 +204,24 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch }) {
         </div>
         <div className="form-group">
           <label className="form-label">Entry Script</label>
-          <input className="form-input" value={form.entryScript} onChange={update("entryScript")} />
+          {scriptOptions.length ? (
+            <select className="form-select" value={form.entryScript} onChange={update("entryScript")} disabled={isLoadingScripts}>
+              {scriptOptions.map((script) => (
+                <option key={script} value={script}>{script}</option>
+              ))}
+            </select>
+          ) : (
+            <input className="form-input" value={form.entryScript} onChange={update("entryScript")} placeholder="train.py" />
+          )}
+          <span className="form-hint">
+            {scriptError
+              ? scriptError
+              : (isLoadingScripts
+                ? "Loading top-level Python files..."
+                : (scriptOptions.length
+                  ? "Select any top-level .py file from this repo and branch."
+                  : "No top-level .py files found on this branch. You can enter one manually."))}
+          </span>
         </div>
         <div className="form-group">
           <label className="form-label">GPU Memory Limit</label>
