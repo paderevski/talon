@@ -20,6 +20,9 @@ const runsRootDir = path.resolve(backendSrcDir, "data", "runs");
 const maxConcurrentJobs = Number(process.env.LOCAL_MAX_CONCURRENT_JOBS || 1);
 const pythonBin = process.env.TALON_PYTHON_BIN || "python3";
 const gitBin = process.env.TALON_GIT_BIN || "git";
+const cloneTimeoutMs = Number(
+  process.env.LOCAL_GIT_CLONE_TIMEOUT_MS || 90 * 1000,
+);
 const maxArtifactFileBytes = Number(
   process.env.LOCAL_MAX_ARTIFACT_BYTES || 50 * 1024 * 1024,
 );
@@ -264,7 +267,14 @@ export default function createLocalExecutionAdapter() {
           cloneUrl,
           record.repoDir,
         ],
-        { cwd: record.runDir },
+        {
+          cwd: record.runDir,
+          env: {
+            ...process.env,
+            GIT_TERMINAL_PROMPT: "0",
+            GIT_ASKPASS: "echo",
+          },
+        },
       );
 
       cloneSpawn.stdout?.on("data", (chunk) => {
@@ -280,16 +290,54 @@ export default function createLocalExecutionAdapter() {
       });
 
       const cloneExit = await new Promise((resolve) => {
-        cloneSpawn.on("close", (code, signal) =>
-          resolve({ code: Number(code ?? 1), signal: signal || null }),
-        );
-        cloneSpawn.on("error", () => resolve({ code: 1, signal: null }));
+        let settled = false;
+
+        const timeoutId = setTimeout(() => {
+          if (settled) {
+            return;
+          }
+
+          settled = true;
+          cloneSpawn.kill("SIGKILL");
+          resolve({ code: 1, signal: "SIGKILL", timedOut: true });
+        }, cloneTimeoutMs);
+
+        cloneSpawn.on("close", (code, signal) => {
+          if (settled) {
+            return;
+          }
+
+          settled = true;
+          clearTimeout(timeoutId);
+          resolve({
+            code: Number(code ?? 1),
+            signal: signal || null,
+            timedOut: false,
+          });
+        });
+
+        cloneSpawn.on("error", () => {
+          if (settled) {
+            return;
+          }
+
+          settled = true;
+          clearTimeout(timeoutId);
+          resolve({ code: 1, signal: null, timedOut: false });
+        });
       });
 
       if (cloneExit.code !== 0) {
         record.state = "failed";
         record.exitCode = cloneExit.code;
         record.endedAt = new Date().toISOString();
+        if (cloneExit.timedOut) {
+          await persistLine(
+            record,
+            `Git clone timed out after ${cloneTimeoutMs}ms`,
+            "system",
+          );
+        }
         return;
       }
 

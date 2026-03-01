@@ -1,0 +1,495 @@
+{
+  "items": [
+    {
+      "id": "result-job-26",
+      "jobId": "job-26",
+      "executionId": "local-1772384536581-ykq18i",
+      "name": "rnn-10",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "output.txt",
+          "size": "12 KB",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T17:02:17.454Z"
+    },
+    {
+      "id": "result-job-25",
+      "jobId": "job-25",
+      "executionId": "local-1772383759516-nkbd40",
+      "name": "rnn8",
+      "status": "failed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "—",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution record missing (backend restart or lost worker state)",
+      "finalizedAt": "2026-03-01T16:49:22.403Z"
+    },
+    {
+      "id": "result-job-24",
+      "jobId": "job-24",
+      "executionId": "local-1772383712146-wv04am",
+      "name": "results-persistence-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "result-persist-output-marker.txt",
+          "size": "38 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "9.7 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "result-persist-repo-marker.txt",
+          "size": "36 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T16:48:32.759Z"
+    },
+    {
+      "id": "result-job-23",
+      "jobId": "job-23",
+      "executionId": "local-1772383711296-5kfd7k",
+      "name": "hybrid-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "test-output-artifact.txt",
+          "size": "25 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "6.4 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "test-repo-artifact.txt",
+          "size": "27 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T16:48:31.884Z"
+    },
+    {
+      "id": "result-job-22",
+      "jobId": "job-22",
+      "executionId": "local-1772383603973-orxsk7",
+      "name": "rrr3",
+      "status": "failed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "—",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution record missing (backend restart or lost worker state)",
+      "finalizedAt": "2026-03-01T16:46:45.123Z"
+    },
+    {
+      "id": "result-job-21",
+      "jobId": "job-21",
+      "executionId": "local-1772383475791-66gxob",
+      "name": "rrr1",
+      "status": "failed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "—",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution record missing (backend restart or lost worker state)",
+      "finalizedAt": "2026-03-01T16:44:40.136Z"
+    },
+    {
+      "id": "result-job-20",
+      "jobId": "job-20",
+      "executionId": "local-1772383439916-6s847c",
+      "name": "rrr",
+      "status": "failed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "—",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution record missing (backend restart or lost worker state)",
+      "finalizedAt": "2026-03-01T16:44:05.139Z"
+    },
+    {
+      "id": "result-job-19",
+      "jobId": "job-19",
+      "executionId": "local-1772383388595-k6y6vk",
+      "name": "results-persistence-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "result-persist-output-marker.txt",
+          "size": "38 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "10 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "result-persist-repo-marker.txt",
+          "size": "36 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T16:43:09.199Z"
+    },
+    {
+      "id": "result-job-18",
+      "jobId": "job-18",
+      "executionId": "local-1772383386679-5g6xsj",
+      "name": "hybrid-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "2s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "test-output-artifact.txt",
+          "size": "25 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "8.2 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "test-repo-artifact.txt",
+          "size": "27 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T16:43:08.323Z"
+    },
+    {
+      "id": "result-job-17",
+      "jobId": "job-17",
+      "executionId": "local-1772383251078-0dz8xt",
+      "name": "results-persistence-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "result-persist-output-marker.txt",
+          "size": "38 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "8.5 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "result-persist-repo-marker.txt",
+          "size": "36 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T16:40:52.359Z"
+    },
+    {
+      "id": "result-job-16",
+      "jobId": "job-16",
+      "executionId": "local-1772383248618-blxuxk",
+      "name": "hybrid-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "2s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "test-output-artifact.txt",
+          "size": "25 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "12 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "test-repo-artifact.txt",
+          "size": "27 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T16:40:50.511Z"
+    },
+    {
+      "id": "result-job-6",
+      "jobId": "job-6",
+      "executionId": "local-1772382160239-w7ld1y",
+      "name": "hybrid-regression",
+      "status": "failed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "—",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution record missing (backend restart or lost worker state)",
+      "finalizedAt": "2026-03-01T16:40:34.471Z"
+    },
+    {
+      "id": "result-job-7",
+      "jobId": "job-7",
+      "executionId": "local-1772382244133-429yvp",
+      "name": "persist-check",
+      "status": "failed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "—",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution record missing (backend restart or lost worker state)",
+      "finalizedAt": "2026-03-01T16:40:34.471Z"
+    },
+    {
+      "id": "result-job-8",
+      "jobId": "job-8",
+      "executionId": "local-1772382311625-ch2ac3",
+      "name": "hybrid-regression",
+      "status": "failed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "—",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution record missing (backend restart or lost worker state)",
+      "finalizedAt": "2026-03-01T16:40:34.471Z"
+    },
+    {
+      "id": "result-job-13",
+      "jobId": "job-13",
+      "executionId": "local-1772382816103-rf1c67",
+      "name": "rnn-6",
+      "status": "failed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "—",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution record missing (backend restart or lost worker state)",
+      "finalizedAt": "2026-03-01T16:40:34.471Z"
+    },
+    {
+      "id": "result-job-14",
+      "jobId": "job-14",
+      "executionId": "local-1772382995020-48ezg8",
+      "name": "rnn-6",
+      "status": "failed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "—",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution record missing (backend restart or lost worker state)",
+      "finalizedAt": "2026-03-01T16:40:34.471Z"
+    },
+    {
+      "id": "result-job-15",
+      "jobId": "job-15",
+      "executionId": "local-1772383113500-7c7q8h",
+      "name": "rnn-7",
+      "status": "failed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "—",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution record missing (backend restart or lost worker state)",
+      "finalizedAt": "2026-03-01T16:40:34.471Z"
+    },
+    {
+      "id": "result-job-12",
+      "jobId": "job-12",
+      "executionId": "local-1772382711063-460zxw",
+      "name": "results-persistence-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "result-persist-output-marker.txt",
+          "size": "38 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "9.3 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "result-persist-repo-marker.txt",
+          "size": "36 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T16:31:52.145Z"
+    },
+    {
+      "id": "result-job-11",
+      "jobId": "job-11",
+      "executionId": "local-1772382709625-2j37xb",
+      "name": "hybrid-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "test-output-artifact.txt",
+          "size": "25 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "8.9 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "test-repo-artifact.txt",
+          "size": "27 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T16:31:50.717Z"
+    },
+    {
+      "id": "result-job-10",
+      "jobId": "job-10",
+      "executionId": "local-1772382506646-49icty",
+      "name": "results-persistence-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "result-persist-output-marker.txt",
+          "size": "38 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "11 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "result-persist-repo-marker.txt",
+          "size": "36 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T16:28:27.400Z"
+    },
+    {
+      "id": "result-job-9",
+      "jobId": "job-9",
+      "executionId": "local-1772382504700-puegqi",
+      "name": "hybrid-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "2s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "test-output-artifact.txt",
+          "size": "25 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "10 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "test-repo-artifact.txt",
+          "size": "27 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-03-01T16:28:26.217Z"
+    },
+    {
+      "id": "result-1",
+      "name": "resnet-transfer-v2",
+      "status": "completed",
+      "repo": "ali_hassan/resnet-50",
+      "duration": "47m 18s",
+      "output": "~/resnet-transfer-v2/",
+      "files": [
+        {
+          "name": "best_model.pt",
+          "size": "87.4 MB"
+        },
+        {
+          "name": "training_log.csv",
+          "size": "24 KB"
+        },
+        {
+          "name": "confusion_matrix.png",
+          "size": "156 KB"
+        }
+      ]
+    },
+    {
+      "id": "result-2",
+      "name": "wav2vec-asr",
+      "status": "completed",
+      "repo": "jane_smith/speech-asr",
+      "duration": "2h 14m",
+      "output": "s3://launchpad-out/wav2vec/",
+      "files": [
+        {
+          "name": "model_final.pt",
+          "size": "1.2 GB"
+        },
+        {
+          "name": "checkpoints/",
+          "size": "3.6 GB"
+        },
+        {
+          "name": "wer_results.json",
+          "size": "4.1 KB"
+        }
+      ]
+    },
+    {
+      "id": "result-3",
+      "name": "sentiment-lstm",
+      "status": "failed",
+      "repo": "maria_garcia/lstm-nlp",
+      "duration": "12m 04s",
+      "error": "CUDA OOM at epoch 3",
+      "files": [
+        {
+          "name": "stderr.log",
+          "size": "6.2 KB"
+        },
+        {
+          "name": "checkpoint_ep2.pt",
+          "size": "45 MB"
+        }
+      ]
+    }
+  ],
+  "updatedAt": "2026-03-01T17:02:19.953Z"
+}

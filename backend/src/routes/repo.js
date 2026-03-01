@@ -175,9 +175,30 @@ async function mapContentItem(
   };
 }
 
+function buildRepoFallbackPayload(owner, repo, branch, warning, cachedPayload) {
+  if (cachedPayload && Array.isArray(cachedPayload.items)) {
+    return {
+      ...cachedPayload,
+      stale: true,
+      warning,
+    };
+  }
+
+  return {
+    repository: `${owner}/${repo}`,
+    branch,
+    lastCommit: "unknown",
+    items: [],
+    stale: true,
+    warning,
+  };
+}
+
 router.get("/:owner/:repo/tree", async (req, res) => {
   const { owner, repo } = req.params;
   const requestedBranch = String(req.query.branch ?? "").trim();
+  const fallbackBranch = requestedBranch || "main";
+  const fallbackCacheKey = `${owner}/${repo}@${fallbackBranch}`;
   const forceRefresh = String(req.query.force ?? "").trim() === "1";
   const talonUser = getTalonUserFromRequest(req);
 
@@ -256,6 +277,27 @@ router.get("/:owner/:repo/tree", async (req, res) => {
 
     return res.json(payload);
   } catch (error) {
+    const status = Number(error?.status ?? 500);
+
+    if (status === 404) {
+      return res
+        .status(404)
+        .json({ message: error?.message || "Repository lookup failed" });
+    }
+
+    if ([403, 429, 500, 502, 503, 504].includes(status)) {
+      const cachedTree = repoTreeCache.get(fallbackCacheKey);
+      return res.json(
+        buildRepoFallbackPayload(
+          owner,
+          repo,
+          fallbackBranch,
+          "GitHub temporarily unavailable; showing fallback repository data",
+          cachedTree?.payload,
+        ),
+      );
+    }
+
     if (error?.status) {
       return res
         .status(error.status)
