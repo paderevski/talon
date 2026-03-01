@@ -1,14 +1,15 @@
 import FocusScrollRegion from "./FocusScrollRegion";
 
-export default function RepoBrowserPanel({ repoData, repoError, onRefresh, isRefreshing }) {
+export default function RepoBrowserPanel({ repoData, repoError, onRefresh, isRefreshing, canRefresh = true }) {
   return (
     <section className="panel" id="repo-browser">
       <div className="panel-head">
         <h2 className="panel-title">Repo Browser</h2>
-        <button type="button" className="btn btn-secondary btn-sm" onClick={onRefresh} disabled={isRefreshing}>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={onRefresh} disabled={isRefreshing || !canRefresh}>
           {isRefreshing ? "Refreshing..." : "Refresh"}
         </button>
       </div>
+      {!canRefresh ? <div className="form-hint">Select or load a repository first.</div> : null}
       <div className="repo-header">
         <span className="repo-path">{repoData.repository}</span>
         <span className="repo-branch">{repoData.branch}</span>

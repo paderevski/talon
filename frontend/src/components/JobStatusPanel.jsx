@@ -5,12 +5,43 @@ import {
 } from "talon-shared/status";
 import FocusScrollRegion from "./FocusScrollRegion";
 
+function formatSubmittedValue(job) {
+  const submittedAt = String(job?.executionRef?.submittedAt ?? "").trim();
+  if (submittedAt) {
+    const submittedMs = new Date(submittedAt).getTime();
+    if (Number.isFinite(submittedMs)) {
+      const ageMs = Date.now() - submittedMs;
+      if (ageMs >= 0 && ageMs < 24 * 60 * 60 * 1000) {
+        const ageMinutes = Math.floor(ageMs / (60 * 1000));
+        if (ageMinutes < 1) {
+          return "just now";
+        }
+
+        if (ageMinutes < 60) {
+          return `${ageMinutes}m ago`;
+        }
+
+        const ageHours = Math.floor(ageMinutes / 60);
+        return `${ageHours}h ago`;
+      }
+
+      return new Date(submittedMs).toLocaleString();
+    }
+  }
+
+  const submittedText = String(job?.submitted ?? "").trim();
+  if (submittedText && submittedText.toLowerCase() !== "invalid date") {
+    return submittedText;
+  }
+
+  return "—";
+}
+
 export default function JobStatusPanel({
   jobs,
   activeFilter,
   setActiveFilter,
   statusAvailability,
-  executionByJobId,
   onCancelJob,
   onHideJob,
   onUnhideJob,
@@ -76,10 +107,10 @@ export default function JobStatusPanel({
                 <th>Job</th>
                 <th>Repo</th>
                 <th>Status</th>
-                <th>Execution</th>
                 <th>GPU</th>
                 <th>Submitted</th>
                 <th>Duration</th>
+                <th>Cost</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -94,10 +125,10 @@ export default function JobStatusPanel({
                       {statusLabel(job.status)}
                     </span>
                   </td>
-                  <td className="mono-sm">{executionByJobId?.[job.id]?.state || "—"}</td>
                   <td className="mono-sm">{job.gpu}</td>
-                  <td className="mono-sm">{job.submitted}</td>
+                  <td className="mono-sm">{formatSubmittedValue(job)}</td>
                   <td className="mono-sm">{job.duration}</td>
+                  <td className="mono-sm">{String(job?.cost ?? "").trim() || "$0.00"}</td>
                   <td>
                     {isCancelableJobStatus(job.status) ? (
                       <button className="btn btn-secondary btn-sm" type="button" onClick={() => onCancelJob(job.id)}>

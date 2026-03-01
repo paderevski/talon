@@ -16,12 +16,20 @@ function clone(value) {
 }
 
 function normalizeStoredJobs(payload) {
+  const normalizeJob = (job) => {
+    const normalizedCost = String(job?.cost ?? "").trim() || "$0.00";
+    return {
+      ...job,
+      cost: normalizedCost,
+    };
+  };
+
   if (Array.isArray(payload)) {
-    return payload;
+    return payload.map(normalizeJob);
   }
 
   if (Array.isArray(payload?.items)) {
-    return payload.items;
+    return payload.items.map(normalizeJob);
   }
 
   return [];

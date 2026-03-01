@@ -61,7 +61,7 @@ function consumeNextJobName(repo) {
 }
 
 function makeInitialForm(defaultRepo, defaultBranch) {
-  const repo = defaultRepo || "jane_smith/bert-nlp";
+  const repo = String(defaultRepo ?? "").trim();
   return {
     name: getNextJobName(repo),
     repo,
@@ -91,7 +91,7 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
   useEffect(() => {
     setForm((prev) => ({
       ...prev,
-      repo: defaultRepo || "jane_smith/bert-nlp",
+      repo: String(defaultRepo ?? "").trim(),
       branch: defaultBranch || "main",
     }));
   }, [defaultRepo, defaultBranch]);
@@ -290,12 +290,12 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
       <div className="panel-head">
         <h2 className="panel-title">Submit New Job</h2>
       </div>
-      <form className="new-job-grid" onSubmit={handleSubmit}>
-        <div className="form-group">
+      <form className="new-job-grid new-job-grid-submit" onSubmit={handleSubmit}>
+        <div className="form-group form-group-inline">
           <label className="form-label">Job Name</label>
           <input className="form-input" value={form.name} onChange={onJobNameChange} placeholder="e.g. bert-nlp-7" />
         </div>
-        <div className="form-group">
+        <div className="form-group form-group-inline">
           <label className="form-label">Repository</label>
           {canUseRepoDropdown ? (
             <select className="form-select" value={normalizeRepoInput(form.repo)} onChange={update("repo")} disabled={isLoadingRepos || !repoOptions.length}>
@@ -314,11 +314,11 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
               : (canUseRepoDropdown ? "Using public repositories for configured GitHub username." : "Accepts full GitHub URL or owner/repo.")}
           </span>
         </div>
-        <div className="form-group">
+        <div className="form-group form-group-inline">
           <label className="form-label">Branch</label>
           <input className="form-input" value={form.branch} onChange={update("branch")} />
         </div>
-        <div className="form-group">
+        <div className="form-group form-group-inline">
           <label className="form-label">Entry Script</label>
           {scriptOptions.length ? (
             <select className="form-select" value={form.entryScript} onChange={update("entryScript")} disabled={isLoadingScripts}>
@@ -339,7 +339,7 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
                   : "No top-level .py files found on this branch. You can enter one manually."))}
           </span>
         </div>
-        <div className="form-group">
+        <div className="form-group form-group-half">
           <label className="form-label">GPU Memory Limit</label>
           <select className="form-select" value={form.gpuMemory} onChange={update("gpuMemory")}>
             <option>Auto (use available)</option>
@@ -349,7 +349,7 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
             <option>16 GB (full T4)</option>
           </select>
         </div>
-        <div className="form-group">
+        <div className="form-group form-group-half">
           <label className="form-label">Max Runtime</label>
           <select className="form-select" value={form.maxRuntime} onChange={update("maxRuntime")}>
             <option>1 hour</option>
@@ -367,13 +367,13 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
             placeholder={"BATCH_SIZE=32\nLEARNING_RATE=0.001\nEPOCHS=50"}
           />
         </div>
-        <div className="form-group full form-actions">
+        <div className="form-group full form-actions submit-actions-row">
           <button className="btn btn-primary" type="submit" disabled={submitting}>
             {submitting ? "Submitting..." : "Submit Job"}
           </button>
           <button className="btn btn-secondary" type="button">Save as Template</button>
-          {message ? <span className="form-hint">{message}</span> : null}
         </div>
+        {message ? <div className="form-group full"><span className="form-hint">{message}</span></div> : null}
       </form>
     </section>
   );

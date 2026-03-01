@@ -23,10 +23,11 @@ async function getJson(path) {
   return response.json();
 }
 
-function getRequestHeaders(includeJsonContentType = false) {
+function getRequestHeaders(includeJsonContentType = false, usernameOverride = "") {
+  const effectiveUser = String(usernameOverride ?? "").trim() || currentApiUser;
   return {
     ...(includeJsonContentType ? headers : {}),
-    ...(currentApiUser ? { "x-talon-user": currentApiUser } : {}),
+    ...(effectiveUser ? { "x-talon-user": effectiveUser } : {}),
   };
 }
 
@@ -264,24 +265,44 @@ export async function fetchGithubPublicRepos(username) {
   return repos;
 }
 
-export async function getGithubTokenStatus() {
+export async function getGithubTokenStatus(usernameOverride = "") {
+  const effectiveUser = String(usernameOverride ?? "").trim() || currentApiUser;
+  console.info(
+    `[github-credentials][frontend] requesting token status (user='${effectiveUser || "(missing)"}')`,
+  );
   const response = await fetch("/api/github-credentials", {
-    headers: getRequestHeaders(),
+    headers: getRequestHeaders(false, usernameOverride),
   });
+
+  console.info(
+    `[github-credentials][frontend] token status response received (status=${response.status})`,
+  );
 
   if (!response.ok) {
     throw new Error(`Unable to load token status (${response.status})`);
   }
 
-  return response.json();
+  const payload = await response.json();
+  console.info(
+    `[github-credentials][frontend] token status payload received (hasToken=${Boolean(payload?.hasToken)}, githubUsername='${String(payload?.githubUsername ?? "")}')`,
+  );
+  return payload;
 }
 
-export async function saveGithubToken(token) {
+export async function saveGithubToken(token, usernameOverride = "") {
+  const effectiveUser = String(usernameOverride ?? "").trim() || currentApiUser;
+  console.info(
+    `[github-credentials][frontend] sending token save request (user='${effectiveUser || "(missing)"}', tokenProvided=${Boolean(String(token ?? "").trim())})`,
+  );
   const response = await fetch("/api/github-credentials", {
     method: "PUT",
-    headers: getRequestHeaders(true),
+    headers: getRequestHeaders(true, usernameOverride),
     body: JSON.stringify({ token }),
   });
+
+  console.info(
+    `[github-credentials][frontend] token save response received (status=${response.status})`,
+  );
 
   if (!response.ok) {
     let message = `Unable to save token (${response.status})`;
@@ -296,18 +317,71 @@ export async function saveGithubToken(token) {
     throw new Error(message);
   }
 
-  return response.json();
+  const payload = await response.json();
+  console.info(
+    `[github-credentials][frontend] token save payload received (ok=${Boolean(payload?.ok)})`,
+  );
+  return payload;
 }
 
-export async function deleteGithubToken() {
+export async function deleteGithubToken(usernameOverride = "") {
+  const effectiveUser = String(usernameOverride ?? "").trim() || currentApiUser;
+  console.info(
+    `[github-credentials][frontend] sending token delete request (user='${effectiveUser || "(missing)"}')`,
+  );
   const response = await fetch("/api/github-credentials", {
     method: "DELETE",
-    headers: getRequestHeaders(),
+    headers: getRequestHeaders(false, usernameOverride),
   });
+
+  console.info(
+    `[github-credentials][frontend] token delete response received (status=${response.status})`,
+  );
 
   if (!response.ok) {
     throw new Error(`Unable to delete token (${response.status})`);
   }
 
-  return response.json();
+  const payload = await response.json();
+  console.info(
+    `[github-credentials][frontend] token delete payload received (ok=${Boolean(payload?.ok)})`,
+  );
+  return payload;
+}
+
+export async function saveGithubCredentialSettings(githubUsername, usernameOverride = "") {
+  const effectiveUser = String(usernameOverride ?? "").trim() || currentApiUser;
+  const normalizedGithubUsername = String(githubUsername ?? "").trim();
+  console.info(
+    `[github-credentials][frontend] sending github settings save request (user='${effectiveUser || "(missing)"}', githubUsername='${normalizedGithubUsername}')`,
+  );
+
+  const response = await fetch("/api/github-credentials", {
+    method: "PATCH",
+    headers: getRequestHeaders(true, usernameOverride),
+    body: JSON.stringify({ githubUsername: normalizedGithubUsername }),
+  });
+
+  console.info(
+    `[github-credentials][frontend] github settings save response received (status=${response.status})`,
+  );
+
+  if (!response.ok) {
+    let message = `Unable to save GitHub settings (${response.status})`;
+    try {
+      const body = await response.json();
+      if (body?.message) {
+        message = body.message;
+      }
+    } catch {
+      // Ignore parse errors and keep fallback message.
+    }
+    throw new Error(message);
+  }
+
+  const payload = await response.json();
+  console.info(
+    `[github-credentials][frontend] github settings payload received (ok=${Boolean(payload?.ok)})`,
+  );
+  return payload;
 }

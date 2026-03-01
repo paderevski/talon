@@ -10,17 +10,17 @@ import talonLogo from "../../assets/talon-logo.png";
 import { normalizeRepoInput } from "./utils/repo";
 
 const navSections = [
-  { id: "new-job", label: "New Job" },
-  { id: "github-credentials", label: "GitHub Credentials" },
-  { id: "repo-browser", label: "Repo Browser" },
   { id: "job-status", label: "Job Status" },
-  { id: "results", label: "Results" }
+  { id: "results", label: "Results" },
+  { id: "new-job", label: "Submit New Job" },
+  { id: "repo-browser", label: "Repo Browser" },
+  { id: "github-credentials", label: "GitHub Credentials" },
 ];
 
-const emptyRepo = { repository: "", branch: "main", lastCommit: "", items: [] };
+const emptyRepo = { repository: "", branch: "", lastCommit: "", items: [] };
 const authStorageKey = "talon.authUser";
 const githubSettingsStorageKey = "talon.githubSettings";
-const fallbackRepo = "jane_smith/bert-nlp";
+const fallbackRepo = "";
 const fallbackBranch = "main";
 
 const defaultGithubSettings = {
@@ -389,10 +389,10 @@ export default function App() {
   };
 
   const onRepoBranchChange = (nextRepo, nextBranch) => {
-    const normalizedRepo = normalizeRepoInput(nextRepo) || fallbackRepo;
+    const normalizedRepo = normalizeRepoInput(nextRepo);
     const normalizedBranch = String(nextBranch ?? "").trim() || fallbackBranch;
 
-    setRepoPath((previous) => (previous === normalizedRepo ? previous : normalizedRepo));
+    setRepoPath((previous) => (previous === (normalizedRepo || "") ? previous : (normalizedRepo || "")));
     setRepoBranch((previous) => (previous === normalizedBranch ? previous : normalizedBranch));
   };
 
@@ -543,6 +543,17 @@ export default function App() {
         </nav>
 
         <main className="main">
+          <JobStatusPanel
+            jobs={jobs}
+            activeFilter={activeFilter}
+            setActiveFilter={setActiveFilter}
+            statusAvailability={statusAvailability}
+            onCancelJob={onCancelJob}
+            onHideJob={onHideJob}
+            onUnhideJob={onUnhideJob}
+            jobActionError={jobActionError}
+          />
+          <ResultsPanel results={results} jobs={jobs} filesByJobId={filesByJobId} />
           <NewJobPanel
             onSubmit={onSubmitJob}
             defaultRepo={repoPath}
@@ -550,20 +561,18 @@ export default function App() {
             githubUsername={githubSettings.githubUsername}
             onRepoBranchChange={onRepoBranchChange}
           />
-          <GitHubCredentialsPanel settings={githubSettings} onSave={onSaveGithubSettings} />
-          <RepoBrowserPanel repoData={repoData} repoError={repoError} onRefresh={onRefreshRepo} isRefreshing={isRefreshingRepo} />
-          <JobStatusPanel
-            jobs={jobs}
-            activeFilter={activeFilter}
-            setActiveFilter={setActiveFilter}
-            statusAvailability={statusAvailability}
-            executionByJobId={executionByJobId}
-            onCancelJob={onCancelJob}
-            onHideJob={onHideJob}
-            onUnhideJob={onUnhideJob}
-            jobActionError={jobActionError}
+          <RepoBrowserPanel
+            repoData={repoData}
+            repoError={repoError}
+            onRefresh={onRefreshRepo}
+            isRefreshing={isRefreshingRepo}
+            canRefresh={Boolean(repoPath)}
           />
-          <ResultsPanel results={results} jobs={jobs} filesByJobId={filesByJobId} />
+          <GitHubCredentialsPanel
+            settings={githubSettings}
+            onSave={onSaveGithubSettings}
+            authUsername={authUser?.username || ""}
+          />
           {showDebugPanel ? <ExecutionDebugPanel /> : null}
         </main>
       </div>

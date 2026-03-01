@@ -308,6 +308,7 @@ router.post("/", async (req, res) => {
     gpu: "—",
     submitted: "just now",
     duration: "—",
+    cost: "$0.00",
     executionProvider: getExecutionProvider(),
     executionRef,
   };

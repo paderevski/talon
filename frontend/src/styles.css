@@ -240,6 +240,15 @@ body {
 .panel-title { font-size: 18px; margin: 0 0 10px; }
 
 .new-job-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.new-job-grid-submit {
+  grid-template-columns: 1.2fr 2fr 0.8fr 1fr;
+}
+.new-job-grid-submit .form-group-inline {
+  grid-column: auto;
+}
+.new-job-grid-submit .form-group-half {
+  grid-column: span 2;
+}
 .form-group { display: flex; flex-direction: column; gap: 6px; }
 .form-group.full { grid-column: 1 / -1; }
 .form-label {
@@ -260,8 +269,17 @@ body {
 .form-hint { color: var(--text-muted); font-size: 11px; }
 .form-actions {
   display: flex;
+  flex-direction: row;
   gap: 10px;
   align-items: center;
+}
+.submit-actions-row {
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+}
+.submit-actions-row .btn {
+  height: 38px;
+  min-width: 140px;
 }
 
 .btn {
@@ -523,4 +541,10 @@ td:last-child, th:last-child { border-right: none; }
 
 @media (max-width: 1100px) {
   .new-job-grid { grid-template-columns: 1fr; }
+  .new-job-grid-submit .form-group-half {
+    grid-column: auto;
+  }
+  .submit-actions-row {
+    flex-wrap: nowrap;
+  }
 }

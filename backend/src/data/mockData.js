@@ -19,6 +19,7 @@ export const jobs = [
     gpu: "T4 · 14.2 GB",
     submitted: "11:03 PM",
     duration: "1h 12m",
+    cost: "$0.00",
   },
   {
     id: "job-2",
@@ -28,6 +29,7 @@ export const jobs = [
     gpu: "T4 · 12.8 GB",
     submitted: "10:47 PM",
     duration: "1h 28m",
+    cost: "$0.00",
   },
   {
     id: "job-3",
@@ -37,6 +39,7 @@ export const jobs = [
     gpu: "—",
     submitted: "11:15 PM",
     duration: "—",
+    cost: "$0.00",
   },
   {
     id: "job-4",
@@ -46,6 +49,7 @@ export const jobs = [
     gpu: "T4 · 9.3 GB",
     submitted: "8:12 PM",
     duration: "47m 18s",
+    cost: "$0.00",
   },
   {
     id: "job-5",
@@ -55,6 +59,7 @@ export const jobs = [
     gpu: "T4 · 6.1 GB",
     submitted: "7:30 PM",
     duration: "12m 04s",
+    cost: "$0.00",
   },
 ];
 

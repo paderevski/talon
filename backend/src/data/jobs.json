@@ -1,10 +1,145 @@
 {
   "items": [
     {
-      "name": "results-persistence-regression",
+      "name": "minimal-rnn-2",
       "repo": "paderevski/minimal-rnn",
       "status": "completed",
       "hidden": false,
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "cost": "$0.00",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1772405540697-hbzlsi",
+        "submittedAt": "2026-03-01T22:52:20.697Z"
+      },
+      "id": "job-59",
+      "resultSyncKey": "2026-03-01T22:52:21.155Z"
+    },
+    {
+      "name": "counting!",
+      "repo": "paderevski/minimal-rnn",
+      "status": "completed",
+      "hidden": false,
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1772404511545-90045n",
+        "submittedAt": "2026-03-01T22:35:11.545Z"
+      },
+      "id": "job-58",
+      "resultSyncKey": "2026-03-01T22:35:12.006Z",
+      "cost": "$0.00"
+    },
+    {
+      "name": "minimal-rnn-20",
+      "repo": "paderevski/minimal-rnn",
+      "status": "failed",
+      "hidden": false,
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1772404459968-7zzy87",
+        "submittedAt": "2026-03-01T22:34:19.968Z"
+      },
+      "id": "job-57",
+      "resultSyncKey": "2026-03-01T22:34:20.360Z",
+      "cost": "$0.00"
+    },
+    {
+      "name": "minimal-rnn-1",
+      "repo": "paderevski/minimal-rnn",
+      "status": "completed",
+      "hidden": false,
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1772404419093-qdhmmn",
+        "submittedAt": "2026-03-01T22:33:39.093Z"
+      },
+      "id": "job-56",
+      "resultSyncKey": "2026-03-01T22:33:39.664Z",
+      "cost": "$0.00"
+    },
+    {
+      "name": "results-persistence-regression",
+      "repo": "paderevski/minimal-rnn",
+      "status": "completed",
+      "hidden": true,
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1772401006034-61undo",
+        "submittedAt": "2026-03-01T21:36:46.034Z"
+      },
+      "id": "job-55",
+      "resultSyncKey": "2026-03-01T21:36:46.519Z",
+      "hiddenAt": "2026-03-01T21:39:25.351Z",
+      "hiddenBy": "unknown",
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
+    },
+    {
+      "name": "hybrid-regression",
+      "repo": "paderevski/minimal-rnn",
+      "status": "completed",
+      "hidden": true,
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1772401003422-ohmlh2",
+        "submittedAt": "2026-03-01T21:36:43.422Z"
+      },
+      "id": "job-54",
+      "resultSyncKey": "2026-03-01T21:36:45.429Z",
+      "hiddenAt": "2026-03-01T21:39:25.983Z",
+      "hiddenBy": "unknown",
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
+    },
+    {
+      "name": "hide-me-1772401003392",
+      "repo": "paderevski/minimal-rnn",
+      "status": "failed",
+      "hidden": true,
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1772401003399-7pgfj7",
+        "submittedAt": "2026-03-01T21:36:43.399Z"
+      },
+      "id": "job-53",
+      "resultSyncKey": "2026-03-01T21:36:44.080Z",
+      "hiddenAt": "2026-03-01T22:45:52.734Z",
+      "hiddenBy": "unknown",
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
+    },
+    {
+      "name": "results-persistence-regression",
+      "repo": "paderevski/minimal-rnn",
+      "status": "completed",
+      "hidden": true,
       "gpu": "—",
       "submitted": "just now",
       "duration": "1s",
@@ -15,13 +150,17 @@
         "submittedAt": "2026-03-01T18:31:06.233Z"
       },
       "id": "job-52",
-      "resultSyncKey": "2026-03-01T18:31:06.830Z"
+      "resultSyncKey": "2026-03-01T18:31:06.830Z",
+      "hiddenAt": "2026-03-01T21:39:26.386Z",
+      "hiddenBy": "unknown",
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "name": "hybrid-regression",
       "repo": "paderevski/minimal-rnn",
       "status": "completed",
-      "hidden": false,
+      "hidden": true,
       "gpu": "—",
       "submitted": "just now",
       "duration": "1s",
@@ -32,13 +171,17 @@
         "submittedAt": "2026-03-01T18:31:04.315Z"
       },
       "id": "job-51",
-      "resultSyncKey": "2026-03-01T18:31:05.605Z"
+      "resultSyncKey": "2026-03-01T18:31:05.605Z",
+      "hiddenAt": "2026-03-01T21:39:26.768Z",
+      "hiddenBy": "unknown",
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "name": "hide-me-1772389864292",
       "repo": "paderevski/minimal-rnn",
       "status": "failed",
-      "hidden": false,
+      "hidden": true,
       "gpu": "—",
       "submitted": "just now",
       "duration": "1s",
@@ -49,13 +192,17 @@
         "submittedAt": "2026-03-01T18:31:04.298Z"
       },
       "id": "job-50",
-      "resultSyncKey": "2026-03-01T18:31:04.824Z"
+      "resultSyncKey": "2026-03-01T18:31:04.824Z",
+      "hiddenAt": "2026-03-01T22:45:53.269Z",
+      "hiddenBy": "unknown",
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "name": "results-persistence-regression",
       "repo": "paderevski/minimal-rnn",
       "status": "completed",
-      "hidden": false,
+      "hidden": true,
       "gpu": "—",
       "submitted": "just now",
       "duration": "1s",
@@ -66,13 +213,17 @@
         "submittedAt": "2026-03-01T18:29:27.300Z"
       },
       "id": "job-49",
-      "resultSyncKey": "2026-03-01T18:29:28.300Z"
+      "resultSyncKey": "2026-03-01T18:29:28.300Z",
+      "hiddenAt": "2026-03-01T21:39:27.138Z",
+      "hiddenBy": "unknown",
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "name": "hybrid-regression",
       "repo": "paderevski/minimal-rnn",
       "status": "completed",
-      "hidden": false,
+      "hidden": true,
       "gpu": "—",
       "submitted": "just now",
       "duration": "1s",
@@ -83,13 +234,17 @@
         "submittedAt": "2026-03-01T18:29:25.109Z"
       },
       "id": "job-48",
-      "resultSyncKey": "2026-03-01T18:29:26.980Z"
+      "resultSyncKey": "2026-03-01T18:29:26.980Z",
+      "hiddenAt": "2026-03-01T21:39:27.502Z",
+      "hiddenBy": "unknown",
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "name": "hide-me-1772389765088",
       "repo": "paderevski/minimal-rnn",
       "status": "failed",
-      "hidden": false,
+      "hidden": true,
       "gpu": "—",
       "submitted": "just now",
       "duration": "1s",
@@ -100,7 +255,11 @@
         "submittedAt": "2026-03-01T18:29:25.094Z"
       },
       "id": "job-47",
-      "resultSyncKey": "2026-03-01T18:29:25.979Z"
+      "resultSyncKey": "2026-03-01T18:29:25.979Z",
+      "hiddenAt": "2026-03-01T22:45:53.726Z",
+      "hiddenBy": "unknown",
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "name": "minimal-rnn-3",
@@ -117,7 +276,8 @@
         "submittedAt": "2026-03-01T18:26:56.128Z"
       },
       "id": "job-46",
-      "resultSyncKey": "2026-03-01T18:26:56.932Z"
+      "resultSyncKey": "2026-03-01T18:26:56.932Z",
+      "cost": "$0.00"
     },
     {
       "name": "results-persistence-regression",
@@ -137,7 +297,8 @@
       "resultSyncKey": "2026-03-01T18:21:28.524Z",
       "hiddenAt": "2026-03-01T18:22:16.742Z",
       "hiddenBy": "unknown",
-      "hiddenReason": "Hidden from Job Status panel"
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "name": "hybrid-regression",
@@ -157,13 +318,14 @@
       "resultSyncKey": "2026-03-01T18:21:27.275Z",
       "hiddenAt": "2026-03-01T18:22:17.356Z",
       "hiddenBy": "unknown",
-      "hiddenReason": "Hidden from Job Status panel"
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "name": "hide-me-1772389285929",
       "repo": "paderevski/minimal-rnn",
       "status": "failed",
-      "hidden": false,
+      "hidden": true,
       "gpu": "—",
       "submitted": "just now",
       "duration": "1s",
@@ -174,7 +336,11 @@
         "submittedAt": "2026-03-01T18:21:25.937Z"
       },
       "id": "job-43",
-      "resultSyncKey": "2026-03-01T18:21:26.661Z"
+      "resultSyncKey": "2026-03-01T18:21:26.661Z",
+      "hiddenAt": "2026-03-01T22:45:54.157Z",
+      "hiddenBy": "unknown",
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "name": "minimal-rnn-2",
@@ -191,7 +357,8 @@
         "submittedAt": "2026-03-01T18:19:11.723Z"
       },
       "id": "job-42",
-      "resultSyncKey": "2026-03-01T18:19:12.521Z"
+      "resultSyncKey": "2026-03-01T18:19:12.521Z",
+      "cost": "$0.00"
     },
     {
       "name": "results-persistence-regression",
@@ -211,7 +378,8 @@
       "resultSyncKey": "2026-03-01T17:53:35.386Z",
       "hiddenAt": "2026-03-01T17:55:21.325Z",
       "hiddenBy": "unknown",
-      "hiddenReason": "Hidden from Job Status panel"
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "name": "hybrid-regression",
@@ -231,13 +399,14 @@
       "resultSyncKey": "2026-03-01T17:53:34.007Z",
       "hiddenAt": "2026-03-01T17:55:22.793Z",
       "hiddenBy": "unknown",
-      "hiddenReason": "Hidden from Job Status panel"
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "name": "hide-me-1772387612196",
       "repo": "paderevski/minimal-rnn",
       "status": "failed",
-      "hidden": false,
+      "hidden": true,
       "gpu": "—",
       "submitted": "just now",
       "duration": "1s",
@@ -248,7 +417,11 @@
         "submittedAt": "2026-03-01T17:53:32.203Z"
       },
       "id": "job-39",
-      "resultSyncKey": "2026-03-01T17:53:33.100Z"
+      "resultSyncKey": "2026-03-01T17:53:33.100Z",
+      "hiddenAt": "2026-03-01T22:45:54.485Z",
+      "hiddenBy": "unknown",
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "name": "results-persistence-regression",
@@ -268,7 +441,8 @@
       "resultSyncKey": "2026-03-01T17:41:51.226Z",
       "hiddenAt": "2026-03-01T17:47:25.702Z",
       "hiddenBy": "migration-script",
-      "hiddenReason": "Hidden regression testing job"
+      "hiddenReason": "Hidden regression testing job",
+      "cost": "$0.00"
     },
     {
       "name": "hybrid-regression",
@@ -288,7 +462,8 @@
       "resultSyncKey": "2026-03-01T17:41:49.482Z",
       "hiddenAt": "2026-03-01T17:47:25.702Z",
       "hiddenBy": "migration-script",
-      "hiddenReason": "Hidden regression testing job"
+      "hiddenReason": "Hidden regression testing job",
+      "cost": "$0.00"
     },
     {
       "name": "hide-me-1772386907496",
@@ -308,7 +483,8 @@
       "hiddenAt": "2026-03-01T17:41:47.506Z",
       "hiddenBy": "test-user",
       "hiddenReason": "cleanup test",
-      "resultSyncKey": "2026-03-01T17:41:48.471Z"
+      "resultSyncKey": "2026-03-01T17:41:48.471Z",
+      "cost": "$0.00"
     },
     {
       "name": "minimal-rnn-1",
@@ -324,7 +500,8 @@
         "submittedAt": "2026-03-01T17:38:48.845Z"
       },
       "id": "job-35",
-      "resultSyncKey": "2026-03-01T17:38:49.811Z"
+      "resultSyncKey": "2026-03-01T17:38:49.811Z",
+      "cost": "$0.00"
     },
     {
       "name": "talon-1",
@@ -340,7 +517,12 @@
         "submittedAt": "2026-03-01T17:38:19.292Z"
       },
       "id": "job-34",
-      "resultSyncKey": "2026-03-01T17:38:19.927Z"
+      "resultSyncKey": "2026-03-01T17:38:19.927Z",
+      "hidden": true,
+      "hiddenAt": "2026-03-01T22:45:55.329Z",
+      "hiddenBy": "unknown",
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "name": "results-persistence-regression",
@@ -360,7 +542,8 @@
       "hidden": true,
       "hiddenAt": "2026-03-01T17:47:25.702Z",
       "hiddenBy": "migration-script",
-      "hiddenReason": "Hidden regression testing job"
+      "hiddenReason": "Hidden regression testing job",
+      "cost": "$0.00"
     },
     {
       "name": "hybrid-regression",
@@ -380,7 +563,8 @@
       "hidden": true,
       "hiddenAt": "2026-03-01T17:47:25.702Z",
       "hiddenBy": "migration-script",
-      "hiddenReason": "Hidden regression testing job"
+      "hiddenReason": "Hidden regression testing job",
+      "cost": "$0.00"
     },
     {
       "name": "rnn12",
@@ -396,7 +580,8 @@
         "submittedAt": "2026-03-01T17:14:02.540Z"
       },
       "id": "job-31",
-      "resultSyncKey": "2026-03-01T17:14:03.436Z"
+      "resultSyncKey": "2026-03-01T17:14:03.436Z",
+      "cost": "$0.00"
     },
     {
       "name": "results-persistence-regression",
@@ -416,7 +601,8 @@
       "hidden": true,
       "hiddenAt": "2026-03-01T17:47:25.702Z",
       "hiddenBy": "migration-script",
-      "hiddenReason": "Hidden regression testing job"
+      "hiddenReason": "Hidden regression testing job",
+      "cost": "$0.00"
     },
     {
       "name": "hybrid-regression",
@@ -436,7 +622,8 @@
       "hidden": true,
       "hiddenAt": "2026-03-01T17:47:25.702Z",
       "hiddenBy": "migration-script",
-      "hiddenReason": "Hidden regression testing job"
+      "hiddenReason": "Hidden regression testing job",
+      "cost": "$0.00"
     },
     {
       "name": "results-persistence-regression",
@@ -456,7 +643,8 @@
       "hidden": true,
       "hiddenAt": "2026-03-01T17:47:25.702Z",
       "hiddenBy": "migration-script",
-      "hiddenReason": "Hidden regression testing job"
+      "hiddenReason": "Hidden regression testing job",
+      "cost": "$0.00"
     },
     {
       "name": "hybrid-regression",
@@ -476,7 +664,8 @@
       "hidden": true,
       "hiddenAt": "2026-03-01T17:47:25.702Z",
       "hiddenBy": "migration-script",
-      "hiddenReason": "Hidden regression testing job"
+      "hiddenReason": "Hidden regression testing job",
+      "cost": "$0.00"
     },
     {
       "name": "rnn-10",
@@ -492,7 +681,8 @@
         "submittedAt": "2026-03-01T17:02:16.581Z"
       },
       "id": "job-26",
-      "resultSyncKey": "2026-03-01T17:02:17.454Z"
+      "resultSyncKey": "2026-03-01T17:02:17.454Z",
+      "cost": "$0.00"
     },
     {
       "name": "rnn8",
@@ -508,7 +698,12 @@
         "submittedAt": "2026-03-01T16:49:19.516Z"
       },
       "id": "job-25",
-      "resultSyncKey": "lost:local-1772383759516-nkbd40"
+      "resultSyncKey": "lost:local-1772383759516-nkbd40",
+      "hidden": true,
+      "hiddenAt": "2026-03-01T22:45:55.748Z",
+      "hiddenBy": "unknown",
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "name": "results-persistence-regression",
@@ -528,7 +723,8 @@
       "hidden": true,
       "hiddenAt": "2026-03-01T17:47:25.702Z",
       "hiddenBy": "migration-script",
-      "hiddenReason": "Hidden regression testing job"
+      "hiddenReason": "Hidden regression testing job",
+      "cost": "$0.00"
     },
     {
       "name": "hybrid-regression",
@@ -548,7 +744,8 @@
       "hidden": true,
       "hiddenAt": "2026-03-01T17:47:25.702Z",
       "hiddenBy": "migration-script",
-      "hiddenReason": "Hidden regression testing job"
+      "hiddenReason": "Hidden regression testing job",
+      "cost": "$0.00"
     },
     {
       "name": "rrr3",
@@ -564,7 +761,12 @@
         "submittedAt": "2026-03-01T16:46:43.973Z"
       },
       "id": "job-22",
-      "resultSyncKey": "lost:local-1772383603973-orxsk7"
+      "resultSyncKey": "lost:local-1772383603973-orxsk7",
+      "hidden": true,
+      "hiddenAt": "2026-03-01T22:45:56.091Z",
+      "hiddenBy": "unknown",
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "name": "rrr1",
@@ -580,7 +782,12 @@
         "submittedAt": "2026-03-01T16:44:35.791Z"
       },
       "id": "job-21",
-      "resultSyncKey": "lost:local-1772383475791-66gxob"
+      "resultSyncKey": "lost:local-1772383475791-66gxob",
+      "hidden": true,
+      "hiddenAt": "2026-03-01T22:45:56.329Z",
+      "hiddenBy": "unknown",
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "name": "rrr",
@@ -596,7 +803,12 @@
         "submittedAt": "2026-03-01T16:43:59.916Z"
       },
       "id": "job-20",
-      "resultSyncKey": "lost:local-1772383439916-6s847c"
+      "resultSyncKey": "lost:local-1772383439916-6s847c",
+      "hidden": true,
+      "hiddenAt": "2026-03-01T22:45:56.576Z",
+      "hiddenBy": "unknown",
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "name": "results-persistence-regression",
@@ -616,7 +828,8 @@
       "hidden": true,
       "hiddenAt": "2026-03-01T17:47:25.702Z",
       "hiddenBy": "migration-script",
-      "hiddenReason": "Hidden regression testing job"
+      "hiddenReason": "Hidden regression testing job",
+      "cost": "$0.00"
     },
     {
       "name": "hybrid-regression",
@@ -636,7 +849,8 @@
       "hidden": true,
       "hiddenAt": "2026-03-01T17:47:25.702Z",
       "hiddenBy": "migration-script",
-      "hiddenReason": "Hidden regression testing job"
+      "hiddenReason": "Hidden regression testing job",
+      "cost": "$0.00"
     },
     {
       "name": "results-persistence-regression",
@@ -656,7 +870,8 @@
       "hidden": true,
       "hiddenAt": "2026-03-01T17:47:25.702Z",
       "hiddenBy": "migration-script",
-      "hiddenReason": "Hidden regression testing job"
+      "hiddenReason": "Hidden regression testing job",
+      "cost": "$0.00"
     },
     {
       "name": "hybrid-regression",
@@ -676,7 +891,8 @@
       "hidden": true,
       "hiddenAt": "2026-03-01T17:47:25.702Z",
       "hiddenBy": "migration-script",
-      "hiddenReason": "Hidden regression testing job"
+      "hiddenReason": "Hidden regression testing job",
+      "cost": "$0.00"
     },
     {
       "name": "rnn-7",
@@ -692,7 +908,12 @@
         "submittedAt": "2026-03-01T16:38:33.500Z"
       },
       "id": "job-15",
-      "resultSyncKey": "lost:local-1772383113500-7c7q8h"
+      "resultSyncKey": "lost:local-1772383113500-7c7q8h",
+      "hidden": true,
+      "hiddenAt": "2026-03-01T22:45:56.818Z",
+      "hiddenBy": "unknown",
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "name": "rnn-6",
@@ -708,7 +929,12 @@
         "submittedAt": "2026-03-01T16:36:35.020Z"
       },
       "id": "job-14",
-      "resultSyncKey": "lost:local-1772382995020-48ezg8"
+      "resultSyncKey": "lost:local-1772382995020-48ezg8",
+      "hidden": true,
+      "hiddenAt": "2026-03-01T22:45:57.037Z",
+      "hiddenBy": "unknown",
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "name": "rnn-6",
@@ -724,7 +950,12 @@
         "submittedAt": "2026-03-01T16:33:36.103Z"
       },
       "id": "job-13",
-      "resultSyncKey": "lost:local-1772382816103-rf1c67"
+      "resultSyncKey": "lost:local-1772382816103-rf1c67",
+      "hidden": true,
+      "hiddenAt": "2026-03-01T22:45:58.163Z",
+      "hiddenBy": "unknown",
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "name": "results-persistence-regression",
@@ -744,7 +975,8 @@
       "hidden": true,
       "hiddenAt": "2026-03-01T17:47:25.702Z",
       "hiddenBy": "migration-script",
-      "hiddenReason": "Hidden regression testing job"
+      "hiddenReason": "Hidden regression testing job",
+      "cost": "$0.00"
     },
     {
       "name": "hybrid-regression",
@@ -764,7 +996,8 @@
       "hidden": true,
       "hiddenAt": "2026-03-01T17:47:25.702Z",
       "hiddenBy": "migration-script",
-      "hiddenReason": "Hidden regression testing job"
+      "hiddenReason": "Hidden regression testing job",
+      "cost": "$0.00"
     },
     {
       "name": "results-persistence-regression",
@@ -784,7 +1017,8 @@
       "hidden": true,
       "hiddenAt": "2026-03-01T17:47:25.702Z",
       "hiddenBy": "migration-script",
-      "hiddenReason": "Hidden regression testing job"
+      "hiddenReason": "Hidden regression testing job",
+      "cost": "$0.00"
     },
     {
       "name": "hybrid-regression",
@@ -804,7 +1038,8 @@
       "hidden": true,
       "hiddenAt": "2026-03-01T17:47:25.702Z",
       "hiddenBy": "migration-script",
-      "hiddenReason": "Hidden regression testing job"
+      "hiddenReason": "Hidden regression testing job",
+      "cost": "$0.00"
     },
     {
       "name": "hybrid-regression",
@@ -824,7 +1059,8 @@
       "hidden": true,
       "hiddenAt": "2026-03-01T17:47:25.702Z",
       "hiddenBy": "migration-script",
-      "hiddenReason": "Hidden regression testing job"
+      "hiddenReason": "Hidden regression testing job",
+      "cost": "$0.00"
     },
     {
       "name": "persist-check",
@@ -840,7 +1076,12 @@
         "submittedAt": "2026-03-01T16:24:04.133Z"
       },
       "id": "job-7",
-      "resultSyncKey": "lost:local-1772382244133-429yvp"
+      "resultSyncKey": "lost:local-1772382244133-429yvp",
+      "hidden": true,
+      "hiddenAt": "2026-03-01T22:46:00.811Z",
+      "hiddenBy": "unknown",
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "name": "hybrid-regression",
@@ -860,7 +1101,8 @@
       "hidden": true,
       "hiddenAt": "2026-03-01T17:47:25.702Z",
       "hiddenBy": "migration-script",
-      "hiddenReason": "Hidden regression testing job"
+      "hiddenReason": "Hidden regression testing job",
+      "cost": "$0.00"
     },
     {
       "id": "job-1",
@@ -873,7 +1115,8 @@
       "hidden": true,
       "hiddenAt": "2026-03-01T17:55:06.272Z",
       "hiddenBy": "unknown",
-      "hiddenReason": "Hidden from Job Status panel"
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "id": "job-2",
@@ -886,7 +1129,8 @@
       "hidden": true,
       "hiddenAt": "2026-03-01T17:55:05.304Z",
       "hiddenBy": "unknown",
-      "hiddenReason": "Hidden from Job Status panel"
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "id": "job-3",
@@ -899,7 +1143,8 @@
       "hidden": true,
       "hiddenAt": "2026-03-01T17:55:04.576Z",
       "hiddenBy": "unknown",
-      "hiddenReason": "Hidden from Job Status panel"
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "id": "job-4",
@@ -912,7 +1157,8 @@
       "hidden": true,
       "hiddenAt": "2026-03-01T17:55:02.574Z",
       "hiddenBy": "unknown",
-      "hiddenReason": "Hidden from Job Status panel"
+      "hiddenReason": "Hidden from Job Status panel",
+      "cost": "$0.00"
     },
     {
       "id": "job-5",
@@ -921,8 +1167,9 @@
       "status": "failed",
       "gpu": "T4 · 6.1 GB",
       "submitted": "7:30 PM",
-      "duration": "12m 04s"
+      "duration": "12m 04s",
+      "cost": "$0.00"
     }
   ],
-  "updatedAt": "2026-03-01T18:31:07.072Z"
+  "updatedAt": "2026-03-01T22:52:26.169Z"
 }
