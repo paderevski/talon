@@ -1,0 +1,7 @@
+aws_region            = "us-east-1"
+project               = "talon"
+environment           = "dev"
+owner                 = "talon-team"
+cost_center           = "engineering"
+platform_state_bucket = "talon-dev-tfstate-REPLACE-ME"
+platform_state_key    = "talon/dev/platform/terraform.tfstate"

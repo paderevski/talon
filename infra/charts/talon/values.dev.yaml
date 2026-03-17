@@ -1,0 +1,96 @@
+global:
+  imagePullPolicy: IfNotPresent
+  podLabels:
+    environment: dev
+    project: talon
+
+api:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: 706194210592.dkr.ecr.us-east-1.amazonaws.com/talon-dev/api
+    tag: dev-amd64
+    pullPolicy: IfNotPresent
+  serviceAccount:
+    create: true
+    name: talon-api
+    annotations: {}
+  env:
+    - name: NODE_ENV
+      value: production
+    - name: PORT
+      value: "5174"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 5174
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: talon.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+
+dispatcher:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: 706194210592.dkr.ecr.us-east-1.amazonaws.com/talon-dev/dispatcher
+    tag: dev-amd64
+    pullPolicy: IfNotPresent
+  serviceAccount:
+    create: false
+    name: talon-dispatcher
+    annotations: {}
+  env:
+    - name: NODE_ENV
+      value: production
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+runner:
+  replicaCount: 1
+  image:
+    repository: 706194210592.dkr.ecr.us-east-1.amazonaws.com/talon-dev/runner
+    tag: dev-amd64
+    pullPolicy: IfNotPresent
+  serviceAccount:
+    create: false
+    name: talon-runner
+    annotations: {}
+  env:
+    - name: NODE_ENV
+      value: production
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1024Mi
+
+runnerJob:
+  create: false
+  name: ""
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  activeDeadlineSeconds: null
+  command: []
+  args: []
+  env: []

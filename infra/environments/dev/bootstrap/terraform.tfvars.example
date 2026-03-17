@@ -1,0 +1,7 @@
+aws_region         = "us-east-1"
+project            = "talon"
+environment        = "dev"
+owner              = "talon-team"
+cost_center        = "engineering"
+state_bucket_name  = "talon-dev-tfstate-REPLACE-ME"
+lock_table_name    = "talon-dev-terraform-locks"

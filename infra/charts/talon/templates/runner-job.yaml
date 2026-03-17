@@ -1,0 +1,46 @@
+{{- if .Values.runnerJob.create }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ required "runnerJob.name is required when runnerJob.create=true" .Values.runnerJob.name }}
+  labels:
+    {{- include "talon.labels" . | nindent 4 }}
+    app.kubernetes.io/component: runner-job
+spec:
+  backoffLimit: {{ .Values.runnerJob.backoffLimit }}
+  ttlSecondsAfterFinished: {{ .Values.runnerJob.ttlSecondsAfterFinished }}
+  {{- if .Values.runnerJob.activeDeadlineSeconds }}
+  activeDeadlineSeconds: {{ .Values.runnerJob.activeDeadlineSeconds }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "talon.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: runner-job
+        {{- with .Values.global.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ .Values.runner.serviceAccount.name }}
+      containers:
+        - name: runner
+          image: "{{ .Values.runner.image.repository }}:{{ .Values.runner.image.tag }}"
+          imagePullPolicy: {{ default .Values.global.imagePullPolicy .Values.runner.image.pullPolicy }}
+          {{- with .Values.runnerJob.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.runnerJob.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            {{- if .Values.runnerJob.env }}
+            {{- toYaml .Values.runnerJob.env | nindent 12 }}
+            {{- else }}
+            {{- toYaml .Values.runner.env | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.runner.resources | nindent 12 }}
+{{- end }}

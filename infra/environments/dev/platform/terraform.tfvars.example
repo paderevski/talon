@@ -1,0 +1,16 @@
+aws_region                    = "us-east-1"
+project                       = "talon"
+environment                   = "dev"
+owner                         = "talon-team"
+cost_center                   = "engineering"
+artifacts_bucket_name         = "talon-dev-artifacts-REPLACE-ME"
+
+# Optional sizing/cost tuning
+# eks_node_instance_types      = ["t3.large"]
+# eks_node_group_min_size      = 1
+# eks_node_group_max_size      = 3
+# eks_node_group_desired_size  = 1
+# eks_node_capacity_type       = "ON_DEMAND"
+# database_instance_class      = "db.t4g.medium"
+# database_multi_az            = false
+# jobs_queue_depth_alarm_threshold = 50

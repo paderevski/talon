@@ -1,0 +1,15 @@
+Talon chart installed.
+
+Release: {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+
+If API is enabled, check rollout with:
+  kubectl rollout status deployment/{{ include "talon.fullname" . }}-api -n {{ .Release.Namespace }}
+
+If dispatcher is enabled, check rollout with:
+  kubectl rollout status deployment/{{ include "talon.fullname" . }}-dispatcher -n {{ .Release.Namespace }}
+
+Runner is job-based.
+
+To inspect runner jobs:
+  kubectl get jobs -n {{ .Release.Namespace }}

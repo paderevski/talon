@@ -1,0 +1,75 @@
+global:
+  imagePullPolicy: IfNotPresent
+  podLabels: {}
+
+api:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: REPLACE_ME_API_IMAGE
+    tag: latest
+    pullPolicy: ""
+  serviceAccount:
+    create: true
+    name: talon-api
+    annotations: {}
+  env:
+    - name: NODE_ENV
+      value: production
+    - name: PORT
+      value: "5174"
+  resources: {}
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 5174
+  ingress:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts:
+      - host: talon.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+
+dispatcher:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: REPLACE_ME_DISPATCHER_IMAGE
+    tag: latest
+    pullPolicy: ""
+  serviceAccount:
+    create: false
+    name: talon-dispatcher
+    annotations: {}
+  env:
+    - name: NODE_ENV
+      value: production
+  resources: {}
+
+runner:
+  image:
+    repository: REPLACE_ME_RUNNER_IMAGE
+    tag: latest
+    pullPolicy: ""
+  serviceAccount:
+    create: false
+    name: talon-runner
+    annotations: {}
+  env:
+    - name: NODE_ENV
+      value: production
+  resources: {}
+
+runnerJob:
+  create: false
+  name: ""
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  activeDeadlineSeconds: null
+  command: []
+  args: []
+  env: []
