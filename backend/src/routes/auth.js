@@ -2,6 +2,7 @@ import { Router } from "express";
 import { getUsersRepository } from "../repositories/usersRepository.js";
 import { publicUser } from "../auth/middleware.js";
 import { sessionCookieName } from "../auth/session.js";
+import { clearFailures, lockedSeconds, recordFailure } from "../auth/loginThrottle.js";
 
 const router = Router();
 const usersRepository = await getUsersRepository();
@@ -29,11 +30,23 @@ router.post("/login", async (req, res) => {
   }
 
   try {
+    const waitSeconds = await lockedSeconds(username);
+    if (waitSeconds > 0) {
+      res.set("Retry-After", String(waitSeconds));
+      return res.status(429).json({
+        message: `Too many failed attempts. Try again in ${Math.ceil(waitSeconds / 60)} minute(s).`,
+        retryAfterSeconds: waitSeconds,
+      });
+    }
+
     const matched = await usersRepository.findByCredentials(username, password);
 
     if (!matched) {
+      await recordFailure(username);
       return res.status(401).json({ message: "Invalid username or password" });
     }
+
+    await clearFailures(username);
 
     // New session id on login (prevents session fixation).
     await regenerateSession(req);

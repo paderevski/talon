@@ -13,6 +13,7 @@
     "db:migrate": "node scripts/db-migrate.mjs",
     "db:seed:demo": "node scripts/db-seed-demo.mjs",
     "test:postgres": "node tests/postgres/run.mjs",
+    "db:unlock": "node scripts/db-unlock.mjs",
     "db:create-admin": "node scripts/db-create-admin.mjs"
   },
   "dependencies": {

@@ -1,6 +1,134 @@
 {
   "items": [
     {
+      "id": "result-job-99",
+      "jobId": "job-99",
+      "executionId": "local-1792958381830-c9qlo7",
+      "ownerUsername": "student_g1",
+      "name": "g1-job",
+      "status": "failed",
+      "repo": "octocat/Hello-World",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution failed (exit code 128)",
+      "finalizedAt": "2026-10-25T19:59:41.943Z"
+    },
+    {
+      "id": "result-job-98",
+      "jobId": "job-98",
+      "executionId": "local-1792958372693-k747g7",
+      "ownerUsername": "admin",
+      "name": "results-persistence-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "result-persist-output-marker.txt",
+          "size": "38 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "12 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "result-persist-repo-marker.txt",
+          "size": "36 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-10-25T19:59:33.122Z"
+    },
+    {
+      "id": "result-job-97",
+      "jobId": "job-97",
+      "executionId": "local-1792958372230-qdy364",
+      "ownerUsername": "jane_smith",
+      "name": "jane-job",
+      "status": "failed",
+      "repo": "octocat/Hello-World",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution failed (exit code 128)",
+      "finalizedAt": "2026-10-25T19:59:32.447Z"
+    },
+    {
+      "id": "result-job-96",
+      "jobId": "job-96",
+      "executionId": "local-1792958372166-7tiu0h",
+      "ownerUsername": "admin",
+      "name": "admin-private",
+      "status": "failed",
+      "repo": "octocat/Hello-World",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution failed (exit code 128)",
+      "finalizedAt": "2026-10-25T19:59:32.315Z"
+    },
+    {
+      "id": "result-job-94",
+      "jobId": "job-94",
+      "executionId": "local-1792958370642-8zrcn1",
+      "ownerUsername": "admin",
+      "name": "hide-me-1792958370617",
+      "status": "failed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution failed (exit code 1)",
+      "finalizedAt": "2026-10-25T19:59:31.165Z"
+    },
+    {
+      "id": "result-job-93",
+      "jobId": "job-93",
+      "executionId": "local-1792958370613-e2ygft",
+      "ownerUsername": "jane_smith",
+      "name": "spoof-check",
+      "status": "failed",
+      "repo": "octocat/Hello-World",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [],
+      "error": "Execution failed (exit code 128)",
+      "finalizedAt": "2026-10-25T19:59:30.733Z"
+    },
+    {
+      "id": "result-job-95",
+      "jobId": "job-95",
+      "executionId": "local-1792958370657-jn7w4i",
+      "ownerUsername": "admin",
+      "name": "hybrid-regression",
+      "status": "completed",
+      "repo": "paderevski/minimal-rnn",
+      "duration": "1s",
+      "output": "Run output files",
+      "files": [
+        {
+          "name": "test-output-artifact.txt",
+          "size": "25 B",
+          "source": "output_dir"
+        },
+        {
+          "name": "output.txt",
+          "size": "8.3 KB",
+          "source": "repo_changed"
+        },
+        {
+          "name": "test-repo-artifact.txt",
+          "size": "27 B",
+          "source": "repo_changed"
+        }
+      ],
+      "finalizedAt": "2026-10-25T19:59:31.611Z"
+    },
+    {
       "id": "result-job-92",
       "jobId": "job-92",
       "executionId": "local-1778865239279-2ufnsw",
@@ -2034,5 +2162,5 @@
       "ownerUsername": "student_a1"
     }
   ],
-  "updatedAt": "2026-05-15T17:14:04.731Z"
+  "updatedAt": "2026-10-25T19:59:41.946Z"
 }

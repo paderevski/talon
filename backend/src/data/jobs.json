@@ -1,6 +1,139 @@
 {
   "items": [
     {
+      "name": "g1-job",
+      "repo": "octocat/Hello-World",
+      "status": "failed",
+      "hidden": false,
+      "ownerUsername": "student_g1",
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "cost": "$0.00",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1792958381830-c9qlo7",
+        "submittedAt": "2026-10-25T19:59:41.830Z"
+      },
+      "id": "job-99",
+      "resultSyncKey": "2026-10-25T19:59:41.943Z"
+    },
+    {
+      "name": "results-persistence-regression",
+      "repo": "paderevski/minimal-rnn",
+      "status": "completed",
+      "hidden": false,
+      "ownerUsername": "admin",
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "cost": "$0.00",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1792958372693-k747g7",
+        "submittedAt": "2026-10-25T19:59:32.693Z"
+      },
+      "id": "job-98",
+      "resultSyncKey": "2026-10-25T19:59:33.122Z"
+    },
+    {
+      "name": "jane-job",
+      "repo": "octocat/Hello-World",
+      "status": "failed",
+      "hidden": false,
+      "ownerUsername": "jane_smith",
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "cost": "$0.00",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1792958372230-qdy364",
+        "submittedAt": "2026-10-25T19:59:32.230Z"
+      },
+      "id": "job-97",
+      "resultSyncKey": "2026-10-25T19:59:32.447Z"
+    },
+    {
+      "name": "admin-private",
+      "repo": "octocat/Hello-World",
+      "status": "failed",
+      "hidden": false,
+      "ownerUsername": "admin",
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "cost": "$0.00",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1792958372166-7tiu0h",
+        "submittedAt": "2026-10-25T19:59:32.166Z"
+      },
+      "id": "job-96",
+      "resultSyncKey": "2026-10-25T19:59:32.315Z"
+    },
+    {
+      "name": "hybrid-regression",
+      "repo": "paderevski/minimal-rnn",
+      "status": "completed",
+      "hidden": false,
+      "ownerUsername": "admin",
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "cost": "$0.00",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1792958370657-jn7w4i",
+        "submittedAt": "2026-10-25T19:59:30.657Z"
+      },
+      "id": "job-95",
+      "resultSyncKey": "2026-10-25T19:59:31.611Z"
+    },
+    {
+      "name": "hide-me-1792958370617",
+      "repo": "paderevski/minimal-rnn",
+      "status": "failed",
+      "hidden": false,
+      "ownerUsername": "admin",
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "cost": "$0.00",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1792958370642-8zrcn1",
+        "submittedAt": "2026-10-25T19:59:30.642Z"
+      },
+      "id": "job-94",
+      "resultSyncKey": "2026-10-25T19:59:31.165Z"
+    },
+    {
+      "name": "spoof-check",
+      "repo": "octocat/Hello-World",
+      "status": "failed",
+      "hidden": false,
+      "ownerUsername": "jane_smith",
+      "gpu": "—",
+      "submitted": "just now",
+      "duration": "1s",
+      "cost": "$0.00",
+      "executionProvider": "local",
+      "executionRef": {
+        "provider": "local",
+        "executionId": "local-1792958370613-e2ygft",
+        "submittedAt": "2026-10-25T19:59:30.613Z"
+      },
+      "id": "job-93",
+      "resultSyncKey": "2026-10-25T19:59:30.733Z"
+    },
+    {
       "name": "minimal-rnn-7",
       "repo": "paderevski/minimal-rnn",
       "status": "completed",
@@ -1857,5 +1990,5 @@
       "ownerUsername": "student_g4"
     }
   ],
-  "updatedAt": "2026-05-15T17:14:04.732Z"
+  "updatedAt": "2026-10-25T19:59:41.947Z"
 }

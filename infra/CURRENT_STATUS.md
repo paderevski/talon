@@ -59,9 +59,11 @@ decisions.
 
 1. ~~**Postgres-only users**~~ _(done: SQLite code and files removed,
    Postgres is the only provider, tests run against `talon_test`)._
-2. **Login throttling per account.** Slow down / temporarily lock after
-   repeated failed logins. Small, independent, required before any
-   exposure (WAF can only limit per IP).
+2. ~~**Login throttling per account.**~~ _(done: 5 wrong passwords lock an
+   account name for 15 min, even for the right password; tunable with
+   `LOGIN_MAX_FAILURES` / `LOGIN_LOCK_MINUTES`; clear early with
+   `npm run db:unlock --workspace backend -- <username>`. Trade-off: anyone who
+   knows a username can lock that account for 15 min.)_
 3. **Keep the keys safe** _(added: prerequisite for 4)_. Move
    `SESSION_SECRET` and `TALON_CREDENTIALS_KEY` to SSM Parameter Store
    (SecureString); the box reads them at boot. Today they exist only on the
