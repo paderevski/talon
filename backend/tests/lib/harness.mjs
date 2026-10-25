@@ -70,7 +70,7 @@ function pickPort() {
 
 export async function startBackendForTests({ env: extraEnv = {} } = {}) {
   const port = pickPort();
-  const baseUrl = `http://localhost:${port}`;
+  const baseUrl = `http://127.0.0.1:${port}`;
   const tempDir = path.resolve(backendRoot, "tests/.tmp");
   const databasePath = path.resolve(tempDir, `talon-test-${port}.sqlite`);
 

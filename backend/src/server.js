@@ -12,6 +12,9 @@ import { warnIfDemoUsersInProduction } from "./db/demoUserCheck.js";
 
 const app = express();
 const port = Number(process.env.PORT || 5174);
+// Loopback only: nginx (prod) and the Vite proxy (dev) are the only callers.
+// Set TALON_BIND_HOST=0.0.0.0 only if something off-box must reach it directly.
+const bindHost = String(process.env.TALON_BIND_HOST || "127.0.0.1").trim();
 
 // nginx terminates client connections in front of us (needed for secure cookies).
 app.set("trust proxy", 1);
@@ -37,7 +40,7 @@ if (String(process.env.USERS_REPOSITORY_PROVIDER || "").toLowerCase() === "postg
   await warnIfDemoUsersInProduction();
 }
 
-app.listen(port, () => {
+app.listen(port, bindHost, () => {
   // eslint-disable-next-line no-console
-  console.log(`Talon backend listening on http://localhost:${port}`);
+  console.log(`Talon backend listening on http://${bindHost}:${port}`);
 });
