@@ -70,7 +70,8 @@ sudo -u talon psql talon                  # database shell
 
 - Users, roles, classes, budgets, and sessions live in Postgres and
   **survive deploys** (`deploy.sh` runs migrations). They do not survive
-  instance replacement; there are no backups yet.
+  instance replacement, but nightly backups of them go to S3 (see
+  `infra/CURRENT_STATUS.md`).
 - Jobs and results are in Postgres (survive deploys). Their output files
   are still on the instance disk (`backend/data/runs`) and are lost if it is
   replaced; such jobs show as "output no longer available".
