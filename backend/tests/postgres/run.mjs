@@ -8,6 +8,7 @@ import { withTransaction } from "../../src/db/pool.js";
 import { seedDemoUsers } from "../../src/db/seedDemo.js";
 import { createUsersPostgresRepository } from "../../src/repositories/postgres/usersPostgresRepository.js";
 import { createPasswordHash } from "../../src/utils/passwords.js";
+import { createGithubCredentialsStore } from "../../src/utils/githubCredentialsStore.js";
 import { BudgetError, ensureAccount, grant, transfer } from "../../src/budget/ledger.js";
 
 const databaseUrl = testDatabaseUrl;
@@ -224,6 +225,97 @@ const tests = [
       "entra with hash accepted",
     );
   }],
+  ["github credentials: token round-trips, is encrypted at rest, last4 kept", async () => {
+    const store = createGithubCredentialsStore({ pool });
+    const userId = await scalar("SELECT id FROM users WHERE username = 'jane_smith'");
+    const token = "ghp_exampleTOKEN1234567890abcd";
+    await store.saveGithubTokenForUser(userId, token, "janehub");
+
+    assert((await store.getGithubTokenForUser(userId)) === token, "token did not round-trip");
+    const status = await store.getGithubTokenStatusForUser(userId);
+    assert(status.hasToken && status.tokenLast4 === "abcd" && status.githubUsername === "janehub", `status ${JSON.stringify(status)}`);
+
+    const row = (await pool.query("SELECT * FROM github_credentials WHERE user_id = $1", [userId])).rows[0];
+    assert(row.key_id === "k1", `key_id ${row.key_id}`);
+    assert(!JSON.stringify(row).includes("exampleTOKEN"), "plaintext token found in the row");
+    assert(!Buffer.from(row.ciphertext).toString("utf8").includes("exampleTOKEN"), "ciphertext contains the token");
+  }],
+
+  ["github credentials: a row copied to another user does not decrypt", async () => {
+    const store = createGithubCredentialsStore({ pool });
+    const jane = await scalar("SELECT id FROM users WHERE username = 'jane_smith'");
+    const other = await scalar("SELECT id FROM users WHERE username = 'student_a1'");
+    await pool.query(
+      `INSERT INTO github_credentials (user_id, github_username, key_id, iv, auth_tag, ciphertext, token_last4)
+       SELECT $2, github_username, key_id, iv, auth_tag, ciphertext, token_last4 FROM github_credentials WHERE user_id = $1`,
+      [jane, other],
+    );
+    assert((await store.getGithubTokenForUser(other)) === "", "copied row must not decrypt for another user");
+    assert((await store.getGithubTokenForUser(jane)).startsWith("ghp_"), "original row must still decrypt");
+    await pool.query("DELETE FROM github_credentials WHERE user_id = $1", [other]);
+  }],
+
+  ["github credentials: username-only rows, delete keeps username, removed with the user", async () => {
+    const store = createGithubCredentialsStore({ pool });
+    const userId = await scalar("SELECT id FROM users WHERE username = 'student_a2'");
+    await store.saveGithubUsernameForUser(userId, "a2hub");
+    let status = await store.getGithubTokenStatusForUser(userId);
+    assert(!status.hasToken && status.githubUsername === "a2hub", "username-only save failed");
+
+    await store.saveGithubTokenForUser(userId, "ghp_secondTOKEN0000", "a2hub");
+    await store.deleteGithubTokenForUser(userId);
+    status = await store.getGithubTokenStatusForUser(userId);
+    assert(!status.hasToken && status.githubUsername === "a2hub", "delete should keep the username");
+
+    await store.saveGithubUsernameForUser(userId, "");
+    assert((await scalar("SELECT count(*) FROM github_credentials WHERE user_id = $1", [userId])) === "0", "empty row should be removed");
+
+    // Deleting the user deletes their credentials row.
+    const tempId = await scalar("INSERT INTO users (username, display_name) VALUES ('cascade.test@lcps.org', 'Cascade Test') RETURNING id");
+    await store.saveGithubTokenForUser(tempId, "ghp_cascadeTOKEN9999", "cascade");
+    await pool.query("DELETE FROM users WHERE id = $1", [tempId]);
+    assert((await scalar("SELECT count(*) FROM github_credentials WHERE user_id = $1", [tempId])) === "0", "credentials should be deleted with the user");
+  }],
+
+  ["github credentials: key rotation keeps tokens readable", async () => {
+    const store = createGithubCredentialsStore({ pool });
+    const userId = await scalar("SELECT id FROM users WHERE username = 'jane_smith'");
+    const saved = { key: process.env.TALON_CREDENTIALS_KEY, id: process.env.TALON_CREDENTIALS_KEY_ID };
+
+    try {
+      process.env.TALON_CREDENTIALS_KEY = "old-test-secret";
+      process.env.TALON_CREDENTIALS_KEY_ID = "old1";
+      await store.saveGithubTokenForUser(userId, "ghp_rotateME12345678wxyz", "janehub");
+
+      // New key becomes current; old key is only kept for decrypting.
+      process.env.TALON_CREDENTIALS_KEY = "new-test-secret";
+      process.env.TALON_CREDENTIALS_KEY_ID = "new2";
+      process.env.TALON_CREDENTIALS_OLD_KEYS = "old1:old-test-secret";
+      assert((await store.getGithubTokenForUser(userId)) === "ghp_rotateME12345678wxyz", "old key row unreadable after key change");
+
+      // Without the old key listed, the row cannot be read (and nothing crashes).
+      process.env.TALON_CREDENTIALS_OLD_KEYS = "";
+      assert((await store.getGithubTokenForUser(userId)) === "", "row must be unreadable without its key");
+      process.env.TALON_CREDENTIALS_OLD_KEYS = "old1:old-test-secret";
+
+      const { execFileSync } = await import("node:child_process");
+      const output = execFileSync("node", ["scripts/db-rotate-credentials-key.mjs"], {
+        cwd: new URL("../..", import.meta.url).pathname,
+        env: { ...process.env, DATABASE_URL: databaseUrl },
+      }).toString();
+      assert(/Rotated 1 token\(s\) to key id 'new2'; 0 failed/.test(output), `rotation output: ${output}`);
+
+      process.env.TALON_CREDENTIALS_OLD_KEYS = "";
+      assert((await store.getGithubTokenForUser(userId)) === "ghp_rotateME12345678wxyz", "token unreadable after rotation");
+      assert((await scalar("SELECT key_id FROM github_credentials WHERE user_id = $1", [userId])) === "new2", "key id not updated");
+    } finally {
+      for (const [name, value] of [["TALON_CREDENTIALS_KEY", saved.key], ["TALON_CREDENTIALS_KEY_ID", saved.id]]) {
+        if (value === undefined) delete process.env[name]; else process.env[name] = value;
+      }
+      delete process.env.TALON_CREDENTIALS_OLD_KEYS;
+    }
+  }],
+
 ];
 
 // HTTP tests against a real backend using the Postgres provider and

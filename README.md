@@ -90,22 +90,26 @@ Talon now supports saving a GitHub PAT in the backend and using it for GitHub AP
 ### How it works
 
 - User pastes PAT in the **GitHub Credentials** panel.
-- Frontend sends token to backend with `x-talon-user` set to the logged-in Talon username.
+- The backend knows who you are from your login session.
 - Backend validates token (`GET https://api.github.com/user`).
-- Backend stores token encrypted-at-rest in `backend/src/data/githubCredentials.json`.
+- Backend stores the token encrypted (AES-256-GCM) in the Postgres table `github_credentials`, one row per user.
 - Token can be replaced or deleted from the same UI.
 
 ### Encryption key (important)
 
-Set `TALON_CREDENTIALS_KEY` for backend in every non-dev environment.
+Set `TALON_CREDENTIALS_KEY` for the backend in every non-dev environment. In
+production (`NODE_ENV=production`) the backend refuses to start without it.
+In dev, a built-in key is used. On the AWS demo it comes from SSM Parameter
+Store (see `infra/CURRENT_STATUS.md`).
 
-Example for systemd service:
-
-```ini
-Environment=TALON_CREDENTIALS_KEY=change-this-to-a-strong-secret
-```
-
-If not set, backend falls back to a development default key.
+Each stored token records the id of the key that encrypted it
+(`TALON_CREDENTIALS_KEY_ID`, default `k1`), and is bound to its owner, so a row
+copied to another user will not decrypt. To rotate the key: set the new secret
+and a new `TALON_CREDENTIALS_KEY_ID`, list the old one in
+`TALON_CREDENTIALS_OLD_KEYS="k1:old-secret"`, restart, run
+`npm run db:rotate-credentials-key --workspace backend`, then remove the old
+key. Tokens from the old `githubCredentials.json` file can be loaded once with
+`npm run db:import-github-credentials --workspace backend`.
 
 ### API endpoints
 
@@ -114,15 +118,14 @@ If not set, backend falls back to a development default key.
 - `DELETE /api/github-credentials` → delete saved token
 - `GET /api/github-credentials/repos/:username` → public repos list (uses saved PAT if present)
 
-These endpoints expect request header `x-talon-user` so credentials are scoped per Talon user.
+These endpoints require a signed-in session; credentials are scoped to the signed-in user.
 
 ### Security notes
 
 - Do not log PAT values in backend logs.
-- Restrict file permissions for `backend/src/data/githubCredentials.json` (service user only).
 - Use a strong, unique `TALON_CREDENTIALS_KEY` per environment.
 - Rotate PATs regularly and delete unused tokens.
-- If you change `TALON_CREDENTIALS_KEY`, previously stored encrypted tokens must be re-saved.
+- If you change `TALON_CREDENTIALS_KEY` without following the rotation steps above, stored tokens become unreadable and must be re-saved.
 
 ### End-user guide: Create a GitHub PAT
 

@@ -44,10 +44,10 @@ async function getJsonWithHeadersOrThrow(url, errorMessage, headers = {}) {
   return response.json();
 }
 
-// Signed-in user (requireAuth runs before this router). The old
-// x-talon-user header is no longer trusted.
+// Signed-in user's id (requireAuth runs before this router). The old
+// x-talon-user header is no longer trusted. Credentials are keyed by id.
 function getTalonUserFromRequest(req) {
-  return String(req.user?.username ?? "").trim();
+  return String(req.user?.id ?? "").trim();
 }
 
 function getGithubHeaders(token) {

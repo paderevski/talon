@@ -42,11 +42,11 @@ Key paths: app `/opt/talon`, config `/etc/talon/talon.env`, secrets
 
 ## Known limitations (demo mode)
 
-- Users/sessions/budgets are in Postgres and survive deploys; jobs and
+- Users, sessions, budgets and GitHub credentials are in Postgres and survive deploys; jobs and
   results are still tracked JSON files and reset on each deploy.
 - Nightly database backups exist, but restoring onto a new instance is manual.
-- `githubCredentials.json` is untracked, so it survives deploys but not
-  instance replacement. Changing `user_data.sh.tftpl` replaces the instance.
+- Changing `user_data.sh.tftpl` replaces the instance (database is reset;
+  restore from a backup by hand if it matters).
 - The local job runner executes `git clone` / `python3` directly on the host
   as the `talon` user, so jobs are not isolated.
 
@@ -96,11 +96,12 @@ decisions.
 **Data into Postgres** (nothing resets on deploy after these; first step
 toward two servers)
 
-6. **GitHub credentials -> Postgres**, still encrypted with
-   `TALON_CREDENTIALS_KEY`, keyed by user id. Replaces
-   `githubCredentials.json` (which also ends its world-readable file mode).
-   Store a **key id** with each encrypted token so the key can be rotated
-   without everyone re-entering tokens.
+6. ~~**GitHub credentials -> Postgres**~~ _(done: table `github_credentials`,
+   one row per user id, AES-256-GCM with the key id stored per row and the
+   owner bound into the ciphertext; rotation via
+   `npm run db:rotate-credentials-key`; old JSON file can be imported with
+   `db:import-github-credentials`. They are in the nightly backups, and the
+   backup is only readable together with the SSM key.)_
 7. **Jobs and results -> Postgres**, owned by user id, with the budget
    ledger charging jobs. Removes the JSON files and the demo owner
    assignment (`demoOwnership.js`).

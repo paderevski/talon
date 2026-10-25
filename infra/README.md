@@ -73,7 +73,7 @@ sudo -u talon psql talon                  # database shell
   instance replacement; there are no backups yet.
 - Jobs and results are still JSON files in the git tree
   (`backend/src/data/*.json`) and reset to the committed version on every
-  deploy. Untracked files such as `githubCredentials.json` survive deploys.
+  deploy.
 - Demo users are seeded once on first boot (`TALON_ALLOW_DEMO_SEED=true` in
   the env file). Their passwords are public: see "Going public".
 - Changing `user_data.sh.tftpl` replaces the instance on the next `apply`.
