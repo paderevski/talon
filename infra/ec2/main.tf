@@ -70,8 +70,11 @@ resource "aws_instance" "app" {
   iam_instance_profile   = aws_iam_instance_profile.instance.name
 
   user_data = templatefile("${path.module}/user_data.sh.tftpl", {
-    repo_url = var.repo_url
-    git_ref  = var.git_ref
+    repo_url       = var.repo_url
+    git_ref        = var.git_ref
+    region         = var.aws_region
+    secrets_prefix = local.secrets_prefix
+    kms_alias      = aws_kms_alias.secrets.name
   })
   user_data_replace_on_change = true
 
@@ -89,6 +92,8 @@ resource "aws_instance" "app" {
   tags = {
     Name = "${local.name}-app"
   }
+
+  depends_on = [aws_iam_role_policy.app_secrets]
 
   lifecycle {
     # A newer Ubuntu AMI should not replace a running instance.

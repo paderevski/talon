@@ -15,12 +15,13 @@ if [ ! -f /swapfile ]; then
   echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
 
-# --- packages: Node 24 LTS (node:sqlite needs >= 22.13), nginx, git, python3 ---
+# --- packages: Node 24 LTS, nginx, git, python3 ---
 apt-get update
 apt-get install -y ca-certificates curl gnupg git nginx python3 openssl postgresql
 curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
 apt-get install -y nodejs
 node --version
+snap install aws-cli --classic
 
 # --- service user and app directory ---
 id talon >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/talon --shell /usr/sbin/nologin talon
@@ -37,7 +38,51 @@ if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = 'talo
   sudo -u postgres createdb --owner talon talon
 fi
 
-# --- runtime config (secrets generated on the box, never in Terraform state) ---
+# --- app secrets: SSM Parameter Store, created once, never regenerated ---
+# SESSION_SECRET and TALON_CREDENTIALS_KEY must survive instance replacement
+# (the credentials key decrypts stored GitHub tokens and database backups) and
+# must be identical on every server. Generate each one only if it does not
+# exist yet; the values never go through xtrace or the bootstrap log.
+export AWS_DEFAULT_REGION=${region}
+set +x
+for name in session-secret credentials-key; do
+  umask 077
+  printf '%s' "$(openssl rand -hex 32)" > /run/talon-new-secret
+  umask 022
+  out=$(/snap/bin/aws ssm put-parameter --name "${secrets_prefix}/$name" --type SecureString \
+    --key-id "${kms_alias}" --value file:///run/talon-new-secret --no-overwrite 2>&1) \
+    || echo "$out" | grep -q ParameterAlreadyExists
+  rm -f /run/talon-new-secret
+done
+set -x
+
+# Loader: copies the secrets into /etc/talon/secrets.env (root:talon 640). The
+# service runs it as root before every start, so rotating a parameter and
+# restarting talon-backend is all it takes. If SSM is unreachable it keeps the
+# last copy rather than taking the site down.
+cat > /usr/local/bin/talon-load-secrets <<'EOF'
+#!/bin/bash
+set -euo pipefail
+OUT=/etc/talon/secrets.env
+export AWS_DEFAULT_REGION=${region}
+get() { /snap/bin/aws ssm get-parameter --name "${secrets_prefix}/$1" --with-decryption --query Parameter.Value --output text; }
+if SESSION=$(get session-secret) && CRED=$(get credentials-key) && [ -n "$SESSION" ] && [ -n "$CRED" ]; then
+  umask 077
+  TMP=$(mktemp /etc/talon/.secrets.XXXXXX)
+  printf 'SESSION_SECRET=%s\nTALON_CREDENTIALS_KEY=%s\n' "$SESSION" "$CRED" > "$TMP"
+  chgrp talon "$TMP"
+  chmod 640 "$TMP"
+  mv "$TMP" "$OUT"
+elif [ -f "$OUT" ]; then
+  echo "talon-load-secrets: SSM unavailable, using cached $OUT" >&2
+else
+  echo "talon-load-secrets: cannot read secrets from SSM and there is no cached copy" >&2
+  exit 1
+fi
+EOF
+chmod 755 /usr/local/bin/talon-load-secrets
+
+# --- runtime config (non-secret) ---
 install -d -o root -g talon -m 750 /etc/talon
 if [ ! -f /etc/talon/talon.env ]; then
   umask 027
@@ -45,9 +90,6 @@ if [ ! -f /etc/talon/talon.env ]; then
 NODE_ENV=production
 PORT=5174
 HOME=/var/lib/talon
-TALON_CREDENTIALS_KEY=$(openssl rand -hex 32)
-SESSION_SECRET=$(openssl rand -hex 32)
-USERS_REPOSITORY_PROVIDER=postgres
 DATABASE_URL=postgres://talon@%2Fvar%2Frun%2Fpostgresql/talon
 # Private demo box (SSM tunnel only): demo users allowed. Remove before
 # this server is reachable from the internet.
@@ -56,6 +98,7 @@ EOF
   chgrp talon /etc/talon/talon.env
   umask 022
 fi
+/usr/local/bin/talon-load-secrets
 
 # --- deploy script (used on first boot and by infra/scripts/deploy.sh via SSM) ---
 cat > /usr/local/bin/talon-deploy <<'EOF'
@@ -68,7 +111,7 @@ REF="$${1:-${git_ref}}"
 APP=/opt/talon
 as_talon() { sudo -u talon env HOME=/var/lib/talon "$@"; }
 # Same environment the service gets (DATABASE_URL etc.).
-as_talon_env() { sudo -u talon bash -c 'set -a; . /etc/talon/talon.env; set +a; exec "$@"' talon-env "$@"; }
+as_talon_env() { sudo -u talon bash -c 'set -a; . /etc/talon/talon.env; . /etc/talon/secrets.env; set +a; exec "$@"' talon-env "$@"; }
 
 if [ ! -d "$APP/.git" ]; then
   as_talon git clone "${repo_url}" "$APP"
@@ -100,6 +143,8 @@ User=talon
 Group=talon
 WorkingDirectory=/opt/talon/backend
 EnvironmentFile=/etc/talon/talon.env
+EnvironmentFile=/etc/talon/secrets.env
+ExecStartPre=+/usr/local/bin/talon-load-secrets
 ExecStart=/usr/bin/node src/server.js
 Restart=always
 RestartSec=5
@@ -147,7 +192,7 @@ systemctl enable nginx
 # --- demo users, first boot only (re-seeding would wipe demo data) ---
 if [ -f /opt/talon/backend/scripts/db-seed-demo.mjs ] && [ ! -f /var/lib/talon/.demo-seeded ]; then
   cd /opt/talon
-  sudo -u talon bash -c 'set -a; . /etc/talon/talon.env; set +a; npm run db:seed:demo --workspace backend'
+  sudo -u talon bash -c 'set -a; . /etc/talon/talon.env; . /etc/talon/secrets.env; set +a; npm run db:seed:demo --workspace backend'
   sudo -u talon touch /var/lib/talon/.demo-seeded
   systemctl restart talon-backend
 fi

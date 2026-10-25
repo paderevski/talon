@@ -15,6 +15,14 @@ const credentialsFilePath = path.resolve(
   "../data/githubCredentials.json",
 );
 
+// Fail closed: the fallback below is public in this repo, so a production
+// server without a real key must not start (and must not "encrypt" with it).
+if (process.env.NODE_ENV === "production" && !process.env.TALON_CREDENTIALS_KEY) {
+  throw new Error(
+    "TALON_CREDENTIALS_KEY is required when NODE_ENV=production (refusing to use the dev fallback key)",
+  );
+}
+
 const encryptionSecret =
   process.env.TALON_CREDENTIALS_KEY || "talon-dev-only-change-this-key";
 const encryptionSalt = "talon-github-credentials";

@@ -12,7 +12,11 @@ function getSessionSecret() {
     return configured;
   }
 
-  // Random per process: still secure, but everyone is signed out on restart.
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("SESSION_SECRET is required when NODE_ENV=production");
+  }
+
+  // Dev only: random per process, so everyone is signed out on restart.
   console.warn(
     "[session] SESSION_SECRET not set; using a random secret (sessions end on restart)",
   );
