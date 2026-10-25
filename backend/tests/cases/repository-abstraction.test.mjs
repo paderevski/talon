@@ -1,9 +1,9 @@
-import { assert } from "../lib/harness.mjs";
+import { assert, apiFetch } from "../lib/harness.mjs";
 
 export const name = "repository abstraction serves jobs and results";
 
 export async function run({ baseUrl }) {
-  const jobsResponse = await fetch(`${baseUrl}/api/jobs?status=all`);
+  const jobsResponse = await apiFetch(`${baseUrl}/api/jobs?status=all`);
   assert(
     jobsResponse.ok,
     `Expected /api/jobs to return 200, got ${jobsResponse.status}`,
@@ -14,7 +14,7 @@ export async function run({ baseUrl }) {
     "Expected /api/jobs response to contain items[]",
   );
 
-  const resultsResponse = await fetch(`${baseUrl}/api/results`);
+  const resultsResponse = await apiFetch(`${baseUrl}/api/results`);
   assert(
     resultsResponse.ok,
     `Expected /api/results to return 200, got ${resultsResponse.status}`,

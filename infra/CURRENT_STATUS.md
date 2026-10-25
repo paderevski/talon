@@ -46,8 +46,9 @@ generated `TALON_CREDENTIALS_KEY`), service user `talon`.
   resets on each deploy.
 - `githubCredentials.json` is untracked, so it survives deploys but not
   instance replacement. Changing `user_data.sh.tftpl` replaces the instance.
-- Auth scoping uses the `x-talon-user` header, which clients can spoof. OK
-  while private behind SSM; must be replaced before going public.
+- The deployed `main` still trusts the `x-talon-user` header. Branch
+  `user-db-postgres` replaces it with cookie sessions; deploy that (with
+  Postgres on the box) before going public.
 - The local job runner executes `git clone` / `python3` directly on the host
   as the `talon` user, so jobs are not isolated.
 - No backups. The instance is disposable; rebuild with `terraform apply`.
@@ -68,7 +69,14 @@ generated `TALON_CREDENTIALS_KEY`), service user `talon`.
    **personal** account; that record currently points to another server,
    so check nothing there still needs it.
 3. `sudo certbot --nginx -d talon.aet-cs.org` on the box.
-4. Replace header-based auth; remove demo users.
+4. **No demo users on a reachable server.** Their passwords are public in
+   this repo. Check the backend log for `[security] ... demo account(s)`,
+   and never set `TALON_ALLOW_DEMO_SEED=true` there.
+5. Create the real first admin with
+   `npm run db:create-admin --workspace backend -- --username you@lcps.org`
+   (random password, printed once).
+6. Set `SESSION_SECRET` and `SESSION_COOKIE_SECURE=true` in
+   `/etc/talon/talon.env`.
 
 ## History
 

@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { assert, backendRoot, startBackendForTests } from "../lib/harness.mjs";
+import { assert, backendRoot, startBackendForTests, apiFetch } from "../lib/harness.mjs";
 
 export const name = "stale execution refs do not return 404 on read endpoints";
 
@@ -41,7 +41,7 @@ export async function run() {
 
     isolatedBackend = await startBackendForTests();
 
-    const detailResponse = await fetch(
+    const detailResponse = await apiFetch(
       `${isolatedBackend.baseUrl}/api/jobs/${staleJobId}`,
     );
     assert(
@@ -62,7 +62,7 @@ export async function run() {
       "Expected execution=null for stale execution ref",
     );
 
-    const logsResponse = await fetch(
+    const logsResponse = await apiFetch(
       `${isolatedBackend.baseUrl}/api/jobs/${staleJobId}/logs`,
     );
     assert(
@@ -79,7 +79,7 @@ export async function run() {
       "Expected empty logs for stale execution ref",
     );
 
-    const filesResponse = await fetch(
+    const filesResponse = await apiFetch(
       `${isolatedBackend.baseUrl}/api/jobs/${staleJobId}/files`,
     );
     assert(

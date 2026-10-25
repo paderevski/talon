@@ -1,11 +1,6 @@
 import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import {
-  assert,
-  backendRoot,
-  waitFor,
-  waitForJobTerminalState,
-} from "../lib/harness.mjs";
+import { assert, backendRoot, waitFor, waitForJobTerminalState, apiFetch } from "../lib/harness.mjs";
 
 export const name = "terminal jobs persist results history";
 
@@ -24,7 +19,7 @@ async function waitForDirectory(directoryPath, label) {
 }
 
 export async function run({ baseUrl }) {
-  const beforeResultsResponse = await fetch(`${baseUrl}/api/results`);
+  const beforeResultsResponse = await apiFetch(`${baseUrl}/api/results`);
   assert(
     beforeResultsResponse.ok,
     "Expected initial results request to succeed",
@@ -34,7 +29,7 @@ export async function run({ baseUrl }) {
     ? beforeResultsPayload.items.length
     : 0;
 
-  const submitResponse = await fetch(`${baseUrl}/api/jobs`, {
+  const submitResponse = await apiFetch(`${baseUrl}/api/jobs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -80,7 +75,7 @@ export async function run({ baseUrl }) {
 
   await waitForJobTerminalState(baseUrl, jobId, { timeoutMs: 120_000 });
 
-  const afterResultsResponse = await fetch(`${baseUrl}/api/results`);
+  const afterResultsResponse = await apiFetch(`${baseUrl}/api/results`);
   assert(afterResultsResponse.ok, "Expected results request to succeed");
   const afterResultsPayload = await afterResultsResponse.json();
   const afterItems = Array.isArray(afterResultsPayload?.items)

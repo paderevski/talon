@@ -90,6 +90,22 @@ export function createUsersPostgresRepository({ pool = getPool() } = {}) {
     return findById(identity.user_id);
   }
 
+  // Usernames of active students in the (unarchived) classes this user teaches.
+  async function listStudentUsernamesForTeacher(userId) {
+    const result = await pool.query(
+      `
+        SELECT DISTINCT s.username
+        FROM class_members tm
+        JOIN classes c ON c.id = tm.class_id AND c.archived_at IS NULL
+        JOIN class_members sm ON sm.class_id = tm.class_id AND sm.member_role = 'student'
+        JOIN users s ON s.id = sm.user_id
+        WHERE tm.user_id = $1 AND tm.member_role = 'teacher'
+      `,
+      [userId],
+    );
+    return result.rows.map((row) => row.username);
+  }
+
   async function recordLogin(userId) {
     await pool.query(
       `
@@ -268,6 +284,7 @@ export function createUsersPostgresRepository({ pool = getPool() } = {}) {
     findByUsername,
     findById,
     recordLogin,
+    listStudentUsernamesForTeacher,
     listAdminRoster,
     getTeacherRoster,
   };

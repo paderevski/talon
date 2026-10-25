@@ -1,14 +1,13 @@
-import { assert } from "../lib/harness.mjs";
+import { assert, apiFetch } from "../lib/harness.mjs";
 
 export const name =
   "hidden jobs are excluded by default but retained for audit";
 
 export async function run({ baseUrl }) {
-  const createResponse = await fetch(`${baseUrl}/api/jobs`, {
+  const createResponse = await apiFetch(`${baseUrl}/api/jobs`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-auth-user": "test-user",
     },
     body: JSON.stringify({
       name: `hide-me-${Date.now()}`,
@@ -26,11 +25,10 @@ export async function run({ baseUrl }) {
   const jobId = createBody?.job?.id;
   assert(jobId, "Expected created job id");
 
-  const hideResponse = await fetch(`${baseUrl}/api/jobs/${jobId}`, {
+  const hideResponse = await apiFetch(`${baseUrl}/api/jobs/${jobId}`, {
     method: "DELETE",
     headers: {
       "Content-Type": "application/json",
-      "x-auth-user": "test-user",
     },
     body: JSON.stringify({ reason: "cleanup test" }),
   });
@@ -39,9 +37,9 @@ export async function run({ baseUrl }) {
   const hideBody = await hideResponse.json();
   assert(hideBody?.job?.hidden === true, "Expected hidden=true on hidden job");
   assert(Boolean(hideBody?.job?.hiddenAt), "Expected hiddenAt metadata");
-  assert(hideBody?.job?.hiddenBy === "test-user", "Expected hiddenBy metadata");
+  assert(hideBody?.job?.hiddenBy === "admin", "Expected hiddenBy metadata");
 
-  const defaultListResponse = await fetch(`${baseUrl}/api/jobs?status=all`);
+  const defaultListResponse = await apiFetch(`${baseUrl}/api/jobs?status=all`);
   assert(
     defaultListResponse.ok,
     `Expected default jobs list 200, got ${defaultListResponse.status}`,
@@ -55,7 +53,7 @@ export async function run({ baseUrl }) {
     "Expected hidden job excluded from default jobs list",
   );
 
-  const auditListResponse = await fetch(
+  const auditListResponse = await apiFetch(
     `${baseUrl}/api/jobs?status=all&includeHidden=true`,
   );
   assert(
@@ -69,7 +67,7 @@ export async function run({ baseUrl }) {
   assert(hiddenJob, "Expected hidden job included when includeHidden=true");
   assert(hiddenJob.hidden === true, "Expected hidden job retained for audit");
 
-  const hiddenFilterResponse = await fetch(
+  const hiddenFilterResponse = await apiFetch(
     `${baseUrl}/api/jobs?status=hidden&includeHidden=true`,
   );
   assert(
@@ -85,10 +83,9 @@ export async function run({ baseUrl }) {
     "Expected hidden filter endpoint to include hidden job",
   );
 
-  const unhideResponse = await fetch(`${baseUrl}/api/jobs/${jobId}/unhide`, {
+  const unhideResponse = await apiFetch(`${baseUrl}/api/jobs/${jobId}/unhide`, {
     method: "POST",
     headers: {
-      "x-auth-user": "test-user",
     },
   });
   assert(
@@ -101,7 +98,7 @@ export async function run({ baseUrl }) {
     "Expected hidden=false after unhide",
   );
 
-  const afterUnhideDefault = await fetch(`${baseUrl}/api/jobs?status=all`);
+  const afterUnhideDefault = await apiFetch(`${baseUrl}/api/jobs?status=all`);
   assert(
     afterUnhideDefault.ok,
     `Expected default list after unhide 200, got ${afterUnhideDefault.status}`,

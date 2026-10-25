@@ -15,8 +15,10 @@ import {
 } from "../services/jobExecutionService.js";
 import { getJobsRepository } from "../repositories/jobsRepository.js";
 import { getResultsRepository } from "../repositories/resultsRepository.js";
+import { attachAccessScope, canModify, hasRole, scopeAllows } from "../auth/access.js";
 
 const router = Router();
+router.use(attachAccessScope);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,8 +27,11 @@ const runsRootDir = path.resolve(__dirname, "../../data/runs");
 const jobsRepository = await getJobsRepository();
 const resultsRepository = await getResultsRepository();
 
-function getTalonUserFromRequest(req) {
-  return String(req.get("x-talon-user") ?? "").trim();
+// Jobs the caller may not see are treated exactly like missing jobs, so
+// responses don't reveal that another user's job exists.
+function findVisibleJob(req) {
+  const job = jobsRepository.findById(req.params.id);
+  return job && scopeAllows(req.accessScope, job.ownerUsername) ? job : null;
 }
 
 function formatDurationFromExecution(startedAt, endedAt) {
@@ -243,7 +248,9 @@ async function synchronizeJobFromExecution(job) {
 router.get("/", async (req, res) => {
   const status = req.query.status;
   const includeHidden = isTruthyQuery(String(req.query.includeHidden ?? ""));
-  const jobs = jobsRepository.list();
+  const jobs = jobsRepository
+    .list()
+    .filter((job) => scopeAllows(req.accessScope, job.ownerUsername));
 
   let didMutateStatus = false;
   const itemsWithExecution = await Promise.all(
@@ -274,7 +281,12 @@ router.get("/", async (req, res) => {
   );
 
   if (didMutateStatus) {
-    await jobsRepository.setAll(itemsWithExecution);
+    // Only the caller's visible jobs were synchronized; merge them back so
+    // other users' jobs aren't dropped.
+    const updatedById = new Map(itemsWithExecution.map((job) => [job.id, job]));
+    await jobsRepository.setAll(
+      jobsRepository.list().map((job) => updatedById.get(job.id) ?? job),
+    );
   }
 
   const visibleItems = includeHidden
@@ -298,8 +310,8 @@ router.get("/", async (req, res) => {
 
 router.post("/", async (req, res) => {
   const payload = req.body ?? {};
-  const talonUser = getTalonUserFromRequest(req);
-  const ownerUsername = String(payload.ownerUsername ?? "").trim() || talonUser;
+  // Always the signed-in user; any ownerUsername in the body is ignored.
+  const ownerUsername = req.user.username;
 
   const executionRef = await submitExecution({
     name: payload.name || "untitled-job",
@@ -330,13 +342,17 @@ router.post("/", async (req, res) => {
   });
 });
 
-router.get("/debug/executions", async (_req, res) => {
+router.get("/debug/executions", async (req, res) => {
+  if (!hasRole(req.user, "admin")) {
+    return res.status(403).json({ message: "Requires role: admin" });
+  }
+
   const snapshot = await getExecutionDebugSnapshot();
   return res.json(snapshot);
 });
 
 router.get("/:id", async (req, res) => {
-  const job = jobsRepository.findById(req.params.id);
+  const job = findVisibleJob(req);
   if (!job) {
     return res.json({
       job: null,
@@ -408,7 +424,7 @@ router.get("/:id", async (req, res) => {
 });
 
 router.get("/:id/logs", async (req, res) => {
-  const job = jobsRepository.findById(req.params.id);
+  const job = findVisibleJob(req);
   if (!job) {
     return res.json({
       lines: [],
@@ -447,7 +463,7 @@ router.get("/:id/logs", async (req, res) => {
 });
 
 router.get("/:id/files", async (req, res) => {
-  const job = jobsRepository.findById(req.params.id);
+  const job = findVisibleJob(req);
   if (!job) {
     return res.json({
       items: [],
@@ -479,7 +495,7 @@ router.get("/:id/files", async (req, res) => {
 });
 
 router.get("/:id/files/download", async (req, res) => {
-  const job = jobsRepository.findById(req.params.id);
+  const job = findVisibleJob(req);
   if (!job) {
     return res.status(404).json({ message: "Job not found" });
   }
@@ -510,9 +526,13 @@ router.get("/:id/files/download", async (req, res) => {
 });
 
 router.post("/:id/cancel", async (req, res) => {
-  const job = jobsRepository.findById(req.params.id);
+  const job = findVisibleJob(req);
   if (!job) {
     return res.status(404).json({ message: "Job not found" });
+  }
+
+  if (!canModify(req.user, job.ownerUsername)) {
+    return res.status(403).json({ message: "Only the job owner or an admin can cancel it" });
   }
 
   if (!job.executionRef) {
@@ -531,13 +551,16 @@ router.post("/:id/cancel", async (req, res) => {
 
 router.delete("/:id", async (req, res) => {
   const jobs = jobsRepository.list();
-  const index = jobs.findIndex((job) => job.id === req.params.id);
+  const currentJob = findVisibleJob(req);
 
-  if (index < 0) {
+  if (!currentJob) {
     return res.status(404).json({ message: "Job not found" });
   }
 
-  const currentJob = jobs[index];
+  if (!canModify(req.user, currentJob.ownerUsername)) {
+    return res.status(403).json({ message: "Only the job owner or an admin can change it" });
+  }
+
   if (currentJob.hidden) {
     return res.json({
       message: "Job already hidden",
@@ -545,7 +568,7 @@ router.delete("/:id", async (req, res) => {
     });
   }
 
-  const hiddenBy = String(req.get("x-auth-user") || "").trim() || "unknown";
+  const hiddenBy = req.user.username;
   const hiddenReason = String(req.body?.reason ?? "").trim() || undefined;
   const hiddenJob = {
     ...currentJob,
@@ -568,13 +591,16 @@ router.delete("/:id", async (req, res) => {
 
 router.post("/:id/unhide", async (req, res) => {
   const jobs = jobsRepository.list();
-  const index = jobs.findIndex((job) => job.id === req.params.id);
+  const currentJob = findVisibleJob(req);
 
-  if (index < 0) {
+  if (!currentJob) {
     return res.status(404).json({ message: "Job not found" });
   }
 
-  const currentJob = jobs[index];
+  if (!canModify(req.user, currentJob.ownerUsername)) {
+    return res.status(403).json({ message: "Only the job owner or an admin can change it" });
+  }
+
   if (!currentJob.hidden) {
     return res.json({
       message: "Job already visible",

@@ -1,11 +1,11 @@
-import { assert } from "../lib/harness.mjs";
+import { assert, apiFetch } from "../lib/harness.mjs";
 
 export const name = "missing job read endpoints return no-data payloads";
 
 export async function run({ baseUrl }) {
   const missingJobId = `job-missing-${Date.now()}`;
 
-  const detailResponse = await fetch(`${baseUrl}/api/jobs/${missingJobId}`);
+  const detailResponse = await apiFetch(`${baseUrl}/api/jobs/${missingJobId}`);
   assert(
     detailResponse.ok,
     `Expected detail endpoint 200, got ${detailResponse.status}`,
@@ -21,7 +21,7 @@ export async function run({ baseUrl }) {
     "Expected detail execution=null for missing job",
   );
 
-  const logsResponse = await fetch(`${baseUrl}/api/jobs/${missingJobId}/logs`);
+  const logsResponse = await apiFetch(`${baseUrl}/api/jobs/${missingJobId}/logs`);
   assert(
     logsResponse.ok,
     `Expected logs endpoint 200, got ${logsResponse.status}`,
@@ -36,7 +36,7 @@ export async function run({ baseUrl }) {
     "Expected empty logs for missing job",
   );
 
-  const filesResponse = await fetch(
+  const filesResponse = await apiFetch(
     `${baseUrl}/api/jobs/${missingJobId}/files`,
   );
   assert(

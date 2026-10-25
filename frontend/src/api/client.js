@@ -4,38 +4,35 @@ const headers = {
   "Content-Type": "application/json",
 };
 
-let currentApiUser = "";
+// Identity comes from the httpOnly session cookie (sent automatically on
+// same-origin requests). The client no longer tells the server who it is.
+let onUnauthorized = () => {};
+
+export function setUnauthorizedHandler(handler) {
+  onUnauthorized = typeof handler === "function" ? handler : () => {};
+}
+
+async function apiFetch(path, options) {
+  const response = await fetch(path, { credentials: "same-origin", ...options });
+  if (response.status === 401 && !String(path).startsWith("/api/auth/")) {
+    onUnauthorized();
+  }
+  return response;
+}
 
 const githubRepoCacheTtlMs = 5 * 60 * 1000;
 const githubRepoCache = new Map();
 
 async function getJson(path) {
-  const requestHeaders = {
-    ...(currentApiUser ? { "x-talon-user": currentApiUser } : {}),
-  };
-
-  const response = await fetch(path, {
-    headers: requestHeaders,
-  });
+  const response = await apiFetch(path);
   if (!response.ok) {
     throw new Error(`Request failed: ${response.status}`);
   }
   return response.json();
 }
 
-function getRequestHeaders(
-  includeJsonContentType = false,
-  usernameOverride = "",
-) {
-  const effectiveUser = String(usernameOverride ?? "").trim() || currentApiUser;
-  return {
-    ...(includeJsonContentType ? headers : {}),
-    ...(effectiveUser ? { "x-talon-user": effectiveUser } : {}),
-  };
-}
-
-export function setApiAuthUser(username) {
-  currentApiUser = String(username ?? "").trim();
+function getRequestHeaders(includeJsonContentType = false) {
+  return includeJsonContentType ? { ...headers } : {};
 }
 
 export function fetchRepoTree(
@@ -114,7 +111,7 @@ export function getJobFileDownloadUrl(jobId, fileName, source) {
 }
 
 export async function cancelJob(jobId) {
-  const response = await fetch(
+  const response = await apiFetch(
     `/api/jobs/${encodeURIComponent(jobId)}/cancel`,
     {
       method: "POST",
@@ -139,7 +136,7 @@ export async function cancelJob(jobId) {
 }
 
 export async function hideJob(jobId, reason) {
-  const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
+  const response = await apiFetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
     method: "DELETE",
     headers: getRequestHeaders(true),
     body: JSON.stringify({ reason }),
@@ -162,7 +159,7 @@ export async function hideJob(jobId, reason) {
 }
 
 export async function unhideJob(jobId) {
-  const response = await fetch(
+  const response = await apiFetch(
     `/api/jobs/${encodeURIComponent(jobId)}/unhide`,
     {
       method: "POST",
@@ -187,7 +184,7 @@ export async function unhideJob(jobId) {
 }
 
 export async function submitJob(payload) {
-  const response = await fetch("/api/jobs", {
+  const response = await apiFetch("/api/jobs", {
     method: "POST",
     headers: getRequestHeaders(true),
     body: JSON.stringify(payload),
@@ -224,7 +221,7 @@ export async function login(username, password) {
 }
 
 export async function fetchAdminRoster() {
-  const response = await fetch("/api/admin/roster", {
+  const response = await apiFetch("/api/admin/roster", {
     headers: getRequestHeaders(),
   });
 
@@ -245,7 +242,7 @@ export async function fetchAdminRoster() {
 }
 
 export async function fetchTeacherRoster() {
-  const response = await fetch("/api/teacher/students", {
+  const response = await apiFetch("/api/teacher/students", {
     headers: getRequestHeaders(),
   });
 
@@ -277,7 +274,7 @@ export async function fetchGithubPublicRepos(username) {
     return cached.repos;
   }
 
-  const response = await fetch(
+  const response = await apiFetch(
     `/api/github-credentials/repos/${encodeURIComponent(normalizedUsername)}`,
     {
       headers: getRequestHeaders(),
@@ -317,12 +314,12 @@ export async function fetchGithubPublicRepos(username) {
 }
 
 export async function getGithubTokenStatus(usernameOverride = "") {
-  const effectiveUser = String(usernameOverride ?? "").trim() || currentApiUser;
+  const effectiveUser = String(usernameOverride ?? "").trim() || "(session user)"; // log label only; the server uses the session
   console.info(
     `[github-credentials][frontend] requesting token status (user='${effectiveUser || "(missing)"}')`,
   );
-  const response = await fetch("/api/github-credentials", {
-    headers: getRequestHeaders(false, usernameOverride),
+  const response = await apiFetch("/api/github-credentials", {
+    headers: getRequestHeaders(false),
   });
 
   console.info(
@@ -341,13 +338,13 @@ export async function getGithubTokenStatus(usernameOverride = "") {
 }
 
 export async function saveGithubToken(token, usernameOverride = "", githubUsername = "") {
-  const effectiveUser = String(usernameOverride ?? "").trim() || currentApiUser;
+  const effectiveUser = String(usernameOverride ?? "").trim() || "(session user)"; // log label only; the server uses the session
   console.info(
     `[github-credentials][frontend] sending token save request (user='${effectiveUser || "(missing)"}', tokenProvided=${Boolean(String(token ?? "").trim())})`,
   );
-  const response = await fetch("/api/github-credentials", {
+  const response = await apiFetch("/api/github-credentials", {
     method: "PUT",
-    headers: getRequestHeaders(true, usernameOverride),
+    headers: getRequestHeaders(true),
     body: JSON.stringify({
       token,
       githubUsername: String(githubUsername ?? "").trim(),
@@ -379,13 +376,13 @@ export async function saveGithubToken(token, usernameOverride = "", githubUserna
 }
 
 export async function deleteGithubToken(usernameOverride = "") {
-  const effectiveUser = String(usernameOverride ?? "").trim() || currentApiUser;
+  const effectiveUser = String(usernameOverride ?? "").trim() || "(session user)"; // log label only; the server uses the session
   console.info(
     `[github-credentials][frontend] sending token delete request (user='${effectiveUser || "(missing)"}')`,
   );
-  const response = await fetch("/api/github-credentials", {
+  const response = await apiFetch("/api/github-credentials", {
     method: "DELETE",
-    headers: getRequestHeaders(false, usernameOverride),
+    headers: getRequestHeaders(false),
   });
 
   console.info(
@@ -407,15 +404,15 @@ export async function saveGithubCredentialSettings(
   githubUsername,
   usernameOverride = "",
 ) {
-  const effectiveUser = String(usernameOverride ?? "").trim() || currentApiUser;
+  const effectiveUser = String(usernameOverride ?? "").trim() || "(session user)"; // log label only; the server uses the session
   const normalizedGithubUsername = String(githubUsername ?? "").trim();
   console.info(
     `[github-credentials][frontend] sending github settings save request (user='${effectiveUser || "(missing)"}', githubUsername='${normalizedGithubUsername}')`,
   );
 
-  const response = await fetch("/api/github-credentials", {
+  const response = await apiFetch("/api/github-credentials", {
     method: "PATCH",
-    headers: getRequestHeaders(true, usernameOverride),
+    headers: getRequestHeaders(true),
     body: JSON.stringify({ githubUsername: normalizedGithubUsername }),
   });
 
@@ -441,4 +438,20 @@ export async function saveGithubCredentialSettings(
     `[github-credentials][frontend] github settings payload received (ok=${Boolean(payload?.ok)})`,
   );
   return payload;
+}
+
+export async function fetchCurrentUser() {
+  const response = await fetch("/api/auth/me", { credentials: "same-origin" });
+  if (response.status === 401) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`Session check failed: ${response.status}`);
+  }
+  const body = await response.json();
+  return body?.user ?? null;
+}
+
+export async function logout() {
+  await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
 }

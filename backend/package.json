@@ -12,7 +12,8 @@
     "test:regression": "node tests/run.mjs",
     "db:migrate": "node scripts/db-migrate.mjs",
     "db:seed:demo": "node scripts/db-seed-demo.mjs",
-    "test:postgres": "node tests/postgres/run.mjs"
+    "test:postgres": "node tests/postgres/run.mjs",
+    "db:create-admin": "node scripts/db-create-admin.mjs"
   },
   "dependencies": {
     "connect-pg-simple": "^10.0.0",

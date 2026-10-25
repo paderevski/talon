@@ -59,7 +59,26 @@ async function insertUser(client, { username, fullName, password, roles }) {
 
 // Replaces all demo data. Refuses to run if the database has any users that
 // are not demo users, so it can't wipe real accounts.
+export function demoUsernames() {
+  return allDemoUsernames([...teacherSeeds, legacyTeacher]);
+}
+
+// Demo passwords are public (they're in this repo), so demo users must never
+// exist on a reachable server. Production requires an explicit opt-in.
+function assertDemoSeedAllowed() {
+  if (
+    process.env.NODE_ENV === "production" &&
+    process.env.TALON_ALLOW_DEMO_SEED !== "true"
+  ) {
+    throw new Error(
+      "Refusing to seed demo users with NODE_ENV=production (their passwords are public). " +
+        "Set TALON_ALLOW_DEMO_SEED=true only on a private demo server.",
+    );
+  }
+}
+
 export async function seedDemoUsers(pool) {
+  assertDemoSeedAllowed();
   const teachers = [...teacherSeeds, legacyTeacher];
   const demoUsernames = allDemoUsernames(teachers);
 

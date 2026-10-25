@@ -117,6 +117,7 @@ export async function getGithubTokenStatusForUser(talonUsername) {
     );
     return {
       hasToken: false,
+      tokenLast4: "",
       githubUsername: normalizeGithubUsername(entry?.githubUsername),
       updatedAt: entry?.updatedAt || null,
     };

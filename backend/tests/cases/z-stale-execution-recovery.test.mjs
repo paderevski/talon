@@ -1,6 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { assert, backendRoot, startBackendForTests } from "../lib/harness.mjs";
+import { assert, backendRoot, startBackendForTests, apiFetch } from "../lib/harness.mjs";
 
 export const name = "stale execution references recover to failed";
 
@@ -49,7 +49,7 @@ export async function run() {
 
     isolatedBackend = await startBackendForTests();
 
-    const jobsResponse = await fetch(
+    const jobsResponse = await apiFetch(
       `${isolatedBackend.baseUrl}/api/jobs?status=all`,
     );
     assert(
@@ -71,7 +71,7 @@ export async function run() {
       "Expected stale job to include lost:* resultSyncKey",
     );
 
-    const resultsResponse = await fetch(
+    const resultsResponse = await apiFetch(
       `${isolatedBackend.baseUrl}/api/results`,
     );
     assert(

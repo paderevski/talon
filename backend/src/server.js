@@ -7,7 +7,8 @@ import githubCredentialsRouter from "./routes/githubCredentials.js";
 import adminRouter from "./routes/admin.js";
 import teacherRouter from "./routes/teacher.js";
 import { createSessionMiddleware } from "./auth/session.js";
-import { attachUser } from "./auth/middleware.js";
+import { attachUser, requireAuth, requireRole } from "./auth/middleware.js";
+import { warnIfDemoUsersInProduction } from "./db/demoUserCheck.js";
 
 const app = express();
 const port = Number(process.env.PORT || 5174);
@@ -23,13 +24,18 @@ app.get("/api/health", (_, res) => {
 
 app.use("/api", createSessionMiddleware(), attachUser);
 
-app.use("/api/jobs", jobsRouter);
-app.use("/api/repos", repoRouter);
-app.use("/api/results", resultsRouter);
+// Everything except /api/health and /api/auth requires a signed-in user.
 app.use("/api/auth", authRouter);
-app.use("/api/github-credentials", githubCredentialsRouter);
-app.use("/api/admin", adminRouter);
-app.use("/api/teacher", teacherRouter);
+app.use("/api/jobs", requireAuth, jobsRouter);
+app.use("/api/repos", requireAuth, repoRouter);
+app.use("/api/results", requireAuth, resultsRouter);
+app.use("/api/github-credentials", requireAuth, githubCredentialsRouter);
+app.use("/api/admin", requireRole("admin"), adminRouter);
+app.use("/api/teacher", requireRole("teacher"), teacherRouter);
+
+if (String(process.env.USERS_REPOSITORY_PROVIDER || "").toLowerCase() === "postgres") {
+  await warnIfDemoUsersInProduction();
+}
 
 app.listen(port, () => {
   // eslint-disable-next-line no-console

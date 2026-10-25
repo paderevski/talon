@@ -385,3 +385,19 @@ export async function getTeacherRoster(username) {
     students,
   };
 }
+
+export async function listStudentUsernamesForTeacher(teacherUsername) {
+  await initializeUsersDatabase();
+
+  return getDatabase()
+    .prepare(
+      `
+        SELECT DISTINCT cs.student_username AS username
+        FROM classes c
+        JOIN class_students cs ON cs.class_id = c.id
+        WHERE c.teacher_username = ?
+      `,
+    )
+    .all(String(teacherUsername ?? "").trim())
+    .map((row) => String(row.username ?? "").trim());
+}

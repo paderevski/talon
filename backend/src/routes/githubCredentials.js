@@ -9,8 +9,10 @@ import {
 
 const router = Router();
 
+// Signed-in user (requireAuth runs before this router). The old
+// x-talon-user header is no longer trusted.
 function getTalonUserFromRequest(req) {
-  return String(req.get("x-talon-user") ?? "").trim();
+  return String(req.user?.username ?? "").trim();
 }
 
 function getGithubHeaders(token) {
@@ -31,7 +33,7 @@ router.get("/", async (req, res) => {
 
   if (!talonUser) {
     console.info(
-      "[github-credentials] responding with hasToken=false because x-talon-user is missing",
+      "[github-credentials] responding with hasToken=false because no user is signed in",
     );
     return res.json({
       hasToken: false,
@@ -57,7 +59,7 @@ router.put("/", async (req, res) => {
   );
 
   if (!talonUser) {
-    return res.status(400).json({ message: "Missing x-talon-user header" });
+    return res.status(401).json({ message: "Sign in required" });
   }
 
   if (!token) {
@@ -92,7 +94,7 @@ router.patch("/", async (req, res) => {
   );
 
   if (!talonUser) {
-    return res.status(400).json({ message: "Missing x-talon-user header" });
+    return res.status(401).json({ message: "Sign in required" });
   }
 
   await saveGithubUsernameForUser(talonUser, githubUsername);
@@ -110,7 +112,7 @@ router.delete("/", async (req, res) => {
   );
 
   if (!talonUser) {
-    return res.status(400).json({ message: "Missing x-talon-user header" });
+    return res.status(401).json({ message: "Sign in required" });
   }
 
   await deleteGithubTokenForUser(talonUser);

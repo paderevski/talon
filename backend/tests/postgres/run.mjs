@@ -275,13 +275,56 @@ const httpTests = [
 
   ["session: teacher+admin can use both admin and teacher routes", async () => {
     await pool.query(`INSERT INTO user_roles (user_id, role) SELECT id, 'admin' FROM users WHERE username = 'teacher_grace'`);
-    const headers = { "x-talon-user": "teacher_grace" };
-    const admin = await fetch(`${server.baseUrl}/api/admin/roster`, { headers });
-    const teacher = await fetch(`${server.baseUrl}/api/teacher/students`, { headers });
+    const jar = createCookieJar();
+    await login(jar, server.baseUrl, "teacher_grace", "teach123");
+    const admin = await jar.fetch(`${server.baseUrl}/api/admin/roster`);
+    const teacher = await jar.fetch(`${server.baseUrl}/api/teacher/students`);
     await pool.query(`DELETE FROM user_roles WHERE role = 'admin' AND user_id = (SELECT id FROM users WHERE username = 'teacher_grace')`);
     assert(admin.ok && teacher.ok, `admin ${admin.status}, teacher ${teacher.status}`);
   }],
 ];
+
+httpTests.push(
+  ["security: demo seed is refused in production without opt-in", async () => {
+    const saved = { env: process.env.NODE_ENV, allow: process.env.TALON_ALLOW_DEMO_SEED };
+    process.env.NODE_ENV = "production";
+    delete process.env.TALON_ALLOW_DEMO_SEED;
+    let message = "";
+    try {
+      await seedDemoUsers(pool);
+    } catch (error) {
+      message = error.message;
+    } finally {
+      process.env.NODE_ENV = saved.env;
+      if (saved.allow !== undefined) process.env.TALON_ALLOW_DEMO_SEED = saved.allow;
+    }
+    assert(/Refusing to seed demo users/.test(message), `Expected refusal, got '${message}'`);
+  }],
+
+  ["security: teacher sees only their students' jobs (Postgres classes)", async () => {
+    const student = createCookieJar();
+    await login(student, server.baseUrl, "student_g1", "student123");
+    const created = await student.fetch(`${server.baseUrl}/api/jobs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "g1-job", repo: "octocat/Hello-World" }),
+    });
+    const { job } = await created.json();
+
+    const visibleTo = async (username, password) => {
+      const jar = createCookieJar();
+      await login(jar, server.baseUrl, username, password);
+      const list = await (await jar.fetch(`${server.baseUrl}/api/jobs?status=all`)).json();
+      return list.items.some((item) => item.id === job.id);
+    };
+
+    assert(await visibleTo("teacher_grace", "teach123"), "Grace should see her student's job");
+    assert(!(await visibleTo("teacher_ada", "teach123")), "Ada must not see Grace's student's job");
+    assert(!(await visibleTo("student_g2", "student123")), "Classmate must not see the job");
+    assert(await visibleTo("admin", "admin123"), "Admin should see the job");
+    await student.fetch(`${server.baseUrl}/api/jobs/${job.id}/cancel`, { method: "POST" });
+  }],
+);
 
 let failed = 0;
 

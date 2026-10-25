@@ -4,6 +4,7 @@ import {
   getTeacherRoster,
   initializeUsersDatabase,
   listAdminRoster,
+  listStudentUsernamesForTeacher,
 } from "../../utils/usersDatabase.js";
 
 export async function createUsersSqliteRepository() {
@@ -15,6 +16,7 @@ export async function createUsersSqliteRepository() {
     findByUsername: (username) => findUserByUsername(username),
     findById: (id) => findUserByUsername(id),
     recordLogin: async () => {},
+    listStudentUsernamesForTeacher: (id) => listStudentUsernamesForTeacher(id),
     listAdminRoster: () => listAdminRoster(),
     getTeacherRoster: (username) => getTeacherRoster(username),
   };

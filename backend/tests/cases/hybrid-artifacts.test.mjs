@@ -1,11 +1,6 @@
 import { writeFile, stat } from "node:fs/promises";
 import path from "node:path";
-import {
-  assert,
-  backendRoot,
-  waitFor,
-  waitForJobTerminalState,
-} from "../lib/harness.mjs";
+import { assert, backendRoot, waitFor, waitForJobTerminalState, apiFetch } from "../lib/harness.mjs";
 
 export const name = "hybrid artifacts include output_dir and repo_changed";
 
@@ -24,7 +19,7 @@ async function waitForDirectory(directoryPath, label) {
 }
 
 export async function run({ baseUrl }) {
-  const submitResponse = await fetch(`${baseUrl}/api/jobs`, {
+  const submitResponse = await apiFetch(`${baseUrl}/api/jobs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -74,7 +69,7 @@ export async function run({ baseUrl }) {
 
   await waitForJobTerminalState(baseUrl, jobId, { timeoutMs: 120_000 });
 
-  const filesResponse = await fetch(`${baseUrl}/api/jobs/${jobId}/files`);
+  const filesResponse = await apiFetch(`${baseUrl}/api/jobs/${jobId}/files`);
   assert(
     filesResponse.ok,
     `Expected files endpoint to return 200, got ${filesResponse.status}`,

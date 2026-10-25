@@ -1,47 +1,29 @@
-import { assert } from "../lib/harness.mjs";
+import { assert, createCookieJar, login } from "../lib/harness.mjs";
 
 export const name = "admin roster requires admin and returns seeded roster";
 
 export async function run({ baseUrl }) {
-  const forbiddenResponse = await fetch(`${baseUrl}/api/admin/roster`, {
-    headers: {
-      "x-talon-user": "talon_user",
-    },
-  });
+  const anonymous = await fetch(`${baseUrl}/api/admin/roster`);
+  assert(anonymous.status === 401, `Expected anonymous 401, got ${anonymous.status}`);
 
+  const teacher = createCookieJar();
+  await login(teacher, baseUrl, "talon_user", "youwillneverguesswhereiwasyesterday");
+  const forbiddenResponse = await teacher.fetch(`${baseUrl}/api/admin/roster`);
   assert(
     forbiddenResponse.status === 403,
     `Expected teacher access to be rejected with 403, got ${forbiddenResponse.status}`,
   );
 
-  const response = await fetch(`${baseUrl}/api/admin/roster`, {
-    headers: {
-      "x-talon-user": "admin",
-    },
-  });
-
+  const admin = createCookieJar();
+  await login(admin, baseUrl, "admin", "admin123");
+  const response = await admin.fetch(`${baseUrl}/api/admin/roster`);
   assert(response.ok, `Expected admin roster 200, got ${response.status}`);
 
   const payload = await response.json();
   assert(payload?.ok === true, "Expected roster payload ok=true");
-  assert(
-    payload?.roster?.stats?.adminCount === 1,
-    "Expected one admin in roster stats",
-  );
-  assert(
-    payload?.roster?.stats?.teacherCount === 1,
-    "Expected one teacher in roster stats",
-  );
-  assert(
-    payload?.roster?.stats?.studentCount === 1,
-    "Expected one student in roster stats",
-  );
-  assert(
-    Array.isArray(payload?.roster?.teachers),
-    "Expected teachers[] in roster payload",
-  );
-  assert(
-    payload.roster.teachers.length === 1,
-    "Expected one teacher record in roster payload",
-  );
+  assert(payload?.roster?.stats?.adminCount === 1, "Expected one admin in roster stats");
+  assert(payload?.roster?.stats?.teacherCount === 1, "Expected one teacher in roster stats");
+  assert(payload?.roster?.stats?.studentCount === 1, "Expected one student in roster stats");
+  assert(Array.isArray(payload?.roster?.teachers), "Expected teachers[] in roster payload");
+  assert(payload.roster.teachers.length === 1, "Expected one teacher record in roster payload");
 }

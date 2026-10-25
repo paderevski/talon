@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { cancelJob, fetchJobDetails, fetchJobFiles, fetchJobs, fetchRepoTree, fetchResults, hideJob, login, setApiAuthUser, submitJob, unhideJob } from "./api/client";
+import { cancelJob, fetchCurrentUser, fetchJobDetails, fetchJobFiles, fetchJobs, fetchRepoTree, fetchResults, hideJob, login, logout, setUnauthorizedHandler, submitJob, unhideJob } from "./api/client";
 import NewJobPanel from "./components/NewJobPanel";
 import RepoBrowserPanel from "./components/RepoBrowserPanel";
 import JobStatusPanel from "./components/JobStatusPanel";
@@ -212,6 +212,7 @@ export default function App() {
   });
   const [isRefreshingRepo, setIsRefreshingRepo] = useState(false);
   const userMenuRef = useRef(null);
+  const onLogoutRef = useRef(null);
 
   const effectiveOwnerUsername = useMemo(() => {
     const normalizedRole = normalizeUserRole(authUser?.role);
@@ -249,9 +250,37 @@ export default function App() {
     [visibleAllJobs],
   );
 
+  // The server session is the source of truth; localStorage only avoids a
+  // login-screen flash on reload. Confirm (or clear) it on load.
   useEffect(() => {
-    setApiAuthUser(authUser?.username || "");
-  }, [authUser]);
+    let cancelled = false;
+    fetchCurrentUser()
+      .then((user) => {
+        if (cancelled) {
+          return;
+        }
+        if (!user) {
+          onLogoutRef.current?.({ skipServer: true });
+          return;
+        }
+        const sessionUser = {
+          username: String(user.username ?? "").trim(),
+          role: normalizeUserRole(user.role),
+        };
+        setAuthUser(sessionUser);
+        window.localStorage.setItem(authStorageKey, JSON.stringify(sessionUser));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Any 401 from the API (expired session, server restart) signs out locally.
+  useEffect(() => {
+    setUnauthorizedHandler(() => onLogoutRef.current?.({ skipServer: true }));
+    return () => setUnauthorizedHandler(null);
+  }, []);
 
   const hydrateJobRuntime = async (jobList) => {
     if (!jobList.length) {
@@ -607,7 +636,10 @@ export default function App() {
     }
   };
 
-  const onLogout = () => {
+  const onLogout = ({ skipServer = false } = {}) => {
+    if (!skipServer) {
+      logout();
+    }
     setAuthUser(null);
     window.localStorage.removeItem(authStorageKey);
     setIsUserMenuOpen(false);
@@ -626,6 +658,7 @@ export default function App() {
     setSelectedStudentView(null);
     setActivePage("landing");
   };
+  onLogoutRef.current = onLogout;
 
   const onSaveGithubSettings = (nextSettings) => {
     const sanitizedSettings = {

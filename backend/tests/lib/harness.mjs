@@ -45,7 +45,7 @@ export async function waitForJobTerminalState(
 
   await waitFor(
     async () => {
-      const response = await fetch(`${baseUrl}/api/jobs/${jobId}`);
+      const response = await apiFetch(`${baseUrl}/api/jobs/${jobId}`);
       assert(
         response.ok,
         `Failed to read job status for ${jobId} (${response.status})`,
@@ -174,4 +174,24 @@ export async function login(jar, baseUrl, username, password) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
   });
+}
+
+// fetch() signed in as the seeded admin, one session per backend origin.
+// Most regression tests exercise job/result behavior, not authorization.
+const adminJars = new Map();
+
+export async function apiFetch(url, options) {
+  const origin = new URL(url).origin;
+  let jar = adminJars.get(origin);
+
+  if (!jar) {
+    jar = createCookieJar();
+    const response = await login(jar, origin, "admin", "admin123");
+    if (!response.ok) {
+      throw new Error(`Test admin login failed on ${origin} (${response.status})`);
+    }
+    adminJars.set(origin, jar);
+  }
+
+  return jar.fetch(url, options);
 }
