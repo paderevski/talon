@@ -1,5 +1,4 @@
 import express from "express";
-import cors from "cors";
 import jobsRouter from "./routes/jobs.js";
 import repoRouter from "./routes/repo.js";
 import resultsRouter from "./routes/results.js";
@@ -7,16 +6,22 @@ import authRouter from "./routes/auth.js";
 import githubCredentialsRouter from "./routes/githubCredentials.js";
 import adminRouter from "./routes/admin.js";
 import teacherRouter from "./routes/teacher.js";
+import { createSessionMiddleware } from "./auth/session.js";
+import { attachUser } from "./auth/middleware.js";
 
 const app = express();
 const port = Number(process.env.PORT || 5174);
 
-app.use(cors());
+// nginx terminates client connections in front of us (needed for secure cookies).
+app.set("trust proxy", 1);
+// No CORS: the frontend is same-origin (Vite proxy in dev, nginx in prod).
 app.use(express.json());
 
 app.get("/api/health", (_, res) => {
   res.json({ ok: true, service: "talon-backend" });
 });
+
+app.use("/api", createSessionMiddleware(), attachUser);
 
 app.use("/api/jobs", jobsRouter);
 app.use("/api/repos", repoRouter);

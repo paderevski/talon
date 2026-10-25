@@ -68,7 +68,7 @@ function pickPort() {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-export async function startBackendForTests() {
+export async function startBackendForTests({ env: extraEnv = {} } = {}) {
   const port = pickPort();
   const baseUrl = `http://localhost:${port}`;
   const tempDir = path.resolve(backendRoot, "tests/.tmp");
@@ -83,6 +83,7 @@ export async function startBackendForTests() {
       ...process.env,
       PORT: String(port),
       TALON_DB_PATH: databasePath,
+      ...extraEnv,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -129,4 +130,48 @@ export async function startBackendForTests() {
       await rm(databasePath, { force: true });
     },
   };
+}
+
+// Minimal cookie jar for session tests: keeps name=value pairs from
+// Set-Cookie and sends them back.
+export function createCookieJar() {
+  const cookies = new Map();
+
+  return {
+    async fetch(url, options = {}) {
+      const cookieHeader = [...cookies].map(([name, value]) => `${name}=${value}`).join("; ");
+      const response = await fetch(url, {
+        ...options,
+        headers: { ...(options.headers || {}), ...(cookieHeader ? { cookie: cookieHeader } : {}) },
+      });
+
+      for (const setCookie of response.headers.getSetCookie()) {
+        const [pair] = setCookie.split(";");
+        const separator = pair.indexOf("=");
+        const name = pair.slice(0, separator).trim();
+        const value = pair.slice(separator + 1).trim();
+        if (value && !/expires=Thu, 01 Jan 1970/i.test(setCookie)) {
+          cookies.set(name, value);
+        } else {
+          cookies.delete(name);
+        }
+      }
+
+      return response;
+    },
+    get(name) {
+      return cookies.get(name);
+    },
+    set(name, value) {
+      cookies.set(name, value);
+    },
+  };
+}
+
+export async function login(jar, baseUrl, username, password) {
+  return jar.fetch(`${baseUrl}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  });
 }

@@ -43,9 +43,12 @@ function mapUserRow(row) {
   }
 
   const role = normalizeUserType(row.user_type);
+  const username = String(row.username ?? "").trim();
   return {
-    username: String(row.username ?? "").trim(),
+    id: username, // SQLite has no surrogate id; username stands in until SQLite is removed
+    username,
     fullName: String(row.full_name ?? "").trim(),
+    status: "active",
     role,
     roles: [role],
   };

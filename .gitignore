@@ -8,3 +8,4 @@ docs
 
 # Runtime secrets/state (never commit)
 backend/src/data/githubCredentials.json
+backend/tests/.tmp/

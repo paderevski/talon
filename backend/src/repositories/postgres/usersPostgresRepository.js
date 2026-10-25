@@ -90,6 +90,17 @@ export function createUsersPostgresRepository({ pool = getPool() } = {}) {
     return findById(identity.user_id);
   }
 
+  async function recordLogin(userId) {
+    await pool.query(
+      `
+        WITH updated AS (UPDATE users SET last_login_at = now() WHERE id = $1)
+        UPDATE user_identities SET last_used_at = now()
+        WHERE user_id = $1 AND provider = 'local'
+      `,
+      [userId],
+    );
+  }
+
   async function listAdminRoster() {
     const [usersResult, classesResult, teacherLinksResult, studentsResult] =
       await Promise.all([
@@ -256,6 +267,7 @@ export function createUsersPostgresRepository({ pool = getPool() } = {}) {
     findByCredentials,
     findByUsername,
     findById,
+    recordLogin,
     listAdminRoster,
     getTeacherRoster,
   };

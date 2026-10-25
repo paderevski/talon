@@ -2,7 +2,7 @@
 // whose public schema is dropped and recreated on every run.
 //   npm run test:postgres --workspace backend
 import pg from "pg";
-import { assert } from "../lib/harness.mjs";
+import { assert, createCookieJar, login, startBackendForTests } from "../lib/harness.mjs";
 import { runMigrations } from "../../src/db/migrate.js";
 import { withTransaction } from "../../src/db/pool.js";
 import { seedDemoUsers } from "../../src/db/seedDemo.js";
@@ -235,11 +235,59 @@ const tests = [
   }],
 ];
 
+// HTTP tests against a real backend using the Postgres provider and
+// Postgres session store. `server` is started after the repository tests.
+let server = null;
+
+const httpTests = [
+  ["session: login stores a Postgres session and /me returns the uuid user", async () => {
+    const jar = createCookieJar();
+    const before = await scalar("SELECT COUNT(*)::int FROM sessions");
+    const response = await login(jar, server.baseUrl, "student_a1", "student123");
+    assert(response.ok, `login ${response.status}`);
+    assert((await scalar("SELECT COUNT(*)::int FROM sessions")) === before + 1, "Expected one new session row");
+
+    const me = await (await jar.fetch(`${server.baseUrl}/api/auth/me`)).json();
+    assert(/^[0-9a-f-]{36}$/.test(me.user.id), `id ${me.user.id}`);
+    assert(me.user.roles.join() === "student", `roles ${me.user.roles}`);
+
+    const lastLogin = await scalar("SELECT last_login_at FROM users WHERE username = 'student_a1'");
+    assert(lastLogin, "Expected last_login_at to be recorded");
+  }],
+
+  ["session: disabling a user ends their existing session", async () => {
+    const jar = createCookieJar();
+    await login(jar, server.baseUrl, "student_a2", "student123");
+    await pool.query("UPDATE users SET status = 'disabled' WHERE username = 'student_a2'");
+    const me = await jar.fetch(`${server.baseUrl}/api/auth/me`);
+    await pool.query("UPDATE users SET status = 'active' WHERE username = 'student_a2'");
+    assert(me.status === 401, `Expected 401 for disabled user, got ${me.status}`);
+  }],
+
+  ["session: logout deletes the session row", async () => {
+    const jar = createCookieJar();
+    await login(jar, server.baseUrl, "student_a3", "student123");
+    const sid = decodeURIComponent(jar.get("talon.sid")).replace(/^s:/, "").split(".")[0];
+    assert((await scalar("SELECT COUNT(*)::int FROM sessions WHERE sid = $1", [sid])) === 1, "session row missing");
+    await jar.fetch(`${server.baseUrl}/api/auth/logout`, { method: "POST" });
+    assert((await scalar("SELECT COUNT(*)::int FROM sessions WHERE sid = $1", [sid])) === 0, "session row not deleted");
+  }],
+
+  ["session: teacher+admin can use both admin and teacher routes", async () => {
+    await pool.query(`INSERT INTO user_roles (user_id, role) SELECT id, 'admin' FROM users WHERE username = 'teacher_grace'`);
+    const headers = { "x-talon-user": "teacher_grace" };
+    const admin = await fetch(`${server.baseUrl}/api/admin/roster`, { headers });
+    const teacher = await fetch(`${server.baseUrl}/api/teacher/students`, { headers });
+    await pool.query(`DELETE FROM user_roles WHERE role = 'admin' AND user_id = (SELECT id FROM users WHERE username = 'teacher_grace')`);
+    assert(admin.ok && teacher.ok, `admin ${admin.status}, teacher ${teacher.status}`);
+  }],
+];
+
 let failed = 0;
 
 try {
   await resetDatabase();
-  console.log(`Running ${tests.length} Postgres test(s) on ${databaseUrl}`);
+  console.log(`Running ${tests.length + httpTests.length} Postgres test(s) on ${databaseUrl}`);
 
   for (const [name, run] of tests) {
     const startedAt = Date.now();
@@ -251,7 +299,22 @@ try {
       console.error(`✗ ${name}\n  ${error?.message || error}`);
     }
   }
+
+  server = await startBackendForTests({
+    env: { USERS_REPOSITORY_PROVIDER: "postgres", DATABASE_URL: databaseUrl },
+  });
+  for (const [name, run] of httpTests) {
+    const startedAt = Date.now();
+    try {
+      await run();
+      console.log(`✓ ${name} (${Date.now() - startedAt}ms)`);
+    } catch (error) {
+      failed += 1;
+      console.error(`✗ ${name}\n  ${error?.message || error}`);
+    }
+  }
 } finally {
+  await server?.stop();
   await pool.end();
 }
 

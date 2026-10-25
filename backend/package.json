@@ -15,8 +15,9 @@
     "test:postgres": "node tests/postgres/run.mjs"
   },
   "dependencies": {
-    "cors": "^2.8.5",
+    "connect-pg-simple": "^10.0.0",
     "express": "^4.21.2",
+    "express-session": "^1.19.0",
     "pg": "^8.23.1",
     "talon-shared": "0.1.0"
   },

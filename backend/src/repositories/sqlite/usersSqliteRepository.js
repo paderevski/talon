@@ -13,6 +13,8 @@ export async function createUsersSqliteRepository() {
     findByCredentials: (username, password) =>
       findUserByCredentials(username, password),
     findByUsername: (username) => findUserByUsername(username),
+    findById: (id) => findUserByUsername(id),
+    recordLogin: async () => {},
     listAdminRoster: () => listAdminRoster(),
     getTeacherRoster: (username) => getTeacherRoster(username),
   };
