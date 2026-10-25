@@ -1,7 +1,9 @@
 # Talon infra - current status
 
-_Last updated: 2026-10-25_. Account IDs, instance ID, and IPs are in
-`CURRENT_STATUS.local.md` (gitignored).
+_Last updated: 2026-10-25, reviewed against the live account that day._
+Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
+(gitignored). Architecture doc: `docs/talon-architecture-summary-v7.docx`
+(see "Gaps to production" for where it and reality differ).
 
 ## Running now
 
@@ -14,7 +16,10 @@ _Last updated: 2026-10-25_. Account IDs, instance ID, and IPs are in
 | Inbound access | None. SSM Session Manager only |
 | Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`, Postgres 16 (local socket, peer auth) |
 | Deployed | `origin/main` |
-| Approx cost | ~$17/month (instance ~$12, EBS ~$1.60, public IPv4 ~$3.65) |
+| Approx cost | ~$20/month (instance ~$12, EBS ~$1.60, public IPv4 ~$3.65, 2 KMS keys ~$2, alarms/S3/SNS pennies). Estimate, not read from the bill |
+| Other AWS resources | S3 backups bucket (`backups.tf`), SSM parameters under `/talon/demo/`, KMS keys `alias/talon-demo-secrets` and `alias/talon-demo-backups`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), 2 CloudWatch alarms (`alarms.tf`), S3 state bucket (`infra/state`) |
+| Root volume | 20 GB gp3, encrypted with the default AWS-managed EBS key (the architecture doc asks for a KMS key; not changed) |
+| OS patching | `unattended-upgrades` enabled on the box (checked) |
 | Terraform state | S3 `talon-tfstate-<account id>` (versioned, locked); `infra/state` stack's own state is local and tiny |
 
 ## How to use
@@ -24,6 +29,7 @@ aws sso login --profile lcps     # when credentials expire (usually daily)
 infra/scripts/tunnel.sh          # then open http://localhost:8080
 infra/scripts/deploy.sh          # deploy origin/main (push first)
 infra/scripts/shell.sh           # shell on the box
+infra/scripts/backup.sh status   # newest backups (also: now, restore-test, install)
 ```
 
 Demo login: see the main README.
@@ -46,7 +52,12 @@ Key paths: app `/opt/talon`, config `/etc/talon/talon.env`, secrets
   Postgres and survive deploys. Job output files and the runner's live state
   are still on the instance disk, and jobs run on the web server itself
   (30 minute limit per run, `JOB_MAX_RUNTIME_SECONDS`).
-- Nightly database backups exist, but restoring onto a new instance is manual.
+- Nightly database backups exist, but restoring onto a new instance is manual
+  and has only been tested into a scratch database.
+- Demo accounts have public passwords (they are in this repo). Fine only
+  because the box is reachable through the SSM tunnel and nothing else; see
+  "Going public".
+- Plain HTTP on port 80 inside the tunnel (no TLS yet; the ALB adds it).
 - Changing `user_data.sh.tftpl` replaces the instance (database is reset;
   restore from a backup by hand if it matters).
 - The local job runner executes `git clone` / `python3` directly on the host
@@ -54,8 +65,8 @@ Key paths: app `/opt/talon`, config `/etc/talon/talon.env`, secrets
 
 ## To-do (in order)
 
-Ordered so each item makes the next one easier. Items 1-7 need no outside
-decisions.
+Ordered so each item makes the next one easier. Items 1-8 are done; 9-11
+need other people.
 
 **Foundation**
 
@@ -84,10 +95,11 @@ decisions.
    `BACKUP_DATABASE_URL` (and `RESTORE_ADMIN_URL`). Helpers:
    `infra/scripts/backup.sh status|now|restore-test|install`.)_
    CloudWatch alarms (`alarms.tf`): no successful backup in 36 hours, and
-   a failed weekly restore test, both to SNS topic `talon-demo-alerts`. Set
-   `alert_email` in `terraform.tfvars`, apply, and confirm the email AWS
-   sends, or nobody is notified. The weekly restore test running at all is
-   not alarmed (CloudWatch cannot look back 8 days at weekly metrics).
+   a failed weekly restore test, both to SNS topic `talon-demo-alerts`. The
+   alert email is set (`alert_email` in `terraform.tfvars`, gitignored) and
+   the subscription is confirmed; both alarms were OK on 2026-10-25. The
+   weekly restore test not running at all is not alarmed (CloudWatch cannot
+   look back 8 days at weekly metrics).
    Still to do: restoring onto a replacement instance is only tested in a
    scratch DB, not end to end.
 5. ~~**Terraform state to S3**~~ _(done 2026-10-25: bucket from
@@ -123,9 +135,8 @@ toward two servers)
    gone (the server scopes everything; a teacher viewing one student asks
    for `?owner=`); a teacher's student view is read-only (no submit, cancel,
    hide, repo or GitHub panels); the fake "g4dn.xlarge" header pill and the
-   "GPU" column ("Compute" now, "Local" for web-server runs) are fixed. Not
-   verified in a real browser by Claude: screenshots/clicks were blocked, so
-   components were checked by server-side rendering and the API by tests.)_
+   "GPU" column ("Compute" now, "Local" for web-server runs) are fixed.
+   Checked in a real browser (local dev) as student, teacher and admin.)_
 
 **Blocked on others**
 
@@ -140,8 +151,10 @@ toward two servers)
 
 - **~2026-11-01:** delete the deactivated IAM access keys on the personal
   account and `~/.aws/credentials-bk` if nothing broke.
+- **~2026-11-01:** delete the old local Terraform state copies
+  (`infra/ec2/*.migrated-to-s3`) if nothing broke.
 - Term end: return leftover teacher pool money to the admin (needs a
-  small admin action; do with 7 or later).
+  small admin action; see "Gaps to production").
 
 ## Going public: ALB + WAF (likely needed for the first stakeholder demo)
 
@@ -199,15 +212,14 @@ Verify CloudFront VPC origin support for EC2 before choosing it.
   the ALB's header through (`$http_x_forwarded_proto`) and set Express
   `trust proxy` to cover both hops.
 - `SESSION_COOKIE_SECURE=true` in `/etc/talon/talon.env`.
-- Per-account login throttling in `/api/auth/login` (lock or slow down after
-  repeated failures).
+- ~~Per-account login throttling~~ (done, item 2).
 - **No demo users on a reachable server.** Their passwords are public in
   this repo. Remove `TALON_ALLOW_DEMO_SEED`, disable/delete demo accounts,
   check the backend log for `[security] ... demo account(s)`.
 - Create the real first admin:
   `npm run db:create-admin --workspace backend -- --username you@lcps.org`
   (random password, printed once).
-- Nightly `pg_dump` to S3 (users now live only on this instance).
+- ~~Nightly `pg_dump` to S3~~ (done, item 4).
 
 ## Building EC2-launched jobs (notes for when we get there)
 
@@ -239,30 +251,32 @@ makes cost real. What we know, and what to decide.
   billed: measure from the instance reaching *running*, not from the start of
   the training script, and decide whether students pay for setup time.
   ([instance-hour billing](https://repost.aws/knowledge-center/ec2-instance-hour-billing))
-- **Rates:** the Price List API (`GetProducts`, service `AmazonEC2`, filter by
-  instance type, region, `operatingSystem=Linux`, `tenancy=Shared`,
-  `preInstalledSw=NA`, `capacitystatus=Used`) returns on-demand list prices.
-  It is served from `api.pricing.us-east-1.amazonaws.com` and has **no VPC
+- **Rates:** the Price List API (`GetProducts`, service `AmazonEC2`) returns
+  on-demand list prices, filterable by instance type, region, operating
+  system and tenancy (the exact filter attribute names and values, e.g.
+  `preInstalledSw`, `capacitystatus`, are from memory: confirm with
+  `DescribeServices` / `GetAttributeValues` before coding). It is served from `api.pricing.us-east-1.amazonaws.com` and has **no VPC
   endpoint**, so the web server needs internet egress for it. Cache the
   rates (daily refresh is plenty) and snapshot the rate on each job. If we
   ever use Spot, the price differs per launch (EC2 spot price history).
 - **vCPU quotas (checked in the LCPS account 2026-10-25, us-east-1):** G and
   VT 768, P 768, Standard 1152, DL 96, Inf 128, Trn 256 vCPUs. No increase is
-  needed (a brand-new account would start at 0 for GPU families and 5 for
-  Standard; this account has grown past that). Re-check with
+  needed. (AWS's published defaults for a new account are 0 for GPU families
+  and 5 for Standard; AWS raises quotas with usage, or LCPS raised them.)
+  Spot quotas were not read (the call was rate limited). Re-check with
   `aws service-quotas list-service-quotas --service-code ec2 --profile lcps`
   before relying on a region or family we have not used. **These limits are
   far too high to act as a spending cap** (768 GPU vCPUs is roughly 190
   `g4dn.xlarge` at once), so the real caps must be Talon's own: per-job max
   runtime, reserve-then-settle, a per-user concurrent job limit, and an AWS
-  Budgets alarm. Optionally lower the quota ourselves (Service Quotas does
-  not allow decreasing; use an IAM/SCP condition on allowed instance types
-  instead).
+  Budgets alarm, plus an IAM/SCP condition limiting which instance types
+  may launch.
   ([quotas](https://docs.aws.amazon.com/ec2/latest/instancetypes/ec2-instance-quotas.html))
 - **Actual-cost reconciliation lags.** Cost allocation tags take up to 24 h
   to show on the Billing page and up to 24 h more after you activate them
   before Cost Explorer uses them, and activation is done in the
-  **organization's management account** (LCPS IT owns it). So Cost Explorer
+  **organization's management account** (LCPS IT owns it; this comes from one
+  AWS solution page, so confirm with them). So Cost Explorer
   can reconcile (monthly: our computed totals vs billed totals, grouped by a
   `talon-job` tag), but cannot charge students in real time.
 
@@ -320,21 +334,103 @@ makes cost real. What we know, and what to decide.
 11. **Keep the local adapter** for development and tests (the test suite
     relies on it) behind the same adapter interface.
 
+## Gaps to production (compared with the architecture doc, 2026-10-25)
+
+Beyond the blocked items above (Entra, ALB/WAF, `lcps-ro`) and EC2-launched
+jobs (previous section). Rough priority order.
+
+### 1. Management screens and budget API (nothing is usable by real classes without these)
+
+- Users, classes, teacher pools and student allocations only come from the
+  demo seed or scripts. The ledger functions (grant, transfer, charge,
+  refund) exist but no API or screen calls them. Needed: admin screens to
+  add users, assign classes, set teacher pools, unlock/disable accounts and
+  revoke sessions; teacher screens to allocate budget to students.
+- Roster provisioning: only pre-provisioned users may sign in (decided), so
+  a roster import (CSV first, SIS sync later) is needed.
+- Term rollover: archive classes, reset budgets, return pool money to the
+  admin, remove graduated students; per-user storage quota overrides.
+- Submit form: the design has compute tier, on-demand / Spot / overnight
+  queue, max runtime, environment choice, and a cost estimate before
+  submitting. The Machine Type and Image dropdowns do nothing today.
+- Job-finished notification (students run overnight jobs).
+
+### 2. Compute pieces beyond the launch itself
+
+- SQS queue + dead-letter queue + dispatcher process; launch templates;
+  custom GPU AMI (Ubuntu, NVIDIA drivers, Docker); ECR images (general GPU,
+  AlphaFold, R, CPU-only).
+- **Authenticated completion callback** (`POST /api/jobs/{id}/complete`
+  from compute instances): needs a per-job token, otherwise anyone on the
+  network could mark a job done.
+- Spot interruption handling, checkpoint/resume docs and helpers, resubmit.
+- S3 per-user storage (`users/{id}/`): quota enforcement (the columns exist
+  but nothing updates `storage_used_bytes`), presigned downloads,
+  lifecycle to Infrequent Access.
+- Isolation of student code (egress limits, instance metadata blocked inside
+  the container), and turning the local runner off in production.
+
+### 3. Security and privacy before real students
+
+- Student-data compliance (FERPA/COPPA, retention, privacy and acceptable-use
+  notice, whether to encrypt email/name columns). The architecture doc says
+  to confirm with LCPS IT before deployment; not settled. Check the 35-day
+  backup retention against whatever they require.
+- Web hardening: CSRF protection (SameSite=Lax helps; add an Origin check
+  or token), security headers and a content security policy, request size
+  limits, strict validation of repo and script inputs.
+- Remove demo accounts and local password login before anything is public.
+  The architecture doc says "no passwords stored"; today there are local
+  password hashes for the demo users and the first admin.
+- Audit log for admin actions (role and budget changes; grants record who,
+  but nothing reads them yet).
+- Not verified (not checked this session): CloudTrail with 90-day retention,
+  GuardDuty, Inspector on the account; private subnet + NAT + VPC endpoints
+  for the web server (it is in a public subnet today).
+
+### 4. Operations
+
+- More alarms: ALB health, dead-letter queue depth, abnormal compute spend
+  (AWS Budgets). Only backup alarms exist.
+- Application logs to CloudWatch Logs (journald only today) and SSM
+  session logging.
+- CI/CD: nothing runs the test suites automatically; deploys are manual SSM
+  runs. Add tests on every push and automated deploys.
+- End-to-end restore drill onto a brand-new instance; a staging environment
+  for the stakeholder demo; a load test at about 100 users; a security
+  review.
+- Runbooks (who does what in an outage), dependency update checks.
+
+### 5. Documentation and cleanup
+
+- The architecture doc is out of date relative to what was built: it has
+  two roles (we have student/teacher/admin), no passwords, Secrets Manager
+  (we use SSM Parameter Store), a users table without classes or budgets,
+  and an `infra/` EKS scaffold that now lives in `infra_2/`. A v8 would
+  keep reviewers from being confused.
+- Account strategy: the doc wants a dedicated Talon sub-account with its own
+  quotas. We are in LCPS's shared "Academies" account; decide if that is
+  acceptable.
+- Student documentation (budgets, checkpointing examples, how to use Talon).
+- Remove the debug panel, the Kubernetes adapter stub, and the placeholder
+  dropdowns (or build the instance menu behind them).
+
 ## Later: two web servers or auto-replacement
 
 Not needed for load. If wanted for availability:
 
-1. Move `SESSION_SECRET` and `TALON_CREDENTIALS_KEY` to SSM Parameter Store
-   / Secrets Manager. **They must be identical on every server** (today
-   each box generates its own).
-2. Move jobs, results, and GitHub credentials from JSON files into Postgres.
+1. ~~Secrets in SSM Parameter Store~~ (done, item 3: every server reads the
+   same values).
+2. ~~Jobs, results, GitHub credentials in Postgres~~ (done, items 6-7).
 3. Move Postgres to **RDS** (Single-AZ to start, Multi-AZ when needed):
    automated backups and point-in-time restore. Connect with RDS-managed
    credentials (Secrets Manager) or IAM auth, TLS, port 5432 only from the
    web security group. One-time `pg_dump` / restore to migrate.
 4. Job run directories and the local runner -> S3 + SQS dispatcher (per the
-   architecture doc).
+   architecture doc; see "Building EC2-launched jobs").
 5. Auto Scaling group of 1 behind the ALB (self-healing), then 2.
+   `user_data` currently seeds demo users and creates a local database, so
+   it needs a production variant first.
 
 Already compatible: sessions are in Postgres (no sticky sessions needed);
 migrations take an advisory lock (concurrent deploys are safe).
@@ -345,5 +441,10 @@ migrations take an advisory lock (concurrent deploys are safe).
   and stray EC2s in the personal account. Old IAM access keys for user
   `patrick` deactivated (delete after a week if nothing breaks).
 - 2026-10-25: Created `infra/ec2` and launched this instance.
-- 2026-10-25: Instance replaced to move app secrets into SSM (item 3); demo data reset.
+- 2026-10-25: Instance replaced to move app secrets into SSM (item 3); demo
+  data reset.
+- 2026-10-25: Nightly backups and alarms added; instance replaced again so
+  first-boot installs the timers (SSM secrets survived the rebuild). Terraform
+  state moved to S3. GitHub credentials, jobs and results moved to Postgres.
+  Frontend polish merged. All to-do items 1-8 done and deployed from `main`.
 - `infra_2/` is the older EKS design, kept for reference only.
