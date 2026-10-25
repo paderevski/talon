@@ -81,9 +81,13 @@ decisions.
    `/etc/talon/backup.env`, so a separate Postgres server or RDS only needs
    `BACKUP_DATABASE_URL` (and `RESTORE_ADMIN_URL`). Helpers:
    `infra/scripts/backup.sh status|now|restore-test|install`.)_
-   Still to do: an alarm if no dump has landed in 36 hours (today you must
-   run `backup.sh status` to notice), and restoring from a dump onto a
-   replacement instance is only tested in the scratch DB, not end to end.
+   CloudWatch alarms (`alarms.tf`): no successful backup in 36 hours, and
+   a failed weekly restore test, both to SNS topic `talon-demo-alerts`. Set
+   `alert_email` in `terraform.tfvars`, apply, and confirm the email AWS
+   sends, or nobody is notified. The weekly restore test running at all is
+   not alarmed (CloudWatch cannot look back 8 days at weekly metrics).
+   Still to do: restoring onto a replacement instance is only tested in a
+   scratch DB, not end to end.
 5. ~~**Terraform state to S3**~~ _(done 2026-10-25: bucket from
    `infra/state`; `infra/ec2` uses it with `use_lockfile`; lock tested. Old
    local files kept as `*.migrated-to-s3` in `infra/ec2`: delete after a week

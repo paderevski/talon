@@ -18,6 +18,18 @@ ADMIN_URL="${RESTORE_ADMIN_URL:-postgres:///postgres}"
 BUCKET="${BACKUP_BUCKET:-$($AWS ssm get-parameter --name "$PREFIX/backup-bucket" --query Parameter.Value --output text)}"
 SCRATCH="talon_restore_test"
 
+WORK="$(mktemp -d)"
+cleanup() {
+  local status=$?
+  rm -rf "$WORK"
+  psql "$ADMIN_URL" -qc "DROP DATABASE IF EXISTS $SCRATCH" > /dev/null 2>&1 || true
+  # Result for the CloudWatch alarm (infra/ec2/alarms.tf).
+  if [ "$status" -eq 0 ]; then metric=RestoreTestSuccess; else metric=RestoreTestFailure; fi
+  $AWS cloudwatch put-metric-data --namespace Talon/Backup --metric-name "$metric" --value 1 \
+    || echo "restore-test: WARNING could not publish the $metric metric" >&2
+}
+trap cleanup EXIT
+
 KEY="$($AWS s3api list-objects-v2 --bucket "$BUCKET" --prefix daily/ \
   --query 'sort_by(Contents, &LastModified)[-1].Key' --output text)"
 if [ -z "$KEY" ] || [ "$KEY" = "None" ]; then
@@ -25,12 +37,6 @@ if [ -z "$KEY" ] || [ "$KEY" = "None" ]; then
   exit 1
 fi
 
-WORK="$(mktemp -d)"
-cleanup() {
-  rm -rf "$WORK"
-  psql "$ADMIN_URL" -qc "DROP DATABASE IF EXISTS $SCRATCH" > /dev/null 2>&1 || true
-}
-trap cleanup EXIT
 
 echo "restore-test: restoring $KEY"
 $AWS s3 cp --only-show-errors "s3://$BUCKET/$KEY" "$WORK/latest.dump"

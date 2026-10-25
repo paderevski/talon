@@ -39,6 +39,10 @@ SIZE="$(stat -c %s "$FILE")"
 $AWS s3 cp --only-show-errors "$FILE" "s3://$BUCKET/daily/talon-$STAMP.dump"
 echo "backup: uploaded daily/talon-$STAMP.dump ($SIZE bytes)"
 
+# Heartbeat for the CloudWatch "no backup in 36 hours" alarm (infra/ec2/alarms.tf).
+$AWS cloudwatch put-metric-data --namespace Talon/Backup --metric-name BackupSuccess --value 1 \
+  || echo "backup: WARNING could not publish the BackupSuccess metric" >&2
+
 # Keep the first dump of each month for longer.
 MONTHLY_KEY="monthly/talon-$MONTH.dump"
 if ! $AWS s3api head-object --bucket "$BUCKET" --key "$MONTHLY_KEY" > /dev/null 2>&1; then
