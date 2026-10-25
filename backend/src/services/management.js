@@ -95,8 +95,12 @@ async function setRoles(client, userId, roles, grantedBy) {
   }
 }
 
-async function revokeSessions(client, userId) {
-  await client.query("DELETE FROM sessions WHERE sess->>'userId' = $1", [userId]);
+// Signs a user out everywhere, optionally keeping one session (keepSid).
+async function revokeSessions(client, userId, keepSid = "") {
+  await client.query("DELETE FROM sessions WHERE sess->>'userId' = $1 AND sid <> $2", [
+    userId,
+    keepSid,
+  ]);
 }
 
 // ---- Users -------------------------------------------------------------
@@ -238,7 +242,9 @@ export async function updateUser(userId, input, actor) {
 }
 
 // New random password; signs the user out everywhere and clears any lockout.
-export async function resetPassword(userId) {
+// An admin resetting their own password keeps the session they are using
+// (keepSid), otherwise the page would sign out before showing the password.
+export async function resetPassword(userId, keepSid = "") {
   const password = generatePassword();
   const username = await withTransaction(async (client) => {
     const found = await client.query("SELECT username FROM users WHERE id = $1 FOR UPDATE", [userId]);
@@ -252,7 +258,7 @@ export async function resetPassword(userId) {
        ON CONFLICT (provider, subject) DO UPDATE SET password_hash = EXCLUDED.password_hash`,
       [userId, name, createPasswordHash(password)],
     );
-    await revokeSessions(client, userId);
+    await revokeSessions(client, userId, keepSid);
     return name;
   });
   await clearFailures(username);

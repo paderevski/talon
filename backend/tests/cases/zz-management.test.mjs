@@ -150,6 +150,21 @@ export async function run({ baseUrl }) {
 
   // Self-protection
   const adminId = (await send(admin, baseUrl, "GET", "/api/auth/me")).payload.user.id;
+
+  // Resetting your own password keeps your session so the new password can be shown
+  const selfReset = await send(admin, baseUrl, "POST", `/api/admin/users/${adminId}/reset-password`);
+  assert(selfReset.status === 200 && selfReset.payload.password, "Expected self reset to return a password");
+  assert((await admin.fetch(`${baseUrl}/api/auth/me`)).ok, "Expected own session to survive a self reset");
+  assert((await login(createCookieJar(), baseUrl, "admin", selfReset.payload.password)).ok,
+    "Expected the reset admin password to work");
+  assert((await login(createCookieJar(), baseUrl, "admin", "admin123")).status === 401,
+    "Expected the old admin password to stop working");
+  // Put the seeded password back; later tests sign in with it
+  const restored = await send(admin, baseUrl, "POST", "/api/auth/password", {
+    currentPassword: selfReset.payload.password,
+    newPassword: "admin123",
+  });
+  assert(restored.status === 200, `Expected admin password restore, got ${restored.status}`);
   assert((await send(admin, baseUrl, "PATCH", `/api/admin/users/${adminId}`, { status: "disabled" })).status === 400,
     "Expected admin to be unable to disable themself");
   assert((await send(admin, baseUrl, "PATCH", `/api/admin/users/${adminId}`, { roles: ["teacher"] })).status === 400,

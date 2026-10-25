@@ -64,7 +64,8 @@ router.patch("/users/:userId", handle(async (req, res) => {
 }));
 
 router.post("/users/:userId/reset-password", handle(async (req, res) => {
-  return res.json({ ok: true, ...(await resetPassword(req.params.userId)) });
+  const keepSid = req.params.userId === req.user.id ? req.sessionID : "";
+  return res.json({ ok: true, ...(await resetPassword(req.params.userId, keepSid)) });
 }));
 
 router.post("/users/:userId/unlock", handle(async (req, res) => {
