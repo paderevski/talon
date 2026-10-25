@@ -8,6 +8,8 @@ import { withTransaction } from "../../src/db/pool.js";
 import { seedDemoUsers } from "../../src/db/seedDemo.js";
 import { createUsersPostgresRepository } from "../../src/repositories/postgres/usersPostgresRepository.js";
 import { createPasswordHash } from "../../src/utils/passwords.js";
+import { createJobsPostgresRepository } from "../../src/repositories/postgres/jobsPostgresRepository.js";
+import { computeCostCents } from "../../src/utils/jobFormat.js";
 import { createGithubCredentialsStore } from "../../src/utils/githubCredentialsStore.js";
 import { BudgetError, ensureAccount, grant, transfer } from "../../src/budget/ledger.js";
 
@@ -314,6 +316,64 @@ const tests = [
       }
       delete process.env.TALON_CREDENTIALS_OLD_KEYS;
     }
+  }],
+
+  ["jobs: cost is per second with a 60 second minimum; zero rate is free", async () => {
+    assert(computeCostCents(600, 600) === 100, "600s at 600c/h should cost 100c");
+    assert(computeCostCents(10, 600) === 10, "10s should bill the 60s minimum (10c)");
+    assert(computeCostCents(601, 600) === 101, "partial cents round up");
+    assert(computeCostCents(3600, 0) === 0, "zero rate must be free");
+    assert(computeCostCents(null, 600) === 0, "unknown duration must not charge");
+  }],
+
+  ["jobs: finalize charges the owner exactly once, even concurrently", async () => {
+    const jobs = createJobsPostgresRepository({ pool });
+    const studentId = await scalar("SELECT id FROM users WHERE username = 'student_a1'");
+    const before = Number(await scalar("SELECT balance_cents FROM budget_accounts WHERE owner_user_id = $1 AND kind = 'personal'", [studentId]));
+
+    const job = await jobs.create({ ownerUserId: studentId, name: "charge-test", repo: "x/y", hourlyRateCents: 600 });
+    const finalizeArgs = (syncKey) => ({ syncKey, status: "completed", durationSeconds: 600, files: [{ name: "a.txt" }] });
+    await Promise.all([
+      ...Array.from({ length: 5 }, () => jobs.finalize(job.id, finalizeArgs("2026-01-01T00:00:00Z"))),
+      ...Array.from({ length: 5 }, () => jobs.finalize(job.id, finalizeArgs("2026-01-01T00:00:01Z"))),
+    ]);
+
+    const after = Number(await scalar("SELECT balance_cents FROM budget_accounts WHERE owner_user_id = $1 AND kind = 'personal'", [studentId]));
+    assert(before - after === 100, `Expected one 100c charge, balance moved ${before - after}`);
+    assert(Number(await scalar("SELECT count(*) FROM budget_ledger WHERE job_id = $1 AND kind = 'charge'", [job.id])) === 1, "Expected exactly one ledger charge");
+    assert(Number(await scalar("SELECT count(*) FROM results WHERE job_id = $1", [job.id])) === 1, "Expected exactly one result row");
+
+    const stored = await jobs.findById(job.id);
+    assert(stored.cost === "$1.00" && stored.status === "completed" && stored.duration === "10m 0s", `Unexpected job ${JSON.stringify(stored)}`);
+  }],
+
+  ["jobs: seeded demo job costs match each student's ledger charges", async () => {
+    const mismatches = await pool.query(
+      `SELECT u.username, COALESCE(j.cost, 0) AS jobs_cost, COALESCE(l.charged, 0) AS ledger_charged
+       FROM users u
+       JOIN user_roles r ON r.user_id = u.id AND r.role = 'student'
+       LEFT JOIN (SELECT owner_user_id, SUM(cost_cents) AS cost FROM jobs GROUP BY owner_user_id) j ON j.owner_user_id = u.id
+       LEFT JOIN (SELECT a.owner_user_id, -SUM(l.amount_cents) AS charged
+                  FROM budget_ledger l JOIN budget_accounts a ON a.id = l.account_id
+                  WHERE l.kind = 'charge' AND a.kind = 'personal' GROUP BY a.owner_user_id) l ON l.owner_user_id = u.id
+       WHERE u.username <> 'student_a1' AND COALESCE(j.cost, 0) <> COALESCE(l.charged, 0)`,
+    );
+    assert(mismatches.rows.length === 0, `Cost/ledger mismatch: ${JSON.stringify(mismatches.rows.slice(0, 3))}`);
+  }],
+
+  ["jobs: scope filtering and hide/unhide record who did it", async () => {
+    const jobs = createJobsPostgresRepository({ pool });
+    const janeScope = { all: false, usernames: new Set(["jane_smith"]) };
+    const janeJobs = await jobs.list(janeScope);
+    assert(janeJobs.length > 0 && janeJobs.every((job) => job.ownerUsername === "jane_smith"), "scope must limit to the owner");
+    assert((await jobs.list({ all: true })).length > janeJobs.length, "admin scope should see more");
+    assert((await jobs.list({ all: false, usernames: new Set() })).length === 0, "empty scope sees nothing");
+
+    const adminId = await scalar("SELECT id FROM users WHERE username = 'admin'");
+    const hidden = await jobs.setHidden(janeJobs[0].id, { hidden: true, byUserId: adminId, reason: "test" });
+    assert(hidden.hidden && hidden.hiddenBy === "admin" && hidden.hiddenReason === "test", "hide not recorded");
+    const restored = await jobs.setHidden(janeJobs[0].id, { hidden: false });
+    assert(!restored.hidden && !restored.hiddenBy, "unhide should clear who/why");
   }],
 
 ];

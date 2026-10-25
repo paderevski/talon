@@ -42,8 +42,10 @@ Key paths: app `/opt/talon`, config `/etc/talon/talon.env`, secrets
 
 ## Known limitations (demo mode)
 
-- Users, sessions, budgets and GitHub credentials are in Postgres and survive deploys; jobs and
-  results are still tracked JSON files and reset on each deploy.
+- Users, sessions, budgets, GitHub credentials, jobs and results are in
+  Postgres and survive deploys. Job output files and the runner's live state
+  are still on the instance disk, and jobs run on the web server itself
+  (30 minute limit per run, `JOB_MAX_RUNTIME_SECONDS`).
 - Nightly database backups exist, but restoring onto a new instance is manual.
 - Changing `user_data.sh.tftpl` replaces the instance (database is reset;
   restore from a backup by hand if it matters).
@@ -102,9 +104,16 @@ toward two servers)
    `npm run db:rotate-credentials-key`; old JSON file can be imported with
    `db:import-github-credentials`. They are in the nightly backups, and the
    backup is only readable together with the SSM key.)_
-7. **Jobs and results -> Postgres**, owned by user id, with the budget
-   ledger charging jobs. Removes the JSON files and the demo owner
-   assignment (`demoOwnership.js`).
+7. ~~**Jobs and results -> Postgres**~~ _(done: tables `jobs` and `results`
+   owned by user id; status sync is row-level and idempotent; finishing a job
+   stores its result and charges the owner's budget in one transaction, once
+   per job; `JOB_RATE_CENTS_PER_HOUR` (default 0) sets the price, submits are
+   refused at zero budget once it is above 0; `max_runtime_seconds`,
+   `compute_type` and `hourly_rate_cents` are ready for EC2-launched jobs
+   (price = instance type's on-demand rate, per-second, 60 s minimum);
+   seeded demo jobs match the ledger; JSON files and `demoOwnership.js`
+   removed.)_ Still to do for EC2 launches: look up the rate from the Pricing
+   API, reserve the maximum cost at launch, and terminate at the time limit.
 
 **Frontend** (can move earlier if the demo needs polish)
 

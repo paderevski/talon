@@ -1,3 +1,4 @@
+import "./utils/asyncErrors.js";
 import express from "express";
 import jobsRouter from "./routes/jobs.js";
 import repoRouter from "./routes/repo.js";
@@ -35,6 +36,15 @@ app.use("/api/results", requireAuth, resultsRouter);
 app.use("/api/github-credentials", requireAuth, githubCredentialsRouter);
 app.use("/api/admin", requireRole("admin"), adminRouter);
 app.use("/api/teacher", requireRole("teacher"), teacherRouter);
+
+// Last resort for errors that escape a route: log, and answer without details.
+app.use((error, _req, res, next) => {
+  console.error(`[error] ${error?.stack || error}`);
+  if (res.headersSent) {
+    return next(error);
+  }
+  return res.status(error?.status || 500).json({ message: "Internal server error" });
+});
 
 await warnIfDemoUsersInProduction();
 

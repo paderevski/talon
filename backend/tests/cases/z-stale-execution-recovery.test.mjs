@@ -1,99 +1,40 @@
-import { readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { assert, backendRoot, startBackendForTests, apiFetch } from "../lib/harness.mjs";
+import { assert, apiFetch, insertTestJob, withTestDb } from "../lib/harness.mjs";
 
 export const name = "stale execution references recover to failed";
 
-export async function run() {
-  const jobsFilePath = path.resolve(backendRoot, "src", "data", "jobs.json");
-  const resultsFilePath = path.resolve(
-    backendRoot,
-    "src",
-    "data",
-    "results.json",
+export async function run({ baseUrl }) {
+  const staleJobId = await withTestDb((pool) =>
+    insertTestJob(pool, {
+      name: "stale-execution-job",
+      status: "running",
+      executionId: `local-stale-${Date.now()}`,
+    }),
   );
 
-  const jobsBackup = await readFile(jobsFilePath, "utf8");
-  const resultsBackup = await readFile(resultsFilePath, "utf8");
+  const jobsResponse = await apiFetch(`${baseUrl}/api/jobs?status=all`);
+  assert(jobsResponse.ok, `Expected jobs endpoint to return 200, got ${jobsResponse.status}`);
+  const jobsBody = await jobsResponse.json();
+  const staleJob = (jobsBody.items || []).find((job) => job.id === staleJobId);
 
-  const staleJobId = `job-stale-${Date.now()}`;
-  const staleExecutionId = `local-stale-${Date.now()}`;
+  assert(staleJob, "Expected stale job to be present in response");
+  assert(staleJob.status === "failed", `Expected stale job to become failed, got ${staleJob.status}`);
+  assert(
+    String(staleJob.resultSyncKey || "").startsWith("lost:"),
+    "Expected stale job to include lost:* resultSyncKey",
+  );
 
-  let isolatedBackend = null;
+  const resultsResponse = await apiFetch(`${baseUrl}/api/results`);
+  assert(resultsResponse.ok, `Expected results endpoint to return 200, got ${resultsResponse.status}`);
+  const resultsBody = await resultsResponse.json();
+  const persistedResult = (resultsBody.items || []).find((result) => result.jobId === staleJobId);
 
-  try {
-    const jobsPayload = JSON.parse(jobsBackup);
-    const nextJobs = Array.isArray(jobsPayload?.items) ? jobsPayload.items : [];
+  assert(persistedResult, "Expected failed result entry for stale job");
+  assert(persistedResult.status === "failed", "Expected stale job result status to be failed");
 
-    nextJobs.unshift({
-      id: staleJobId,
-      name: "stale-execution-job",
-      repo: "paderevski/minimal-rnn",
-      status: "running",
-      gpu: "—",
-      submitted: "just now",
-      duration: "—",
-      executionProvider: "local",
-      executionRef: {
-        provider: "local",
-        executionId: staleExecutionId,
-        submittedAt: new Date().toISOString(),
-      },
-    });
-
-    await writeFile(
-      jobsFilePath,
-      `${JSON.stringify({ items: nextJobs, updatedAt: new Date().toISOString() }, null, 2)}\n`,
-      "utf8",
-    );
-
-    isolatedBackend = await startBackendForTests();
-
-    const jobsResponse = await apiFetch(
-      `${isolatedBackend.baseUrl}/api/jobs?status=all`,
-    );
-    assert(
-      jobsResponse.ok,
-      `Expected jobs endpoint to return 200, got ${jobsResponse.status}`,
-    );
-    const jobsBody = await jobsResponse.json();
-    const staleJob = (jobsBody.items || []).find(
-      (job) => job.id === staleJobId,
-    );
-
-    assert(staleJob, "Expected stale job to be present in response");
-    assert(
-      staleJob.status === "failed",
-      `Expected stale job to become failed, got ${staleJob.status}`,
-    );
-    assert(
-      String(staleJob.resultSyncKey || "").startsWith("lost:"),
-      "Expected stale job to include lost:* resultSyncKey",
-    );
-
-    const resultsResponse = await apiFetch(
-      `${isolatedBackend.baseUrl}/api/results`,
-    );
-    assert(
-      resultsResponse.ok,
-      `Expected results endpoint to return 200, got ${resultsResponse.status}`,
-    );
-    const resultsBody = await resultsResponse.json();
-    const persistedResult = (resultsBody.items || []).find(
-      (result) => result.jobId === staleJobId,
-    );
-
-    assert(persistedResult, "Expected failed result entry for stale job");
-    assert(
-      persistedResult.status === "failed",
-      "Expected stale job result status to be failed",
-    );
-  } finally {
-    if (isolatedBackend) {
-      await isolatedBackend.stop();
-    }
-
-    await writeFile(jobsFilePath, jobsBackup, "utf8");
-    await writeFile(resultsFilePath, resultsBackup, "utf8");
-  }
+  // Recovering twice must not duplicate the result.
+  await apiFetch(`${baseUrl}/api/jobs?status=all`);
+  const count = await withTestDb(async (pool) =>
+    (await pool.query("SELECT count(*)::int AS n FROM results WHERE job_id = $1", [staleJobId])).rows[0].n,
+  );
+  assert(count === 1, `Expected exactly one result row, found ${count}`);
 }

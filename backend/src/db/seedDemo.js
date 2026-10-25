@@ -77,6 +77,63 @@ function assertDemoSeedAllowed() {
   }
 }
 
+
+const demoRepos = ["paderevski/minimal-rnn", "octocat/Hello-World", "paderevski/bert-nlp"];
+const demoJobNames = ["finetune-bert", "mnist-baseline", "essay-generator", "image-classifier"];
+
+// Gives a student a small history of finished jobs whose costs add up to what
+// they have "spent", so the budget ledger, job list and results all agree.
+async function seedStudentJobs(client, { studentId, accountId, spentCents }) {
+  const firstCents = Math.ceil(spentCents / 2);
+  const costs = [firstCents, spentCents - firstCents].filter((cents) => cents > 0);
+
+  for (const [index, costCents] of costs.entries()) {
+    const name = `${demoJobNames[(spentCents + index) % demoJobNames.length]}-v${index + 1}`;
+    const repo = demoRepos[(spentCents + index) % demoRepos.length];
+    const durationSeconds = 240 + ((spentCents * 37 + index * 411) % 3000);
+    const hoursAgo = 20 + index * 30 + (spentCents % 17);
+
+    const job = await client.query(
+      `INSERT INTO jobs
+         (owner_user_id, name, repo, status, execution_provider, duration_seconds, cost_cents, created_at, updated_at)
+       VALUES ($1, $2, $3, 'completed', 'local', $4, $5,
+               now() - make_interval(hours => $6), now() - make_interval(hours => $6))
+       RETURNING id`,
+      [studentId, name, repo, durationSeconds, costCents, hoursAgo],
+    );
+    const jobId = job.rows[0].id;
+    const files = [
+      { name: "metrics.json", size: "1.2 KB", source: "output_dir" },
+      { name: "model.pt", size: "48 MB", source: "output_dir" },
+    ];
+    await client.query(
+      `INSERT INTO results (id, job_id, name, repo, status, duration_seconds, output, files, finalized_at)
+       VALUES ($1, $2, $3, $4, 'completed', $5, 'Run output files', $6::jsonb, now() - make_interval(hours => $7))`,
+      [`result-${jobId}`, jobId, name, repo, durationSeconds, JSON.stringify(files), hoursAgo],
+    );
+    await charge(client, {
+      accountId,
+      amountCents: costCents,
+      jobId,
+      note: "Demo historical usage",
+    });
+  }
+
+  // One failed run with no cost, so the list shows more than successes.
+  const failedName = `${demoJobNames[spentCents % demoJobNames.length]}-failed`;
+  const failed = await client.query(
+    `INSERT INTO jobs (owner_user_id, name, repo, status, execution_provider, duration_seconds, created_at, updated_at)
+     VALUES ($1, $2, $3, 'failed', 'local', 12, now() - interval '3 hours', now() - interval '3 hours')
+     RETURNING id`,
+    [studentId, failedName, demoRepos[spentCents % demoRepos.length]],
+  );
+  await client.query(
+    `INSERT INTO results (id, job_id, name, repo, status, duration_seconds, output, files, error, finalized_at)
+     VALUES ($1, $2, $3, $4, 'failed', 12, 'Run output files', '[]'::jsonb, 'Execution failed (exit code 1)', now() - interval '3 hours')`,
+    [`result-${failed.rows[0].id}`, failed.rows[0].id, failedName, demoRepos[spentCents % demoRepos.length]],
+  );
+}
+
 export async function seedDemoUsers(pool) {
   assertDemoSeedAllowed();
   const teachers = [...teacherSeeds, legacyTeacher];
@@ -96,7 +153,7 @@ export async function seedDemoUsers(pool) {
         );
       }
 
-      await client.query("TRUNCATE users, classes, sessions CASCADE");
+      await client.query("TRUNCATE users, classes, sessions, jobs CASCADE");
 
       const adminId = await insertUser(client, { ...adminUser, roles: ["admin"] });
       await ensureAccount(client, adminId, "personal");
@@ -147,11 +204,10 @@ export async function seedDemoUsers(pool) {
 
           const spentCents = studentSeed.quota - studentSeed.tokensRemaining;
           if (spentCents > 0) {
-            await charge(client, {
+            await seedStudentJobs(client, {
+              studentId,
               accountId: personalAccountId,
-              amountCents: spentCents,
-              jobId: null,
-              note: "Demo historical usage",
+              spentCents,
             });
           }
         }

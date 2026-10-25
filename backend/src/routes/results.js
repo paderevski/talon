@@ -1,18 +1,14 @@
 import { Router } from "express";
-import { getResultsRepository } from "../repositories/resultsRepository.js";
-import { attachAccessScope, scopeAllows } from "../auth/access.js";
+import { getJobsRepository } from "../repositories/jobsRepository.js";
+import { attachAccessScope } from "../auth/access.js";
 
 const router = Router();
 router.use(attachAccessScope);
 
-const resultsRepository = await getResultsRepository();
+const jobsRepository = await getJobsRepository();
 
-router.get("/", (req, res) => {
-  res.json({
-    items: resultsRepository
-      .list()
-      .filter((result) => scopeAllows(req.accessScope, result.ownerUsername)),
-  });
+router.get("/", async (req, res) => {
+  res.json({ items: await jobsRepository.listResults(req.accessScope) });
 });
 
 export default router;

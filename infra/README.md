@@ -71,9 +71,9 @@ sudo -u talon psql talon                  # database shell
 - Users, roles, classes, budgets, and sessions live in Postgres and
   **survive deploys** (`deploy.sh` runs migrations). They do not survive
   instance replacement; there are no backups yet.
-- Jobs and results are still JSON files in the git tree
-  (`backend/src/data/*.json`) and reset to the committed version on every
-  deploy.
+- Jobs and results are in Postgres (survive deploys). Their output files
+  are still on the instance disk (`backend/data/runs`) and are lost if it is
+  replaced; such jobs show as "output no longer available".
 - Demo users are seeded once on first boot (`TALON_ALLOW_DEMO_SEED=true` in
   the env file). Their passwords are public: see "Going public".
 - Changing `user_data.sh.tftpl` replaces the instance on the next `apply`.

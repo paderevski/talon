@@ -31,6 +31,34 @@ export async function resetTestDatabase(databaseUrl = testDatabaseUrl) {
   }
 }
 
+// Run a callback with a pg client on the test database (for setting up or
+// inspecting state directly).
+export async function withTestDb(fn) {
+  const pool = new pg.Pool({ connectionString: testDatabaseUrl });
+  try {
+    return await fn(pool);
+  } finally {
+    await pool.end();
+  }
+}
+
+// Inserts a job owned by an existing user; returns its id.
+export async function insertTestJob(pool, { owner = "admin", name, status, executionId, durationSeconds = null }) {
+  const result = await pool.query(
+    `INSERT INTO jobs (owner_user_id, name, repo, status, execution_provider, execution_ref, duration_seconds)
+     SELECT id, $2, 'paderevski/minimal-rnn', $3, 'local', $4::jsonb, $5 FROM users WHERE username = $1
+     RETURNING id`,
+    [
+      owner,
+      name,
+      status,
+      JSON.stringify({ provider: "local", executionId, submittedAt: new Date().toISOString() }),
+      durationSeconds,
+    ],
+  );
+  return result.rows[0].id;
+}
+
 export function assert(condition, message) {
   if (!condition) {
     throw new Error(message);

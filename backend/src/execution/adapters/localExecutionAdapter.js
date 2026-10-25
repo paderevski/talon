@@ -384,6 +384,21 @@ export default function createLocalExecutionAdapter() {
 
       record.process = processHandle;
 
+      // Runaway protection: while jobs run on the web server itself, a stuck
+      // script must not run forever.
+      let timeoutId = null;
+      if (record.jobSpec.maxRuntimeSeconds) {
+        timeoutId = setTimeout(() => {
+          record.timedOut = true;
+          void persistLine(
+            record,
+            `Time limit of ${record.jobSpec.maxRuntimeSeconds}s exceeded; stopping the job`,
+            "system",
+          );
+          processHandle.kill("SIGKILL");
+        }, record.jobSpec.maxRuntimeSeconds * 1000);
+      }
+
       processHandle.stdout?.on("data", (chunk) => {
         splitIntoLines(chunk.toString("utf8")).forEach((line) => {
           void persistLine(record, line, "stdout");
@@ -403,6 +418,7 @@ export default function createLocalExecutionAdapter() {
         processHandle.on("error", () => resolve({ code: 1, signal: null }));
       });
 
+      clearTimeout(timeoutId);
       record.exitCode = processExit.code;
       record.endedAt = new Date().toISOString();
       record.process = null;
@@ -477,6 +493,8 @@ export default function createLocalExecutionAdapter() {
           repo: normalizedRepo,
           branch: normalizedBranch,
           entryScript: normalizedEntryScript,
+          // Hard limit on the training script (null: no limit).
+          maxRuntimeSeconds: Number(jobSpec?.maxRuntimeSeconds) > 0 ? Number(jobSpec.maxRuntimeSeconds) : null,
         },
       });
 

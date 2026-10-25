@@ -1,6 +1,6 @@
 import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { assert, backendRoot, waitFor, waitForJobTerminalState, apiFetch } from "../lib/harness.mjs";
+import { assert, backendRoot, waitFor, waitForJobTerminalState, apiFetch, withTestDb } from "../lib/harness.mjs";
 
 export const name = "terminal jobs persist results history";
 
@@ -111,15 +111,9 @@ export async function run({ baseUrl }) {
     "Expected persisted result to include repo marker file",
   );
 
-  const resultsFilePath = path.resolve(
-    backendRoot,
-    "src",
-    "data",
-    "results.json",
+  const stored = await withTestDb(async (pool) =>
+    (await pool.query("SELECT status, files FROM results WHERE job_id = $1", [jobId])).rows[0],
   );
-  const diskPayload = JSON.parse(await readFile(resultsFilePath, "utf8"));
-  const diskItems = Array.isArray(diskPayload?.items) ? diskPayload.items : [];
-  const diskPersisted = diskItems.find((item) => item?.jobId === jobId);
-
-  assert(diskPersisted, `Expected results.json to contain job ${jobId}`);
+  assert(stored, `Expected the results table to contain job ${jobId}`);
+  assert(stored.files.length >= 2, "Expected stored result to keep the file list");
 }

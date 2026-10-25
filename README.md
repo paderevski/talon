@@ -282,7 +282,9 @@ sudo systemctl reload nginx
 
 ### Notes
 
-- The backend currently uses in-memory mock data (`backend/src/data/mockData.js`), so data resets when the service restarts.
+- Users, budgets, jobs, results and GitHub credentials are stored in Postgres, so they survive restarts and deploys.
+- Job output files and the runner's live state are still on the server's disk (`backend/data/runs`), so they do not survive replacing the server.
+- Job settings: `JOB_MAX_RUNTIME_SECONDS` (default 1800; kills a local run that takes longer) and `JOB_RATE_CENTS_PER_HOUR` (default 0 = free; when above 0, a job is charged `seconds x rate` to its owner's budget when it finishes, and users with no budget cannot submit).
 - If you later split frontend/backend into separate hosts, update frontend API calls or add a dedicated API base URL.
 
 ## Next build steps

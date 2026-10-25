@@ -14,7 +14,7 @@ import {
   submitExecution,
 } from "../services/jobExecutionService.js";
 import { getJobsRepository } from "../repositories/jobsRepository.js";
-import { getResultsRepository } from "../repositories/resultsRepository.js";
+import { durationSecondsBetween, formatDuration } from "../utils/jobFormat.js";
 import { attachAccessScope, canModify, hasRole, scopeAllows } from "../auth/access.js";
 
 const router = Router();
@@ -25,45 +25,21 @@ const __dirname = path.dirname(__filename);
 const runsRootDir = path.resolve(__dirname, "../../data/runs");
 
 const jobsRepository = await getJobsRepository();
-const resultsRepository = await getResultsRepository();
+
+// Cost and limits for new jobs. Local runs are free; once jobs launch on EC2
+// instances the rate comes from the instance type's price instead.
+function readNumber(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+const jobRateCentsPerHour = () => readNumber("JOB_RATE_CENTS_PER_HOUR", 0);
+const jobMaxRuntimeSeconds = () => readNumber("JOB_MAX_RUNTIME_SECONDS", 1800) || 1800;
 
 // Jobs the caller may not see are treated exactly like missing jobs, so
 // responses don't reveal that another user's job exists.
-function findVisibleJob(req) {
-  const job = jobsRepository.findById(req.params.id);
+async function findVisibleJob(req) {
+  const job = await jobsRepository.findById(req.params.id);
   return job && scopeAllows(req.accessScope, job.ownerUsername) ? job : null;
-}
-
-function formatDurationFromExecution(startedAt, endedAt) {
-  if (!startedAt || !endedAt) {
-    return "—";
-  }
-
-  const startedMs = new Date(startedAt).getTime();
-  const endedMs = new Date(endedAt).getTime();
-
-  if (
-    !Number.isFinite(startedMs) ||
-    !Number.isFinite(endedMs) ||
-    endedMs <= startedMs
-  ) {
-    return "—";
-  }
-
-  const totalSeconds = Math.max(1, Math.round((endedMs - startedMs) / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-
-  if (hours > 0) {
-    return `${hours}h ${minutes}m`;
-  }
-
-  if (minutes > 0) {
-    return `${minutes}m ${seconds}s`;
-  }
-
-  return `${seconds}s`;
 }
 
 function isTerminalExecutionState(executionState) {
@@ -150,109 +126,75 @@ function isTruthyQuery(value) {
 }
 
 async function markJobAsExecutionLost(job) {
-  const nextJob = {
-    ...job,
-    status: "failed",
-    resultSyncKey:
-      job.resultSyncKey || `lost:${job.executionRef?.executionId || "unknown"}`,
-  };
-
-  if (!job.resultSyncKey) {
-    await resultsRepository.upsertForJob({
-      id: `result-${job.id}`,
-      jobId: job.id,
-      executionId: job.executionRef?.executionId || "",
-      ownerUsername: job.ownerUsername,
-      name: job.name,
-      status: "failed",
-      repo: job.repo,
-      duration: job.duration || "—",
-      output: "Run output files",
-      files: [],
-      error: "Execution record missing (backend restart or lost worker state)",
-      finalizedAt: new Date().toISOString(),
-    });
+  // Already finalized once (result stored): just make sure it shows as failed.
+  if (job.resultSyncKey) {
+    return jobsRepository.recordProgress(job.id, { status: "failed" });
   }
 
-  return nextJob;
+  return jobsRepository.finalize(job.id, {
+    syncKey: `lost:${job.executionRef?.executionId || "unknown"}`,
+    status: "failed",
+    executionId: job.executionRef?.executionId || "",
+    error: "Execution record missing (backend restart or lost worker state)",
+    finalizedAt: new Date().toISOString(),
+  });
 }
 
 async function synchronizeJobFromExecution(job) {
   if (!job?.executionRef) {
-    return { job, didMutate: false };
+    return { job };
   }
 
   const execution = await getExecutionStatus(job.executionRef);
   const mappedStatus = mapExecutionStateToJobStatus(execution.state);
-  const nextDuration = formatDurationFromExecution(
-    execution.startedAt,
-    execution.endedAt,
-  );
-
-  const nextJob = {
-    ...job,
-    status: mappedStatus,
-    duration: nextDuration !== "—" ? nextDuration : job.duration,
-  };
+  const durationSeconds = durationSecondsBetween(execution.startedAt, execution.endedAt);
 
   if (isTerminalExecutionState(execution.state)) {
-    const resultSyncKey = execution.endedAt || execution.state;
-    if (nextJob.resultSyncKey !== resultSyncKey) {
-      let files = [];
-      try {
-        files = await getExecutionOutputFiles(job.executionRef);
-      } catch {
-        files = [];
-      }
-
-      const normalizedFiles = normalizeResultFiles(files);
-      const nextResultStatus =
-        execution.state === "completed" ? "completed" : "failed";
-
-      await resultsRepository.upsertForJob({
-        id: `result-${job.id}`,
-        jobId: job.id,
-        executionId: job.executionRef?.executionId || "",
-        ownerUsername: job.ownerUsername,
-        name: job.name,
-        status: nextResultStatus,
-        repo: job.repo,
-        duration: nextJob.duration || "—",
-        output: "Run output files",
-        files: normalizedFiles,
-        error:
-          nextResultStatus === "failed"
-            ? execution.state === "cancelled"
-              ? "Job cancelled"
-              : `Execution failed${Number.isFinite(execution.exitCode) ? ` (exit code ${execution.exitCode})` : ""}`
-            : undefined,
-        finalizedAt: execution.endedAt || null,
-      });
-
-      nextJob.resultSyncKey = resultSyncKey;
+    const syncKey = execution.endedAt || execution.state;
+    if (job.resultSyncKey === syncKey) {
+      return { job, execution };
     }
+
+    let files = [];
+    try {
+      files = await getExecutionOutputFiles(job.executionRef);
+    } catch {
+      files = [];
+    }
+
+    const status = execution.state === "completed" ? "completed" : "failed";
+    const finalized = await jobsRepository.finalize(job.id, {
+      syncKey,
+      status,
+      durationSeconds,
+      executionId: job.executionRef.executionId || "",
+      files: normalizeResultFiles(files),
+      error:
+        status === "failed"
+          ? execution.state === "cancelled"
+            ? "Job cancelled"
+            : `Execution failed${Number.isFinite(execution.exitCode) ? ` (exit code ${execution.exitCode})` : ""}`
+          : null,
+      finalizedAt: execution.endedAt || null,
+    });
+    return { job: finalized, execution };
   }
 
-  const didMutate =
-    nextJob.status !== job.status ||
-    nextJob.duration !== job.duration ||
-    nextJob.resultSyncKey !== job.resultSyncKey;
+  if (mappedStatus !== job.status || (durationSeconds !== null && formatDuration(durationSeconds) !== job.duration)) {
+    return {
+      job: await jobsRepository.recordProgress(job.id, { status: mappedStatus, durationSeconds }),
+      execution,
+    };
+  }
 
-  return {
-    job: nextJob,
-    execution,
-    didMutate,
-  };
+  return { job, execution };
 }
 
 router.get("/", async (req, res) => {
   const status = req.query.status;
   const includeHidden = isTruthyQuery(String(req.query.includeHidden ?? ""));
-  const jobs = jobsRepository
-    .list()
-    .filter((job) => scopeAllows(req.accessScope, job.ownerUsername));
+  const jobs = await jobsRepository.list(req.accessScope);
 
-  let didMutateStatus = false;
   const itemsWithExecution = await Promise.all(
     jobs.map(async (job) => {
       if (!job.executionRef) {
@@ -260,18 +202,12 @@ router.get("/", async (req, res) => {
       }
 
       try {
-        const synchronized = await synchronizeJobFromExecution(job);
-        if (synchronized.didMutate) {
-          didMutateStatus = true;
-        }
-        return synchronized.job;
+        return (await synchronizeJobFromExecution(job)).job;
       } catch (error) {
         if (
           error?.status === 404 &&
-          (job.status === "running" || job.status === "queued") &&
-          job.executionRef
+          (job.status === "running" || job.status === "queued")
         ) {
-          didMutateStatus = true;
           return markJobAsExecutionLost(job);
         }
 
@@ -279,15 +215,6 @@ router.get("/", async (req, res) => {
       }
     }),
   );
-
-  if (didMutateStatus) {
-    // Only the caller's visible jobs were synchronized; merge them back so
-    // other users' jobs aren't dropped.
-    const updatedById = new Map(itemsWithExecution.map((job) => [job.id, job]));
-    await jobsRepository.setAll(
-      jobsRepository.list().map((job) => updatedById.get(job.id) ?? job),
-    );
-  }
 
   const visibleItems = includeHidden
     ? itemsWithExecution
@@ -310,31 +237,36 @@ router.get("/", async (req, res) => {
 
 router.post("/", async (req, res) => {
   const payload = req.body ?? {};
-  // Always the signed-in user; any ownerUsername in the body is ignored.
-  const ownerUsername = req.user.username;
+  // Always the signed-in user; any owner in the body is ignored.
+  const hourlyRateCents = jobRateCentsPerHour();
 
-  const executionRef = await submitExecution({
+  // Once jobs cost money, a user with no budget left cannot start one.
+  if (hourlyRateCents > 0 && !hasRole(req.user, "admin")) {
+    if ((await jobsRepository.personalBalanceCents(req.user.id)) <= 0) {
+      return res.status(402).json({ message: "No budget remaining. Ask your teacher for more." });
+    }
+  }
+
+  const spec = {
     name: payload.name || "untitled-job",
     repo: payload.repo || "unknown/repo",
     branch: payload.branch || "main",
     entryScript: payload.entryScript || "train.py",
-  });
-
-  const newJob = {
-    name: payload.name || "untitled-job",
-    repo: payload.repo || "unknown/repo",
-    status: "queued",
-    hidden: false,
-    ownerUsername,
-    gpu: "—",
-    submitted: "just now",
-    duration: "—",
-    cost: "$0.00",
-    executionProvider: getExecutionProvider(),
-    executionRef,
+    maxRuntimeSeconds: jobMaxRuntimeSeconds(),
   };
 
-  const savedJob = await jobsRepository.prepend(newJob);
+  const executionRef = await submitExecution(spec);
+  const savedJob = await jobsRepository.create({
+    ownerUserId: req.user.id,
+    name: spec.name,
+    repo: spec.repo,
+    branch: spec.branch,
+    entryScript: spec.entryScript,
+    executionProvider: getExecutionProvider(),
+    executionRef,
+    hourlyRateCents,
+    maxRuntimeSeconds: spec.maxRuntimeSeconds,
+  });
 
   return res.status(201).json({
     message: "Job queued",
@@ -352,7 +284,7 @@ router.get("/debug/executions", async (req, res) => {
 });
 
 router.get("/:id", async (req, res) => {
-  const job = findVisibleJob(req);
+  const job = await findVisibleJob(req);
   if (!job) {
     return res.json({
       job: null,
@@ -371,15 +303,6 @@ router.get("/:id", async (req, res) => {
     const execution =
       synchronized.execution || (await getExecutionStatus(job.executionRef));
 
-    if (synchronized.didMutate) {
-      const updatedJobs = jobsRepository
-        .list()
-        .map((item) =>
-          item.id === synchronized.job.id ? synchronized.job : item,
-        );
-      await jobsRepository.setAll(updatedJobs);
-    }
-
     return res.json({
       job: synchronized.job,
       execution,
@@ -391,10 +314,6 @@ router.get("/:id", async (req, res) => {
       job.executionRef
     ) {
       const lostJob = await markJobAsExecutionLost(job);
-      const updatedJobs = jobsRepository
-        .list()
-        .map((item) => (item.id === lostJob.id ? lostJob : item));
-      await jobsRepository.setAll(updatedJobs);
 
       return res.json({
         job: lostJob,
@@ -424,7 +343,7 @@ router.get("/:id", async (req, res) => {
 });
 
 router.get("/:id/logs", async (req, res) => {
-  const job = findVisibleJob(req);
+  const job = await findVisibleJob(req);
   if (!job) {
     return res.json({
       lines: [],
@@ -463,7 +382,7 @@ router.get("/:id/logs", async (req, res) => {
 });
 
 router.get("/:id/files", async (req, res) => {
-  const job = findVisibleJob(req);
+  const job = await findVisibleJob(req);
   if (!job) {
     return res.json({
       items: [],
@@ -495,7 +414,7 @@ router.get("/:id/files", async (req, res) => {
 });
 
 router.get("/:id/files/download", async (req, res) => {
-  const job = findVisibleJob(req);
+  const job = await findVisibleJob(req);
   if (!job) {
     return res.status(404).json({ message: "Job not found" });
   }
@@ -526,7 +445,7 @@ router.get("/:id/files/download", async (req, res) => {
 });
 
 router.post("/:id/cancel", async (req, res) => {
-  const job = findVisibleJob(req);
+  const job = await findVisibleJob(req);
   if (!job) {
     return res.status(404).json({ message: "Job not found" });
   }
@@ -550,8 +469,7 @@ router.post("/:id/cancel", async (req, res) => {
 });
 
 router.delete("/:id", async (req, res) => {
-  const jobs = jobsRepository.list();
-  const currentJob = findVisibleJob(req);
+  const currentJob = await findVisibleJob(req);
 
   if (!currentJob) {
     return res.status(404).json({ message: "Job not found" });
@@ -568,20 +486,11 @@ router.delete("/:id", async (req, res) => {
     });
   }
 
-  const hiddenBy = req.user.username;
-  const hiddenReason = String(req.body?.reason ?? "").trim() || undefined;
-  const hiddenJob = {
-    ...currentJob,
+  const hiddenJob = await jobsRepository.setHidden(currentJob.id, {
     hidden: true,
-    hiddenAt: new Date().toISOString(),
-    hiddenBy,
-    hiddenReason,
-  };
-
-  const nextJobs = jobs.map((job) =>
-    job.id === hiddenJob.id ? hiddenJob : job,
-  );
-  await jobsRepository.setAll(nextJobs);
+    byUserId: req.user.id,
+    reason: String(req.body?.reason ?? "").trim() || null,
+  });
 
   return res.json({
     message: "Job hidden from default history",
@@ -590,8 +499,7 @@ router.delete("/:id", async (req, res) => {
 });
 
 router.post("/:id/unhide", async (req, res) => {
-  const jobs = jobsRepository.list();
-  const currentJob = findVisibleJob(req);
+  const currentJob = await findVisibleJob(req);
 
   if (!currentJob) {
     return res.status(404).json({ message: "Job not found" });
@@ -608,18 +516,7 @@ router.post("/:id/unhide", async (req, res) => {
     });
   }
 
-  const visibleJob = {
-    ...currentJob,
-    hidden: false,
-    hiddenAt: undefined,
-    hiddenBy: undefined,
-    hiddenReason: undefined,
-  };
-
-  const nextJobs = jobs.map((job) =>
-    job.id === visibleJob.id ? visibleJob : job,
-  );
-  await jobsRepository.setAll(nextJobs);
+  const visibleJob = await jobsRepository.setHidden(currentJob.id, { hidden: false });
 
   return res.json({
     message: "Job restored to default history",

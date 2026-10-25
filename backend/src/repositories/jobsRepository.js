@@ -1,20 +1,12 @@
-import { createJobsFileRepository } from "./file/jobsFileRepository.js";
+import { createJobsPostgresRepository } from "./postgres/jobsPostgresRepository.js";
 
 let jobsRepositoryPromise = null;
 
-export function getJobsRepository(
-  provider = process.env.JOBS_REPOSITORY_PROVIDER || "file",
-) {
-  const normalizedProvider = String(provider).trim().toLowerCase();
-
-  if (normalizedProvider !== "file") {
-    throw new Error(
-      `Unsupported jobs repository provider: ${normalizedProvider}`,
-    );
-  }
-
+// Jobs and their results share one repository (one Postgres transaction
+// finalizes a job, stores its result, and charges the budget).
+export function getJobsRepository() {
   if (!jobsRepositoryPromise) {
-    jobsRepositoryPromise = createJobsFileRepository();
+    jobsRepositoryPromise = Promise.resolve(createJobsPostgresRepository());
   }
 
   return jobsRepositoryPromise;
