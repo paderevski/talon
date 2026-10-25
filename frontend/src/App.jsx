@@ -10,23 +10,22 @@ import AdminRosterPanel from "./components/AdminRosterPanel";
 import TeacherStudentsPanel from "./components/TeacherStudentsPanel";
 import talonLogo from "../../assets/talon-logo.png";
 import { normalizeRepoInput } from "./utils/repo";
-
-function filterItemsByOwner(items, ownerUsername) {
-  const normalizedOwner = String(ownerUsername ?? "").trim();
-  if (!normalizedOwner) {
-    return Array.isArray(items) ? items : [];
-  }
-
-  return (Array.isArray(items) ? items : []).filter(
-    (item) => String(item?.ownerUsername ?? "").trim() === normalizedOwner,
-  );
-}
+import { formatDollars } from "./utils/format";
 
 function getNavSections(role, hasTeacherStudentView) {
   const normalizedRole = normalizeUserRole(role);
 
   if (normalizedRole === "teacher" && !hasTeacherStudentView) {
     return [{ id: "teacher-students", label: "Students" }];
+  }
+
+  // A teacher looking at one student sees their jobs and results only.
+  if (normalizedRole === "teacher") {
+    return [
+      { id: "teacher-student-view", label: "Student" },
+      { id: "job-status", label: "Job Status" },
+      { id: "results", label: "Results" },
+    ];
   }
 
   if (normalizedRole === "admin") {
@@ -147,6 +146,7 @@ function getStoredAuthUser() {
 
     return {
       username: parsed.username.trim(),
+      fullName: String(parsed.fullName ?? "").trim(),
       role: normalizeUserRole(parsed.role),
     };
   } catch {
@@ -186,6 +186,7 @@ export default function App() {
   const [activePage, setActivePage] = useState("landing");
   const [githubSettings, setGithubSettings] = useState(getStoredGithubSettings);
   const [selectedStudentView, setSelectedStudentView] = useState(null);
+  const [budgetBalance, setBudgetBalance] = useState(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
@@ -214,35 +215,21 @@ export default function App() {
   const userMenuRef = useRef(null);
   const onLogoutRef = useRef(null);
 
-  const effectiveOwnerUsername = useMemo(() => {
-    const normalizedRole = normalizeUserRole(authUser?.role);
-
-    if (normalizedRole === "student") {
-      return authUser?.username || "";
-    }
-
-    if (normalizedRole === "teacher") {
-      return selectedStudentView?.username || "";
-    }
-
-    return "";
-  }, [authUser, selectedStudentView]);
-
-  const visibleJobs = useMemo(
-    () => filterItemsByOwner(jobs, effectiveOwnerUsername),
-    [jobs, effectiveOwnerUsername],
+  // The server already limits jobs and results to what this user may see
+  // (students: their own; teachers: their students'; admins: everyone). A
+  // teacher viewing one student additionally asks the server for just that student.
+  const viewedOwner = useMemo(
+    () => (normalizeUserRole(authUser?.role) === "teacher" ? selectedStudentView?.username || "" : ""),
+    [authUser, selectedStudentView],
   );
-  const visibleAllJobs = useMemo(
-    () => filterItemsByOwner(allJobs, effectiveOwnerUsername),
-    [allJobs, effectiveOwnerUsername],
-  );
-  const visibleResults = useMemo(
-    () => filterItemsByOwner(results, effectiveOwnerUsername),
-    [results, effectiveOwnerUsername],
-  );
+  const effectiveOwnerUsername = viewedOwner;
+
+  const visibleJobs = jobs;
+  const visibleAllJobs = allJobs;
+  const visibleResults = results;
   const visibleStatusAvailability = useMemo(
-    () => getStatusAvailability(visibleAllJobs),
-    [visibleAllJobs],
+    () => getStatusAvailability(allJobs),
+    [allJobs],
   );
 
   const hasActiveJobs = useMemo(
@@ -265,9 +252,11 @@ export default function App() {
         }
         const sessionUser = {
           username: String(user.username ?? "").trim(),
+          fullName: String(user.fullName ?? "").trim(),
           role: normalizeUserRole(user.role),
         };
         setAuthUser(sessionUser);
+        setBudgetBalance(typeof user.budgetBalance === "number" ? user.budgetBalance : null);
         window.localStorage.setItem(authStorageKey, JSON.stringify(sessionUser));
       })
       .catch(() => {});
@@ -317,11 +306,12 @@ export default function App() {
   };
 
   const load = async () => {
+    void refreshBudget();
     const [repoResult, jobsResult, allJobsResult, resultsResult] = await Promise.allSettled([
       fetchRepoTree(repoPath, repoBranch, { path: repoDirectoryPath }),
-      fetchJobs(activeFilter),
-      fetchJobs("all"),
-      fetchResults()
+      fetchJobs(activeFilter, { owner: viewedOwner }),
+      fetchJobs("all", { owner: viewedOwner }),
+      fetchResults({ owner: viewedOwner })
     ]);
 
     if (repoResult.status === "fulfilled") {
@@ -348,17 +338,16 @@ export default function App() {
       autoStatusFilters.has(activeFilter)
     ) {
       const allJobs = allJobsResult.value.items || [];
-      const filteredAllJobs = filterItemsByOwner(allJobs, effectiveOwnerUsername);
       setAllJobs(allJobs);
-      setStatusAvailability(getStatusAvailability(filteredAllJobs));
-      const preferredFilter = getPreferredStatusFilter(filteredAllJobs);
+      setStatusAvailability(getStatusAvailability(allJobs));
+      const preferredFilter = getPreferredStatusFilter(allJobs);
       if (preferredFilter !== activeFilter) {
         setActiveFilter(preferredFilter);
       }
     } else if (allJobsResult.status === "fulfilled") {
       const nextAllJobs = allJobsResult.value.items || [];
       setAllJobs(nextAllJobs);
-      setStatusAvailability(getStatusAvailability(filterItemsByOwner(nextAllJobs, effectiveOwnerUsername)));
+      setStatusAvailability(getStatusAvailability(nextAllJobs));
     } else {
       setAllJobs([]);
     }
@@ -437,8 +426,8 @@ export default function App() {
 
   const refreshJobs = async () => {
     const [jobsData, allJobsData] = await Promise.all([
-      fetchJobs(activeFilter),
-      fetchJobs("all"),
+      fetchJobs(activeFilter, { owner: viewedOwner }),
+      fetchJobs("all", { owner: viewedOwner }),
     ]);
     const items = jobsData.items || [];
     setJobs(items);
@@ -447,23 +436,38 @@ export default function App() {
     setAllJobs(nextAllJobs);
 
     if (autoStatusFilters.has(activeFilter)) {
-      const filteredAllJobs = filterItemsByOwner(nextAllJobs, effectiveOwnerUsername);
-      setStatusAvailability(getStatusAvailability(filteredAllJobs));
-      const preferredFilter = getPreferredStatusFilter(filteredAllJobs);
+      setStatusAvailability(getStatusAvailability(nextAllJobs));
+      const preferredFilter = getPreferredStatusFilter(nextAllJobs);
       if (preferredFilter !== activeFilter) {
         setActiveFilter(preferredFilter);
       }
     } else {
-      setStatusAvailability(getStatusAvailability(filterItemsByOwner(nextAllJobs, effectiveOwnerUsername)));
+      setStatusAvailability(getStatusAvailability(nextAllJobs));
+    }
+  };
+
+  // A student's remaining budget changes when jobs finish; keep the header current.
+  const refreshBudget = async () => {
+    if (normalizeUserRole(authUser?.role) !== "student") {
+      return;
+    }
+    try {
+      const user = await fetchCurrentUser();
+      if (user && typeof user.budgetBalance === "number") {
+        setBudgetBalance(user.budgetBalance);
+      }
+    } catch {
+      // Header budget is best effort.
     }
   };
 
   const pollRuntimeState = async () => {
+    void refreshBudget();
 
     const [jobsResult, allJobsResult, resultsResult] = await Promise.allSettled([
-      fetchJobs(activeFilter),
-      fetchJobs("all"),
-      fetchResults(),
+      fetchJobs(activeFilter, { owner: viewedOwner }),
+      fetchJobs("all", { owner: viewedOwner }),
+      fetchResults({ owner: viewedOwner }),
     ]);
 
     if (jobsResult.status === "fulfilled") {
@@ -477,17 +481,16 @@ export default function App() {
       autoStatusFilters.has(activeFilter)
     ) {
       const nextAllJobs = allJobsResult.value.items || [];
-      const filteredAllJobs = filterItemsByOwner(nextAllJobs, effectiveOwnerUsername);
       setAllJobs(nextAllJobs);
-      setStatusAvailability(getStatusAvailability(filteredAllJobs));
-      const preferredFilter = getPreferredStatusFilter(filteredAllJobs);
+      setStatusAvailability(getStatusAvailability(nextAllJobs));
+      const preferredFilter = getPreferredStatusFilter(nextAllJobs);
       if (preferredFilter !== activeFilter) {
         setActiveFilter(preferredFilter);
       }
     } else if (allJobsResult.status === "fulfilled") {
       const nextAllJobs = allJobsResult.value.items || [];
       setAllJobs(nextAllJobs);
-      setStatusAvailability(getStatusAvailability(filterItemsByOwner(nextAllJobs, effectiveOwnerUsername)));
+      setStatusAvailability(getStatusAvailability(nextAllJobs));
     }
 
     if (resultsResult.status === "fulfilled") {
@@ -547,13 +550,10 @@ export default function App() {
 
   const onSubmitJob = async (form) => {
     const normalizedRepo = normalizeRepoInput(form.repo);
-    const ownerUsername = isTeacher && selectedStudentView?.username
-      ? selectedStudentView.username
-      : authUser?.username || "";
+    // The server assigns the job to whoever is signed in.
     const payload = {
       ...form,
       repo: normalizedRepo || form.repo,
-      ownerUsername,
     };
 
     await submitJob(payload);
@@ -619,10 +619,12 @@ export default function App() {
       const user = response.user
         ? {
           username: String(response.user.username ?? "").trim(),
+          fullName: String(response.user.fullName ?? "").trim(),
           role: normalizeUserRole(response.user.role),
         }
         : null;
       setAuthUser(user);
+      setBudgetBalance(typeof response.user?.budgetBalance === "number" ? response.user.budgetBalance : null);
       if (user?.username) {
         window.localStorage.setItem(authStorageKey, JSON.stringify(user));
       }
@@ -765,7 +767,11 @@ export default function App() {
           <div className="topbar-brand">Academies of Loudoun</div>
         </div>
         <div className="topbar-right">
-          <div className="server-pill">g4dn.xlarge · us-east-1</div>
+          {normalizeUserRole(authUser.role) === "student" && budgetBalance !== null ? (
+            <div className="server-pill" title="Your remaining compute budget">
+              Budget {formatDollars(budgetBalance)}
+            </div>
+          ) : null}
           <div className={`user-menu-wrap${isUserMenuOpen ? " menu-open" : ""}`} ref={userMenuRef}>
             <button
               type="button"
@@ -775,7 +781,7 @@ export default function App() {
               onClick={() => setIsUserMenuOpen((previous) => !previous)}
             >
               <div className="user-avatar">{avatar}</div>
-              {authUser.username} · {normalizeUserRole(authUser.role)}
+              {authUser.fullName || authUser.username} · {normalizeUserRole(authUser.role)}
             </button>
             <div className="user-menu-hint">Click for account menu</div>
             <div className={`user-menu${isUserMenuOpen ? " open" : ""}`} role="menu">
@@ -830,7 +836,9 @@ export default function App() {
                 <div className="result-job-name">Viewing {selectedStudentView.fullName}</div>
                 <div className="form-hint mono-sm">{selectedStudentView.username}</div>
                 <div className="form-hint">
-                  Demo note: jobs and results are filtered to the selected student context in this shared workspace.
+                  Budget remaining {formatDollars(selectedStudentView.tokensRemaining)} of{" "}
+                  {formatDollars(selectedStudentView.quota)}. Read-only: you can see this
+                  student&apos;s jobs and results, but only the student (or an admin) can change them.
                 </div>
                 <div className="form-actions">
                   <button
@@ -856,8 +864,11 @@ export default function App() {
             onHideJob={onHideJob}
             onUnhideJob={onUnhideJob}
             jobActionError={jobActionError}
+            readOnly={isTeacher}
           />
           <ResultsPanel results={visibleResults} jobs={visibleJobs} filesByJobId={filesByJobId} />
+          {!isTeacher ? (
+            <>
           <NewJobPanel
             onSubmit={onSubmitJob}
             defaultRepo={repoPath}
@@ -879,6 +890,8 @@ export default function App() {
             authUsername={authUser?.username || ""}
           />
           {showDebugPanel ? <ExecutionDebugPanel /> : null}
+            </>
+          ) : null}
             </>
           ) : null}
         </main>

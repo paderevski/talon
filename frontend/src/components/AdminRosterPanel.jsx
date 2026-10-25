@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchAdminRoster } from "../api/client";
+import { formatDollars } from "../utils/format";
 
 const emptyRoster = {
   stats: {
@@ -137,8 +138,8 @@ export default function AdminRosterPanel({ authUser }) {
                   <thead>
                     <tr>
                       <th>Student</th>
-                      <th>Quota</th>
-                      <th>Tokens</th>
+                      <th>Allocated</th>
+                      <th>Remaining</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -148,8 +149,8 @@ export default function AdminRosterPanel({ authUser }) {
                           {student.fullName}
                           <div className="form-hint mono-sm">{student.username}</div>
                         </td>
-                        <td>{student.quota}</td>
-                        <td>{student.tokensRemaining}</td>
+                        <td>{formatDollars(student.quota)}</td>
+                        <td>{formatDollars(student.tokensRemaining)}</td>
                       </tr>
                     ))}
                   </tbody>

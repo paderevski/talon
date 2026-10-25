@@ -233,21 +233,19 @@ export function createUsersPostgresRepository({ pool = getPool() } = {}) {
       return null;
     }
 
-    const [classResult, studentsResult, poolResult] = await Promise.all([
+    const [classesResult, studentsResult, poolResult] = await Promise.all([
       pool.query(
         `
-          SELECT c.name
+          SELECT c.id, c.name
           FROM class_members m JOIN classes c ON c.id = m.class_id
           WHERE m.user_id = $1 AND m.member_role = 'teacher' AND c.archived_at IS NULL
           ORDER BY m.added_at, c.id
-          LIMIT 1
         `,
         [teacher.id],
       ),
       pool.query(
         `
-          SELECT DISTINCT ON (s.display_name, s.username)
-                 s.username, s.display_name, a.balance_cents, credited.credited_cents
+          SELECT c.id AS class_id, s.username, s.display_name, a.balance_cents, credited.credited_cents
           FROM class_members tm
           JOIN class_members sm ON sm.class_id = tm.class_id AND sm.member_role = 'student'
           JOIN classes c ON c.id = tm.class_id AND c.archived_at IS NULL
@@ -264,19 +262,44 @@ export function createUsersPostgresRepository({ pool = getPool() } = {}) {
       ),
     ]);
 
+    const mapStudent = (row) => ({
+      username: row.username,
+      fullName: row.display_name,
+      ...mapStudentBudget(row),
+    });
+
+    // One entry per class the teacher teaches; a student in two of their
+    // classes appears in both. `students` is the same people, once each.
+    const classes = classesResult.rows.map((row) => ({
+      id: Number(row.id),
+      className: row.name,
+      students: studentsResult.rows
+        .filter((student) => Number(student.class_id) === Number(row.id))
+        .map(mapStudent),
+    }));
+    const distinctStudents = new Map();
+    for (const row of studentsResult.rows) {
+      distinctStudents.set(row.username, mapStudent(row));
+    }
+
     return {
       teacher: {
         username: teacher.username,
         fullName: teacher.fullName,
-        className: classResult.rows[0]?.name ?? "",
+        className: classesResult.rows[0]?.name ?? "",
         poolBalance: centsToDollars(poolResult.rows[0]?.balance_cents ?? 0),
       },
-      students: studentsResult.rows.map((row) => ({
-        username: row.username,
-        fullName: row.display_name,
-        ...mapStudentBudget(row),
-      })),
+      classes,
+      students: [...distinctStudents.values()],
     };
+  }
+
+  async function getPersonalBalanceDollars(userId) {
+    const result = await pool.query(
+      "SELECT balance_cents FROM budget_accounts WHERE owner_user_id = $1 AND kind = 'personal'",
+      [userId],
+    );
+    return centsToDollars(result.rows[0]?.balance_cents ?? 0);
   }
 
   return {
@@ -287,5 +310,6 @@ export function createUsersPostgresRepository({ pool = getPool() } = {}) {
     listStudentUsernamesForTeacher,
     listAdminRoster,
     getTeacherRoster,
+    getPersonalBalanceDollars,
   };
 }

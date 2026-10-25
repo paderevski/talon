@@ -117,9 +117,15 @@ toward two servers)
 
 **Frontend** (can move earlier if the demo needs polish)
 
-8. **Plan step 5 remainder.** Teacher classes shown separately, dollar
-   formatting, remove the client-side owner filter (the server filters
-   now). Best after 7 so it targets the final API shapes.
+8. ~~**Plan step 5 remainder (frontend polish)**~~ _(done: teacher roster is
+   one section per class plus budget pool; money shown as dollars; students
+   see their remaining budget in the header; the client-side owner filter is
+   gone (the server scopes everything; a teacher viewing one student asks
+   for `?owner=`); a teacher's student view is read-only (no submit, cancel,
+   hide, repo or GitHub panels); the fake "g4dn.xlarge" header pill and the
+   "GPU" column ("Compute" now, "Local" for web-server runs) are fixed. Not
+   verified in a real browser by Claude: screenshots/clicks were blocked, so
+   components were checked by server-side rendering and the API by tests.)_
 
 **Blocked on others**
 

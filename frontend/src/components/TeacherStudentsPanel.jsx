@@ -1,14 +1,65 @@
 import { useEffect, useState } from "react";
 import { fetchTeacherRoster } from "../api/client";
+import { formatDollars } from "../utils/format";
 
 const emptyRoster = {
   teacher: {
     username: "",
     fullName: "",
     className: "",
+    poolBalance: 0,
   },
+  classes: [],
   students: [],
 };
+
+
+// One section per class the teacher teaches, each with its own student table.
+export function ClassTables({ classes, onOpenStudentView }) {
+  return classes.map((classItem) => (
+    <div key={classItem.id ?? classItem.className}>
+      <div className="panel-head">
+        <h3 className="panel-title">{classItem.className}</h3>
+        <span className="status-pill queued">
+          <span className="sdot" />
+          {classItem.students.length} student{classItem.students.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      <div className="table-card table-scroll-region">
+        <table>
+          <thead>
+            <tr>
+              <th>Student</th>
+              <th>Username</th>
+              <th>Allocated</th>
+              <th>Remaining</th>
+              <th>Workspace</th>
+            </tr>
+          </thead>
+          <tbody>
+            {classItem.students.map((student) => (
+              <tr key={student.username}>
+                <td>{student.fullName}</td>
+                <td className="mono-sm">{student.username}</td>
+                <td>{formatDollars(student.quota)}</td>
+                <td>{formatDollars(student.tokensRemaining)}</td>
+                <td>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => onOpenStudentView(student)}
+                  >
+                    Open Student View
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  ));
+}
 
 export default function TeacherStudentsPanel({ authUser, onOpenStudentView }) {
   const [roster, setRoster] = useState(emptyRoster);
@@ -70,49 +121,25 @@ export default function TeacherStudentsPanel({ authUser, onOpenStudentView }) {
             <div className="form-hint mono-sm">{roster.teacher.username || authUser?.username}</div>
           </div>
           <div className="result-card">
-            <div className="result-job-name">Class</div>
-            <div>{roster.teacher.className || "Unassigned"}</div>
+            <div className="result-job-name">Classes</div>
+            <div className="result-meta-value mono-sm">{roster.classes.length}</div>
             <div className="form-hint">Students: {roster.students.length}</div>
+          </div>
+          <div className="result-card">
+            <div className="result-job-name">Budget pool</div>
+            <div className="result-meta-value mono-sm">{formatDollars(roster.teacher.poolBalance)}</div>
+            <div className="form-hint">Available to allocate to students</div>
           </div>
         </div>
       ) : null}
 
       {isLoading ? <div className="form-hint">Loading student roster...</div> : null}
 
-      {!isLoading && !error ? (
-        <div className="table-card table-scroll-region">
-          <table>
-            <thead>
-              <tr>
-                <th>Student</th>
-                <th>Username</th>
-                <th>Quota</th>
-                <th>Tokens Remaining</th>
-                <th>Workspace</th>
-              </tr>
-            </thead>
-            <tbody>
-              {roster.students.map((student) => (
-                <tr key={student.username}>
-                  <td>{student.fullName}</td>
-                  <td className="mono-sm">{student.username}</td>
-                  <td>{student.quota}</td>
-                  <td>{student.tokensRemaining}</td>
-                  <td>
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-sm"
-                      onClick={() => onOpenStudentView(student)}
-                    >
-                      Open Student View
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      {!isLoading && !error && roster.classes.length === 0 ? (
+        <div className="form-hint">You are not assigned to any classes yet.</div>
       ) : null}
+
+      {!isLoading && !error ? <ClassTables classes={roster.classes} onOpenStudentView={onOpenStudentView} /> : null}
     </section>
   );
 }

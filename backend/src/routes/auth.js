@@ -19,6 +19,14 @@ function saveSession(req) {
   });
 }
 
+// publicUser plus the user's remaining personal budget, in dollars.
+async function publicUserWithBudget(user) {
+  return {
+    ...publicUser(user),
+    budgetBalance: (await usersRepository.getPersonalBalanceDollars?.(user.id)) ?? 0,
+  };
+}
+
 router.post("/login", async (req, res) => {
   const username = String(req.body?.username ?? "").trim();
   const password = String(req.body?.password ?? "").trim();
@@ -54,7 +62,7 @@ router.post("/login", async (req, res) => {
     await saveSession(req);
     await usersRepository.recordLogin?.(matched.id);
 
-    return res.json({ ok: true, user: publicUser(matched) });
+    return res.json({ ok: true, user: await publicUserWithBudget(matched) });
   } catch {
     return res.status(500).json({ message: "Unable to validate credentials" });
   }
@@ -67,12 +75,12 @@ router.post("/logout", (req, res) => {
   });
 });
 
-router.get("/me", (req, res) => {
+router.get("/me", async (req, res) => {
   if (!req.user) {
     return res.status(401).json({ message: "Not signed in" });
   }
 
-  return res.json({ ok: true, user: publicUser(req.user) });
+  return res.json({ ok: true, user: await publicUserWithBudget(req.user) });
 });
 
 export default router;

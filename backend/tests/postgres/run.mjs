@@ -376,6 +376,23 @@ const tests = [
     assert(!restored.hidden && !restored.hiddenBy, "unhide should clear who/why");
   }],
 
+  ["teacher roster: one section per class, students listed under each", async () => {
+    const teacherId = await scalar("SELECT id FROM users WHERE username = 'teacher_ada'");
+    const studentId = await scalar("SELECT id FROM users WHERE username = 'student_a1'");
+    const classId = await scalar("INSERT INTO classes (name, term) VALUES ('Second Period Robotics', '2026-27') RETURNING id");
+    await pool.query("INSERT INTO class_members (class_id, user_id, member_role) VALUES ($1, $2, 'teacher'), ($1, $3, 'student')", [classId, teacherId, studentId]);
+
+    const roster = await repo.getTeacherRoster("teacher_ada");
+    assert(roster.classes.length === 2, `Expected 2 classes, got ${roster.classes.length}`);
+    const second = roster.classes.find((item) => item.className === "Second Period Robotics");
+    assert(second && second.students.length === 1 && second.students[0].username === "student_a1", "second class should list its one student");
+    const first = roster.classes.find((item) => item.className !== "Second Period Robotics");
+    assert(first.students.length === 5, `first class should still have 5 students, got ${first.students.length}`);
+    assert(roster.students.length === 5, `flat list is distinct people, got ${roster.students.length}`);
+
+    await pool.query("DELETE FROM classes WHERE id = $1", [classId]);
+  }],
+
 ];
 
 // HTTP tests against a real backend using the Postgres provider and

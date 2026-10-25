@@ -47,3 +47,17 @@ export async function attachAccessScope(req, _res, next) {
     return next(error);
   }
 }
+
+// Narrows a scope to one owner (the ?owner= query parameter, used when a
+// teacher looks at a single student). Never widens it: an owner outside the
+// caller's scope yields an empty scope, same as any other hidden owner.
+export function narrowScopeToOwner(scope, ownerUsername) {
+  const owner = normalize(ownerUsername);
+  if (!owner) {
+    return scope;
+  }
+
+  return scopeAllows(scope, owner)
+    ? { all: false, usernames: new Set([owner]) }
+    : { all: false, usernames: new Set() };
+}

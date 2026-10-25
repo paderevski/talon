@@ -70,10 +70,16 @@ export function fetchRepoTree(
   );
 }
 
-export function fetchJobs(filter = "all") {
+// `owner` (a username) narrows the list to one person within what the
+// signed-in user may already see; a teacher uses it to look at one student.
+export function fetchJobs(filter = "all", { owner = "" } = {}) {
   const query = new URLSearchParams({
     status: String(filter || "all"),
   });
+
+  if (owner) {
+    query.set("owner", owner);
+  }
 
   if (filter === "hidden") {
     query.set("includeHidden", "1");
@@ -82,8 +88,8 @@ export function fetchJobs(filter = "all") {
   return getJson(`/api/jobs?${query.toString()}`);
 }
 
-export function fetchResults() {
-  return getJson("/api/results");
+export function fetchResults({ owner = "" } = {}) {
+  return getJson(owner ? `/api/results?owner=${encodeURIComponent(owner)}` : "/api/results");
 }
 
 export function fetchExecutionDebugSnapshot() {

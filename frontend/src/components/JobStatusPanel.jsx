@@ -46,6 +46,7 @@ export default function JobStatusPanel({
   onHideJob,
   onUnhideJob,
   jobActionError,
+  readOnly = false,
 }) {
   const isFilterDisabled = (filter) => {
     if (filter === "running") {
@@ -124,11 +125,11 @@ export default function JobStatusPanel({
                 <th>Job</th>
                 <th>Repo</th>
                 <th>Status</th>
-                <th>GPU</th>
+                <th>Compute</th>
                 <th>Submitted</th>
                 <th>Duration</th>
                 <th>Cost</th>
-                <th>Actions</th>
+                {readOnly ? null : <th>Actions</th>}
               </tr>
             </thead>
             <tbody>
@@ -142,11 +143,13 @@ export default function JobStatusPanel({
                       {statusLabel(job.status)}
                     </span>
                   </td>
-                  <td className="mono-sm">{job.gpu}</td>
+                  <td className="mono-sm">{job.gpu && job.gpu !== "—" ? job.gpu : "Local"}</td>
                   <td className="mono-sm">{formatSubmittedValue(job)}</td>
                   <td className="mono-sm">{job.duration}</td>
                   <td className="mono-sm">{String(job?.cost ?? "").trim() || "$0.00"}</td>
+                  {readOnly ? null : (
                   <td>
+                      <>
                     {isCancelableJobStatus(job.status) ? (
                       <button className="btn btn-secondary btn-sm" type="button" onClick={() => onCancelJob(job.id)}>
                         Cancel
@@ -161,7 +164,9 @@ export default function JobStatusPanel({
                         Hide
                       </button>
                     )}
+                      </>
                   </td>
+                  )}
                 </tr>
               ))}
             </tbody>

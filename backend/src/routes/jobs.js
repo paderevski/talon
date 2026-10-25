@@ -15,7 +15,7 @@ import {
 } from "../services/jobExecutionService.js";
 import { getJobsRepository } from "../repositories/jobsRepository.js";
 import { durationSecondsBetween, formatDuration } from "../utils/jobFormat.js";
-import { attachAccessScope, canModify, hasRole, scopeAllows } from "../auth/access.js";
+import { attachAccessScope, canModify, hasRole, narrowScopeToOwner, scopeAllows } from "../auth/access.js";
 
 const router = Router();
 router.use(attachAccessScope);
@@ -193,7 +193,7 @@ async function synchronizeJobFromExecution(job) {
 router.get("/", async (req, res) => {
   const status = req.query.status;
   const includeHidden = isTruthyQuery(String(req.query.includeHidden ?? ""));
-  const jobs = await jobsRepository.list(req.accessScope);
+  const jobs = await jobsRepository.list(narrowScopeToOwner(req.accessScope, req.query.owner));
 
   const itemsWithExecution = await Promise.all(
     jobs.map(async (job) => {
