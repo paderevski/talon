@@ -36,8 +36,9 @@ sudo tail -f /var/log/talon-bootstrap.log
 sudo /usr/local/bin/talon-deploy main
 ```
 
-Key paths: app `/opt/talon`, config `/etc/talon/talon.env` (contains the
-generated `TALON_CREDENTIALS_KEY`), service user `talon`.
+Key paths: app `/opt/talon`, config `/etc/talon/talon.env`, secrets
+`/etc/talon/secrets.env` (loaded from SSM Parameter Store), service user
+`talon`.
 
 ## Known limitations (demo mode)
 
@@ -64,14 +65,14 @@ decisions.
    `LOGIN_MAX_FAILURES` / `LOGIN_LOCK_MINUTES`; clear early with
    `npm run db:unlock --workspace backend -- <username>`. Trade-off: anyone who
    knows a username can lock that account for 15 min.)_
-3. **Keep the keys safe** _(added: prerequisite for 4)_. Move
-   `SESSION_SECRET` and `TALON_CREDENTIALS_KEY` to SSM Parameter Store
-   (SecureString); the box reads them at boot. Today they exist only on the
-   instance, so replacing it loses them - and a database backup of
-   encrypted GitHub tokens is useless without the key.
-   Also **fail closed**: in production the backend must refuse to start
-   without `TALON_CREDENTIALS_KEY` (today it silently falls back to a key
-   that is public in this repo).
+3. ~~**Keep the keys safe**~~ _(done 2026-10-25: `SESSION_SECRET` and
+   `TALON_CREDENTIALS_KEY` are SSM SecureString parameters under
+   `/talon/demo/`, encrypted with KMS `alias/talon-demo-secrets`, created by
+   the box on first boot and NOT managed by Terraform, so replacing the
+   instance keeps them. `talon-load-secrets` copies them to
+   `/etc/talon/secrets.env` before each backend start. Production refuses to
+   start without them. Do not delete the parameters: stored GitHub tokens and
+   backups depend on them.)_
 4. **Nightly backups.** `pg_dump` to an S3 bucket (Terraform: bucket,
    lifecycle, instance-role policy; systemd timer on the box). Do one
    test restore.
@@ -203,4 +204,5 @@ migrations take an advisory lock (concurrent deploys are safe).
   and stray EC2s in the personal account. Old IAM access keys for user
   `patrick` deactivated (delete after a week if nothing breaks).
 - 2026-10-25: Created `infra/ec2` and launched this instance.
+- 2026-10-25: Instance replaced to move app secrets into SSM (item 3); demo data reset.
 - `infra_2/` is the older EKS design, kept for reference only.

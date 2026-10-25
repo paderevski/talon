@@ -15,8 +15,10 @@ internet: you reach the app through an SSM Session Manager port forward.
 
 First boot (`user_data.sh.tftpl`) installs Node 24, nginx, git, python3 and
 Postgres 16, creates a `talon` service user and a `talon` database it reaches
-over the Unix socket with peer auth (no DB password), generates
-`TALON_CREDENTIALS_KEY` and `SESSION_SECRET` into `/etc/talon/talon.env`,
+over the Unix socket with peer auth (no DB password), creates
+`TALON_CREDENTIALS_KEY` and `SESSION_SECRET` in SSM Parameter Store
+(`/talon/<env>/`, only if they do not exist; they survive instance
+replacement) and loads them into `/etc/talon/secrets.env` at each start,
 clones this repo to `/opt/talon`, builds, runs migrations, seeds the demo
 users once, and starts `talon-backend` under systemd. About 5 minutes.
 
