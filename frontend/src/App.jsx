@@ -719,7 +719,7 @@ export default function App() {
           <p className="login-kicker">{landingContent.kicker}</p>
           <h1 className="login-title">{landingContent.title}</h1>
           <img src={talonLogo} alt="Talon" className="login-logo" />
-          <p className="form-hint">Signed in as {authUser.username} ({normalizeUserRole(authUser.role)}).</p>
+          <p className="form-hint">Signed in as {authUser.fullName || authUser.username} ({normalizeUserRole(authUser.role)}).</p>
           <p className="form-hint">{landingContent.description}</p>
 
           <div className="form-group full">

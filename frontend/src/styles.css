@@ -658,3 +658,8 @@ td:last-child, th:last-child { border-right: none; }
     display: none;
   }
 }
+
+/* Section heading inside a panel that follows other content (cards, tables). */
+.panel-head.subhead {
+  margin-top: 24px;
+}

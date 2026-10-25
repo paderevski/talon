@@ -18,7 +18,7 @@ const emptyRoster = {
 export function ClassTables({ classes, onOpenStudentView }) {
   return classes.map((classItem) => (
     <div key={classItem.id ?? classItem.className}>
-      <div className="panel-head">
+      <div className="panel-head subhead">
         <h3 className="panel-title">{classItem.className}</h3>
         <span className="status-pill queued">
           <span className="sdot" />

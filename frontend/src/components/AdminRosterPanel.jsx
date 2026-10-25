@@ -93,7 +93,7 @@ export default function AdminRosterPanel({ authUser }) {
             </div>
           </div>
 
-          <div className="panel-head">
+          <div className="panel-head subhead">
             <h3 className="panel-title">Teachers</h3>
           </div>
           <div className="table-card table-scroll-region">
@@ -119,7 +119,7 @@ export default function AdminRosterPanel({ authUser }) {
             </table>
           </div>
 
-          <div className="panel-head">
+          <div className="panel-head subhead">
             <h3 className="panel-title">Classes</h3>
           </div>
           <div className="results-grid">
@@ -129,7 +129,7 @@ export default function AdminRosterPanel({ authUser }) {
                   <div className="result-job-name">{classItem.className}</div>
                   <span className="status-pill queued">
                     <span className="sdot" />
-                    {classItem.students.length} students
+                    {classItem.students.length} student{classItem.students.length === 1 ? "" : "s"}
                   </span>
                 </div>
                 <div className="form-hint">Teacher: {classItem.teacherFullName}</div>
@@ -159,7 +159,7 @@ export default function AdminRosterPanel({ authUser }) {
             ))}
           </div>
 
-          <div className="panel-head">
+          <div className="panel-head subhead">
             <h3 className="panel-title">Admins</h3>
           </div>
           <div className="table-card table-scroll-region">
