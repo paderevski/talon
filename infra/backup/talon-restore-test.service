@@ -1,0 +1,11 @@
+[Unit]
+Description=Talon weekly test restore of the newest backup
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=postgres
+Group=postgres
+Environment=HOME=/var/lib/postgresql
+ExecStart=/usr/local/bin/talon-restore-test

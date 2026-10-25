@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Talon test restore weekly
+
+[Timer]
+# Sundays 05:00 UTC, after the nightly backup has run.
+OnCalendar=Sun *-*-* 05:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

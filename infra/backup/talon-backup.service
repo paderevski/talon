@@ -1,0 +1,11 @@
+[Unit]
+Description=Talon nightly database backup to S3
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=talon
+Group=talon
+Environment=HOME=/var/lib/talon
+ExecStart=/usr/local/bin/talon-backup

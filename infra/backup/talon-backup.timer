@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the Talon database backup nightly
+
+[Timer]
+# 03:15 UTC (about 11 pm US Eastern); a missed run starts at next boot.
+OnCalendar=*-*-* 03:15:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target
