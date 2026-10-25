@@ -8,7 +8,7 @@ api:
   enabled: true
   replicaCount: 1
   image:
-    repository: 706194210592.dkr.ecr.us-east-1.amazonaws.com/talon-dev/api
+    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/talon-dev/api
     tag: dev-amd64
     pullPolicy: IfNotPresent
   serviceAccount:
@@ -46,7 +46,7 @@ dispatcher:
   enabled: true
   replicaCount: 1
   image:
-    repository: 706194210592.dkr.ecr.us-east-1.amazonaws.com/talon-dev/dispatcher
+    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/talon-dev/dispatcher
     tag: dev-amd64
     pullPolicy: IfNotPresent
   serviceAccount:
@@ -67,7 +67,7 @@ dispatcher:
 runner:
   replicaCount: 1
   image:
-    repository: 706194210592.dkr.ecr.us-east-1.amazonaws.com/talon-dev/runner
+    repository: 123456789012.dkr.ecr.us-east-1.amazonaws.com/talon-dev/runner
     tag: dev-amd64
     pullPolicy: IfNotPresent
   serviceAccount:

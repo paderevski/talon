@@ -140,6 +140,8 @@ If you no longer want Talon to use it, click **Delete Token**.
 
 ## Deploy (AWS, single EC2 instance)
 
+**Automated version (Terraform + SSM, no open ports): see [`infra/README.md`](infra/README.md).** The manual steps below are kept for reference. Node 22.13+ is required (the backend uses `node:sqlite`); use Node 24 LTS.
+
 If it has been a while, this is the simplest production setup for this repo:
 - build the React app once
 - run the Node backend as a service
@@ -156,7 +158,7 @@ Install runtime packages:
 ```bash
 sudo apt update
 sudo apt install -y nginx
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt install -y nodejs
 ```
 

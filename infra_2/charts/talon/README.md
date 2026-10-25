@@ -56,7 +56,7 @@ Helper command:
 Build and push runner image helper:
 
 ```bash
-./infra/charts/talon/scripts/build-push-runner-image.sh dev us-east-1 706194210592 linux/amd64
+./infra/charts/talon/scripts/build-push-runner-image.sh dev us-east-1 123456789012 linux/amd64
 ```
 
 Recommended usage in automation:

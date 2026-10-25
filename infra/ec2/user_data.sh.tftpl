@@ -1,0 +1,124 @@
+#!/bin/bash
+# First-boot bootstrap for the Talon demo instance (Ubuntu 24.04, arm64).
+# Log: /var/log/talon-bootstrap.log
+set -euxo pipefail
+exec > >(tee -a /var/log/talon-bootstrap.log) 2>&1
+
+export DEBIAN_FRONTEND=noninteractive
+
+# --- swap (2 GB box; keeps npm/vite builds from OOMing) ---
+if [ ! -f /swapfile ]; then
+  fallocate -l 2G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
+# --- packages: Node 24 LTS (node:sqlite needs >= 22.13), nginx, git, python3 ---
+apt-get update
+apt-get install -y ca-certificates curl gnupg git nginx python3 openssl
+curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
+apt-get install -y nodejs
+node --version
+
+# --- service user and app directory ---
+id talon >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/talon --shell /usr/sbin/nologin talon
+install -d -o talon -g talon -m 755 /opt/talon
+
+# --- runtime config (credentials key generated on the box, never in Terraform state) ---
+install -d -o root -g talon -m 750 /etc/talon
+if [ ! -f /etc/talon/talon.env ]; then
+  umask 027
+  cat > /etc/talon/talon.env <<EOF
+NODE_ENV=production
+PORT=5174
+HOME=/var/lib/talon
+TALON_CREDENTIALS_KEY=$(openssl rand -hex 32)
+EOF
+  chgrp talon /etc/talon/talon.env
+  umask 022
+fi
+
+# --- deploy script (used on first boot and by infra/scripts/deploy.sh via SSM) ---
+cat > /usr/local/bin/talon-deploy <<'EOF'
+#!/bin/bash
+# Usage: talon-deploy [branch]
+# Demo mode: force-syncs /opt/talon to origin/<branch>. Tracked data files
+# under backend/src/data are reset to the committed version on every deploy.
+set -euo pipefail
+REF="$${1:-${git_ref}}"
+APP=/opt/talon
+as_talon() { sudo -u talon env HOME=/var/lib/talon "$@"; }
+
+if [ ! -d "$APP/.git" ]; then
+  as_talon git clone "${repo_url}" "$APP"
+fi
+cd "$APP"
+as_talon git fetch --prune origin
+as_talon git checkout -f -B "$REF" "origin/$REF"
+as_talon npm ci --no-audit --no-fund
+as_talon npm run build
+systemctl restart talon-backend
+systemctl reload nginx
+echo "Deployed: $(as_talon git log -1 --format='%h %s')"
+EOF
+chmod 755 /usr/local/bin/talon-deploy
+
+# --- backend service ---
+cat > /etc/systemd/system/talon-backend.service <<'EOF'
+[Unit]
+Description=Talon Backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=talon
+Group=talon
+WorkingDirectory=/opt/talon/backend
+EnvironmentFile=/etc/talon/talon.env
+ExecStart=/usr/bin/node src/server.js
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable talon-backend
+
+# --- nginx: static frontend + /api proxy (reached via SSM port forward) ---
+cat > /etc/nginx/sites-available/talon <<'EOF'
+server {
+    listen 80 default_server;
+    server_name _;
+
+    root /opt/talon/frontend/dist;
+    index index.html;
+
+    location / {
+        try_files $uri /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:5174/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+EOF
+rm -f /etc/nginx/sites-enabled/default
+ln -sf /etc/nginx/sites-available/talon /etc/nginx/sites-enabled/talon
+nginx -t
+systemctl enable nginx
+
+# --- first deploy ---
+/usr/local/bin/talon-deploy "${git_ref}"
+echo "talon bootstrap complete"

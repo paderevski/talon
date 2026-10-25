@@ -3,7 +3,7 @@ set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
   echo "Usage: $0 <image-tag> [aws-region] [aws-account-id] [platform]"
-  echo "Example: $0 dev us-east-1 706194210592 linux/amd64"
+  echo "Example: $0 dev us-east-1 123456789012 linux/amd64"
   exit 1
 fi
 
