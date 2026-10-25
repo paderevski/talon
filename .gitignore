@@ -4,6 +4,7 @@ backend/node_modules
 frontend/dist
 .env
 .DS_Store
+docs
 
 # Runtime secrets/state (never commit)
 backend/src/data/githubCredentials.json
