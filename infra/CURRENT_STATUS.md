@@ -69,6 +69,9 @@ decisions.
    (SecureString); the box reads them at boot. Today they exist only on the
    instance, so replacing it loses them - and a database backup of
    encrypted GitHub tokens is useless without the key.
+   Also **fail closed**: in production the backend must refuse to start
+   without `TALON_CREDENTIALS_KEY` (today it silently falls back to a key
+   that is public in this repo).
 4. **Nightly backups.** `pg_dump` to an S3 bucket (Terraform: bucket,
    lifecycle, instance-role policy; systemd timer on the box). Do one
    test restore.
@@ -80,7 +83,9 @@ toward two servers)
 
 6. **GitHub credentials -> Postgres**, still encrypted with
    `TALON_CREDENTIALS_KEY`, keyed by user id. Replaces
-   `githubCredentials.json`.
+   `githubCredentials.json` (which also ends its world-readable file mode).
+   Store a **key id** with each encrypted token so the key can be rotated
+   without everyone re-entering tokens.
 7. **Jobs and results -> Postgres**, owned by user id, with the budget
    ledger charging jobs. Removes the JSON files and the demo owner
    assignment (`demoOwnership.js`).
