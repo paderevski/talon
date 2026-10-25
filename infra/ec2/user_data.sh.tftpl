@@ -17,7 +17,7 @@ fi
 
 # --- packages: Node 24 LTS (node:sqlite needs >= 22.13), nginx, git, python3 ---
 apt-get update
-apt-get install -y ca-certificates curl gnupg git nginx python3 openssl
+apt-get install -y ca-certificates curl gnupg git nginx python3 openssl postgresql
 curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
 apt-get install -y nodejs
 node --version
@@ -26,7 +26,18 @@ node --version
 id talon >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/talon --shell /usr/sbin/nologin talon
 install -d -o talon -g talon -m 755 /opt/talon
 
-# --- runtime config (credentials key generated on the box, never in Terraform state) ---
+# --- Postgres 16 (Ubuntu 24.04 default), local only ---
+# OS user "talon" -> db role "talon" via peer auth over the Unix socket: no
+# database password exists anywhere.
+systemctl enable --now postgresql
+if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'talon'" | grep -q 1; then
+  sudo -u postgres createuser talon
+fi
+if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = 'talon'" | grep -q 1; then
+  sudo -u postgres createdb --owner talon talon
+fi
+
+# --- runtime config (secrets generated on the box, never in Terraform state) ---
 install -d -o root -g talon -m 750 /etc/talon
 if [ ! -f /etc/talon/talon.env ]; then
   umask 027
@@ -35,6 +46,12 @@ NODE_ENV=production
 PORT=5174
 HOME=/var/lib/talon
 TALON_CREDENTIALS_KEY=$(openssl rand -hex 32)
+SESSION_SECRET=$(openssl rand -hex 32)
+USERS_REPOSITORY_PROVIDER=postgres
+DATABASE_URL=postgres://talon@%2Fvar%2Frun%2Fpostgresql/talon
+# Private demo box (SSM tunnel only): demo users allowed. Remove before
+# this server is reachable from the internet.
+TALON_ALLOW_DEMO_SEED=true
 EOF
   chgrp talon /etc/talon/talon.env
   umask 022
@@ -50,6 +67,8 @@ set -euo pipefail
 REF="$${1:-${git_ref}}"
 APP=/opt/talon
 as_talon() { sudo -u talon env HOME=/var/lib/talon "$@"; }
+# Same environment the service gets (DATABASE_URL etc.).
+as_talon_env() { sudo -u talon bash -c 'set -a; . /etc/talon/talon.env; set +a; exec "$@"' talon-env "$@"; }
 
 if [ ! -d "$APP/.git" ]; then
   as_talon git clone "${repo_url}" "$APP"
@@ -59,6 +78,9 @@ as_talon git fetch --prune origin
 as_talon git checkout -f -B "$REF" "origin/$REF"
 as_talon npm ci --no-audit --no-fund
 as_talon npm run build
+if [ -f backend/scripts/db-migrate.mjs ]; then
+  as_talon_env npm run db:migrate --workspace backend
+fi
 systemctl restart talon-backend
 systemctl reload nginx
 echo "Deployed: $(as_talon git log -1 --format='%h %s')"
@@ -121,4 +143,12 @@ systemctl enable nginx
 
 # --- first deploy ---
 /usr/local/bin/talon-deploy "${git_ref}"
+
+# --- demo users, first boot only (re-seeding would wipe demo data) ---
+if [ -f /opt/talon/backend/scripts/db-seed-demo.mjs ] && [ ! -f /var/lib/talon/.demo-seeded ]; then
+  cd /opt/talon
+  sudo -u talon bash -c 'set -a; . /etc/talon/talon.env; set +a; npm run db:seed:demo --workspace backend'
+  sudo -u talon touch /var/lib/talon/.demo-seeded
+  systemctl restart talon-backend
+fi
 echo "talon bootstrap complete"

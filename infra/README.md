@@ -13,10 +13,12 @@ internet: you reach the app through an SSM Session Manager port forward.
 - IAM role with `AmazonSSMManagedInstanceCore` (shell + port forwarding)
 - Elastic IP (reserved for pointing `talon.aet-cs.org` here later)
 
-First boot (`user_data.sh.tftpl`) installs Node 24, nginx, git, python3,
-creates a `talon` service user, generates `TALON_CREDENTIALS_KEY` into
-`/etc/talon/talon.env`, clones this repo to `/opt/talon`, builds, and starts
-`talon-backend` under systemd. It takes about 5 minutes after `apply`.
+First boot (`user_data.sh.tftpl`) installs Node 24, nginx, git, python3 and
+Postgres 16, creates a `talon` service user and a `talon` database it reaches
+over the Unix socket with peer auth (no DB password), generates
+`TALON_CREDENTIALS_KEY` and `SESSION_SECRET` into `/etc/talon/talon.env`,
+clones this repo to `/opt/talon`, builds, runs migrations, seeds the demo
+users once, and starts `talon-backend` under systemd. About 5 minutes.
 
 ## One-time setup
 
@@ -54,14 +56,19 @@ On the box:
 sudo journalctl -u talon-backend -f       # backend logs
 sudo tail -f /var/log/talon-bootstrap.log # first-boot log
 sudo /usr/local/bin/talon-deploy main     # same as deploy.sh
+sudo -u talon psql talon                  # database shell
 ```
 
 ## Demo-mode caveats
 
-- `deploy.sh` force-syncs to `origin/<branch>`: tracked data files
-  (`backend/src/data/*.json`, `users.txt`, `backend/data/talon-demo.sqlite`)
-  reset to the committed version on every deploy. Untracked files such as
-  `githubCredentials.json` survive deploys but not instance replacement.
+- Users, roles, classes, budgets, and sessions live in Postgres and
+  **survive deploys** (`deploy.sh` runs migrations). They do not survive
+  instance replacement; there are no backups yet.
+- Jobs and results are still JSON files in the git tree
+  (`backend/src/data/*.json`) and reset to the committed version on every
+  deploy. Untracked files such as `githubCredentials.json` survive deploys.
+- Demo users are seeded once on first boot (`TALON_ALLOW_DEMO_SEED=true` in
+  the env file). Their passwords are public: see "Going public".
 - Changing `user_data.sh.tftpl` replaces the instance on the next `apply`.
 - Terraform state is local (`infra/ec2/terraform.tfstate`, gitignored).
   Move it to S3 before sharing this stack.

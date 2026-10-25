@@ -12,7 +12,7 @@ _Last updated: 2026-10-25_. Account IDs, instance ID, and IPs are in
 | Instance | `talon-demo-app`, t4g.small, Ubuntu 24.04 arm64 |
 | Elastic IP | Yes (no ports open; reserved for future DNS) - `terraform output public_ip` |
 | Inbound access | None. SSM Session Manager only |
-| Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend` |
+| Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`, Postgres 16 (local socket, peer auth) |
 | Deployed | `origin/main` |
 | Approx cost | ~$17/month (instance ~$12, EBS ~$1.60, public IPv4 ~$3.65) |
 | Terraform state | **Local only**: `infra/ec2/terraform.tfstate` (gitignored) - do not delete |
@@ -41,14 +41,11 @@ generated `TALON_CREDENTIALS_KEY`), service user `talon`.
 
 ## Known limitations (demo mode)
 
-- Every deploy force-syncs to `origin/<branch>`, so tracked demo data
-  (`backend/src/data/*.json`, `users.txt`, `backend/data/talon-demo.sqlite`)
-  resets on each deploy.
+- Users/sessions/budgets are in Postgres and survive deploys; jobs and
+  results are still tracked JSON files and reset on each deploy.
+- No database backups yet (instance replacement loses users).
 - `githubCredentials.json` is untracked, so it survives deploys but not
   instance replacement. Changing `user_data.sh.tftpl` replaces the instance.
-- The deployed `main` still trusts the `x-talon-user` header. Branch
-  `user-db-postgres` replaces it with cookie sessions; deploy that (with
-  Postgres on the box) before going public.
 - The local job runner executes `git clone` / `python3` directly on the host
   as the `talon` user, so jobs are not isolated.
 - No backups. The instance is disposable; rebuild with `terraform apply`.
@@ -75,8 +72,8 @@ generated `TALON_CREDENTIALS_KEY`), service user `talon`.
 5. Create the real first admin with
    `npm run db:create-admin --workspace backend -- --username you@lcps.org`
    (random password, printed once).
-6. Set `SESSION_SECRET` and `SESSION_COOKIE_SECURE=true` in
-   `/etc/talon/talon.env`.
+6. In `/etc/talon/talon.env`: remove `TALON_ALLOW_DEMO_SEED`, add
+   `SESSION_COOKIE_SECURE=true` (`SESSION_SECRET` is already generated).
 
 ## History
 
