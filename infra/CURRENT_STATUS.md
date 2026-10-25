@@ -240,11 +240,18 @@ makes cost real. What we know, and what to decide.
   endpoint**, so the web server needs internet egress for it. Cache the
   rates (daily refresh is plenty) and snapshot the rate on each job. If we
   ever use Spot, the price differs per launch (EC2 spot price history).
-- **GPU quota is 0 by default.** New accounts start at 0 vCPUs for G and VT
-  (and P, DL, Inf, Trn) On-Demand instances; Standard families (A C D H I M
-  R T Z) start at 5 vCPUs. **Request a Service Quotas increase early** in the
-  LCPS account (e.g. 4 vCPUs = one `g4dn.xlarge`); approval is not instant.
-  This quota is also a hard backstop on total spend.
+- **vCPU quotas (checked in the LCPS account 2026-10-25, us-east-1):** G and
+  VT 768, P 768, Standard 1152, DL 96, Inf 128, Trn 256 vCPUs. No increase is
+  needed (a brand-new account would start at 0 for GPU families and 5 for
+  Standard; this account has grown past that). Re-check with
+  `aws service-quotas list-service-quotas --service-code ec2 --profile lcps`
+  before relying on a region or family we have not used. **These limits are
+  far too high to act as a spending cap** (768 GPU vCPUs is roughly 190
+  `g4dn.xlarge` at once), so the real caps must be Talon's own: per-job max
+  runtime, reserve-then-settle, a per-user concurrent job limit, and an AWS
+  Budgets alarm. Optionally lower the quota ourselves (Service Quotas does
+  not allow decreasing; use an IAM/SCP condition on allowed instance types
+  instead).
   ([quotas](https://docs.aws.amazon.com/ec2/latest/instancetypes/ec2-instance-quotas.html))
 - **Actual-cost reconciliation lags.** Cost allocation tags take up to 24 h
   to show on the Billing page and up to 24 h more after you activate them
@@ -301,7 +308,9 @@ makes cost real. What we know, and what to decide.
    used. Either fold a small markup into the rate or accept the difference;
    the monthly Cost Explorer reconciliation shows how big it is.
 10. **Account safety nets** independent of Talon: an AWS Budgets alarm on the
-    account, the vCPU quota above, and the 30 minute default max runtime.
+    account, an IAM policy limiting which instance types the web server may
+    launch (the vCPU quotas are too high to help), and the 30 minute default
+    max runtime.
 11. **Keep the local adapter** for development and tests (the test suite
     relies on it) behind the same adapter interface.
 
