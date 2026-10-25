@@ -50,14 +50,62 @@ generated `TALON_CREDENTIALS_KEY`), service user `talon`.
   as the `talon` user, so jobs are not isolated.
 - No backups. The instance is disposable; rebuild with `terraform apply`.
 
-## Next steps
+## To-do (in order)
 
-1. Commit `infra/`, README updates, and the `githubCredentials.json` untrack.
-2. Move Terraform state to S3 (with `use_lockfile`) in the LCPS account.
-3. Move GitHub credentials to Postgres or AWS Secrets Manager / SSM.
-4. Move runtime data out of the repo tree (e.g. `/var/lib/talon`) so deploys
-   don't reset it.
-5. Ask LCPS AWS admins for a read-only permission set (`lcps-ro` profile).
+Ordered so each item makes the next one easier. Items 1-7 need no outside
+decisions.
+
+**Foundation**
+
+1. **Postgres-only users** (plan step 8). Make Postgres the default, delete
+   the SQLite users code and `.sqlite` files, move regression tests to
+   `talon_test`. One code path for everything after this; plain
+   `npm run dev` then uses Postgres.
+2. **Login throttling per account.** Slow down / temporarily lock after
+   repeated failed logins. Small, independent, required before any
+   exposure (WAF can only limit per IP).
+3. **Keep the keys safe** _(added: prerequisite for 4)_. Move
+   `SESSION_SECRET` and `TALON_CREDENTIALS_KEY` to SSM Parameter Store
+   (SecureString); the box reads them at boot. Today they exist only on the
+   instance, so replacing it loses them - and a database backup of
+   encrypted GitHub tokens is useless without the key.
+4. **Nightly backups.** `pg_dump` to an S3 bucket (Terraform: bucket,
+   lifecycle, instance-role policy; systemd timer on the box). Do one
+   test restore.
+5. **Terraform state to S3** (with `use_lockfile`). It is local on one Mac
+   today; losing it orphans the infrastructure.
+
+**Data into Postgres** (nothing resets on deploy after these; first step
+toward two servers)
+
+6. **GitHub credentials -> Postgres**, still encrypted with
+   `TALON_CREDENTIALS_KEY`, keyed by user id. Replaces
+   `githubCredentials.json`.
+7. **Jobs and results -> Postgres**, owned by user id, with the budget
+   ledger charging jobs. Removes the JSON files and the demo owner
+   assignment (`demoOwnership.js`).
+
+**Frontend** (can move earlier if the demo needs polish)
+
+8. **Plan step 5 remainder.** Teacher classes shown separately, dollar
+   formatting, remove the client-side owner filter (the server filters
+   now). Best after 7 so it targets the final API shapes.
+
+**Blocked on others**
+
+9. **Entra ID sign-in** - waiting on the LCPS App Registration (ask early;
+   IT lead time).
+10. **ALB + WAF go-public** - waiting on hostname, exposure, and subnet
+    decisions (see "Going public" below). Includes the X-Forwarded-Proto
+    fix, removing demo users, creating the real admin.
+11. **Read-only AWS role** (`lcps-ro`) - ask the LCPS AWS admins.
+
+**Housekeeping**
+
+- **~2026-11-01:** delete the deactivated IAM access keys on the personal
+  account and `~/.aws/credentials-bk` if nothing broke.
+- Term end: return leftover teacher pool money to the admin (needs a
+  small admin action; do with 7 or later).
 
 ## Going public: ALB + WAF (likely needed for the first stakeholder demo)
 
