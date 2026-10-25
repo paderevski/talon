@@ -203,6 +203,108 @@ Verify CloudFront VPC origin support for EC2 before choosing it.
   (random password, printed once).
 - Nightly `pg_dump` to S3 (users now live only on this instance).
 
+## Building EC2-launched jobs (notes for when we get there)
+
+Today every job runs on the web server itself (`localExecutionAdapter`), with
+a 30 minute limit. Moving to one EC2 instance per job fixes isolation and
+makes cost real. What we know, and what to decide.
+
+### What is already in place
+
+- `jobs.compute_type`, `jobs.hourly_rate_cents` (snapshot taken at launch;
+  fractions of a cent are allowed), `jobs.max_runtime_seconds`,
+  `jobs.cost_cents`, `jobs.execution_ref` (jsonb, put the instance id here).
+- Finishing a job stores its result and charges the owner's personal budget
+  in one transaction, once per job (ledger has a unique charge per job).
+  Cost = `max(seconds, 60) x rate / 3600`, rounded up to a cent.
+- Submits are refused (402) when the rate is above 0 and the budget is 0.
+- To add: an execution adapter that launches/terminates instances (the
+  adapter interface is `start / getStatus / getLogs / listOutputFiles /
+  cancel`), plus the pieces below. The Kubernetes adapter file is an old
+  stub, not a guide.
+
+### Verified against AWS docs (2026-10-25)
+
+- **Billing:** EC2 Linux and Ubuntu are billed **per second with a 60 second
+  minimum**, and only while the instance is in the **running** state (not
+  pending, not stopped). EBS volumes are also billed per second (60 s
+  minimum). So `seconds in running state x hourly rate` is what AWS bills for
+  the instance. Boot, `user_data`, `git clone` and `pip install` time is
+  billed: measure from the instance reaching *running*, not from the start of
+  the training script, and decide whether students pay for setup time.
+  ([instance-hour billing](https://repost.aws/knowledge-center/ec2-instance-hour-billing))
+- **Rates:** the Price List API (`GetProducts`, service `AmazonEC2`, filter by
+  instance type, region, `operatingSystem=Linux`, `tenancy=Shared`,
+  `preInstalledSw=NA`, `capacitystatus=Used`) returns on-demand list prices.
+  It is served from `api.pricing.us-east-1.amazonaws.com` and has **no VPC
+  endpoint**, so the web server needs internet egress for it. Cache the
+  rates (daily refresh is plenty) and snapshot the rate on each job. If we
+  ever use Spot, the price differs per launch (EC2 spot price history).
+- **GPU quota is 0 by default.** New accounts start at 0 vCPUs for G and VT
+  (and P, DL, Inf, Trn) On-Demand instances; Standard families (A C D H I M
+  R T Z) start at 5 vCPUs. **Request a Service Quotas increase early** in the
+  LCPS account (e.g. 4 vCPUs = one `g4dn.xlarge`); approval is not instant.
+  This quota is also a hard backstop on total spend.
+  ([quotas](https://docs.aws.amazon.com/ec2/latest/instancetypes/ec2-instance-quotas.html))
+- **Actual-cost reconciliation lags.** Cost allocation tags take up to 24 h
+  to show on the Billing page and up to 24 h more after you activate them
+  before Cost Explorer uses them, and activation is done in the
+  **organization's management account** (LCPS IT owns it). So Cost Explorer
+  can reconcile (monthly: our computed totals vs billed totals, grouped by a
+  `talon-job` tag), but cannot charge students in real time.
+
+### Design decisions to make
+
+1. **Reserve, then settle.** The ledger already has `charge` and `refund`
+   kinds. Plan: at launch charge `rate x max_runtime`, at the end refund the
+   unused part. A student can then never spend more than their budget, even
+   with many parallel jobs. (Today's charge-at-end is only safe while the
+   rate is 0.) Needs: allow the one-charge-per-job index to coexist with a
+   refund row (it does: it only covers `kind = 'charge'`), and a per-user
+   cap on concurrent jobs.
+2. **Always terminate.** Use `terminate`, never `stop` (stopped instances
+   still bill for EBS). Defense in depth: set
+   `InstanceInitiatedShutdownBehavior=terminate` and make the job script end
+   with a shutdown; run the script under `timeout` for `max_runtime`; and
+   have the web server (or a scheduled sweeper) terminate any instance past
+   its limit or whose job row is finished. Tag every instance
+   (`talon-job=<job id>`, `Project=talon`, owner) and sweep for orphans.
+3. **What counts as the end of a job.** Record our own timestamps (instance
+   running, instance terminated) in the job row and use those for cost, not
+   the training script's runtime.
+4. **Isolation.** Student code is untrusted. Run it in its own subnet or VPC
+   with no route to the Talon web server or Postgres, IMDSv2 required,
+   egress limited to what jobs need (GitHub, package mirrors, S3). The
+   instance role gets only that job's S3 prefix.
+5. **Secrets to the instance.** Do not put a user's GitHub token in
+   `user_data` (readable via instance metadata and `DescribeInstanceAttribute`).
+   Fetch it at boot from a short-lived, job-scoped place (a one-shot SSM
+   parameter or Secrets Manager secret the job role may read once), or clone
+   on the web server and ship the code via S3.
+6. **Control plane IAM.** The web server role needs `ec2:RunInstances`,
+   `ec2:TerminateInstances`, `ec2:DescribeInstances`, `ec2:CreateTags`, and
+   `iam:PassRole` for the job role only, restricted with conditions:
+   allowed instance types, required tags on create, terminate only
+   resources tagged `Project=talon`. Pricing: `pricing:GetProducts`.
+7. **Logs, outputs, status.** Replace `backend/data/runs` with S3 (outputs)
+   and S3 or CloudWatch Logs (logs); the instance reports completion by
+   writing a status object, so no inbound connection to the instance is
+   needed. The files/logs endpoints then read from S3. This also fixes
+   "output lost when the web server is replaced".
+8. **Capacity failures.** `RunInstances` can fail (`InsufficientInstanceCapacity`,
+   quota exceeded). Keep the job `queued`, retry with backoff (or another
+   AZ), fail it with a clear message after a limit, and never charge for a
+   job that never reached *running*.
+9. **Other costs not in the per-second compute rate:** EBS root volume,
+   public IPv4 address (about $0.005 per hour each; avoid by launching into a
+   private subnet with S3 and other endpoints), data transfer, NAT gateway if
+   used. Either fold a small markup into the rate or accept the difference;
+   the monthly Cost Explorer reconciliation shows how big it is.
+10. **Account safety nets** independent of Talon: an AWS Budgets alarm on the
+    account, the vCPU quota above, and the 30 minute default max runtime.
+11. **Keep the local adapter** for development and tests (the test suite
+    relies on it) behind the same adapter interface.
+
 ## Later: two web servers or auto-replacement
 
 Not needed for load. If wanted for availability:
