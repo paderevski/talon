@@ -5,3 +5,4 @@
 crash.log
 terraform.tfvars
 *.local.md
+backend.hcl

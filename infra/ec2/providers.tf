@@ -1,5 +1,5 @@
 terraform {
-  required_version = ">= 1.7.0"
+  required_version = ">= 1.10.0"
 
   required_providers {
     aws = {
@@ -8,8 +8,16 @@ terraform {
     }
   }
 
-  # Local state for now (single operator). Move to an S3 backend before
-  # anyone else runs this stack.
+  # State lives in the S3 bucket made by infra/state (versioned, encrypted,
+  # native locking). The bucket name contains the account id, so it comes from
+  # backend.hcl (gitignored; copy backend.hcl.example):
+  #   terraform init -backend-config=backend.hcl
+  backend "s3" {
+    key          = "ec2/terraform.tfstate"
+    region       = "us-east-1"
+    encrypt      = true
+    use_lockfile = true
+  }
 }
 
 provider "aws" {

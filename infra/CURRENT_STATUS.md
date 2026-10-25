@@ -15,7 +15,7 @@ _Last updated: 2026-10-25_. Account IDs, instance ID, and IPs are in
 | Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`, Postgres 16 (local socket, peer auth) |
 | Deployed | `origin/main` |
 | Approx cost | ~$17/month (instance ~$12, EBS ~$1.60, public IPv4 ~$3.65) |
-| Terraform state | **Local only**: `infra/ec2/terraform.tfstate` (gitignored) - do not delete |
+| Terraform state | S3 `talon-tfstate-<account id>` (versioned, locked); `infra/state` stack's own state is local and tiny |
 
 ## How to use
 
@@ -84,8 +84,10 @@ decisions.
    Still to do: an alarm if no dump has landed in 36 hours (today you must
    run `backup.sh status` to notice), and restoring from a dump onto a
    replacement instance is only tested in the scratch DB, not end to end.
-5. **Terraform state to S3** (with `use_lockfile`). It is local on one Mac
-   today; losing it orphans the infrastructure.
+5. ~~**Terraform state to S3**~~ _(done 2026-10-25: bucket from
+   `infra/state`; `infra/ec2` uses it with `use_lockfile`; lock tested. Old
+   local files kept as `*.migrated-to-s3` in `infra/ec2`: delete after a week
+   if nothing broke.)_
 
 **Data into Postgres** (nothing resets on deploy after these; first step
 toward two servers)

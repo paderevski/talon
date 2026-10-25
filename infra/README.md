@@ -31,10 +31,15 @@ aws sso login --profile lcps
 
 ## Create / destroy
 
+Terraform cannot read `aws login` / SSO profile credentials directly, so
+export them first (valid for the current session):
+
 ```bash
+eval "$(aws configure export-credentials --profile lcps --format env)"
 cd infra/ec2
 cp terraform.tfvars.example terraform.tfvars   # first time: fill in account_id, owner
-terraform init
+cp backend.hcl.example backend.hcl             # first time: put your account id in the bucket name
+terraform init -backend-config=backend.hcl
 terraform plan
 terraform apply
 terraform destroy
@@ -72,8 +77,12 @@ sudo -u talon psql talon                  # database shell
 - Demo users are seeded once on first boot (`TALON_ALLOW_DEMO_SEED=true` in
   the env file). Their passwords are public: see "Going public".
 - Changing `user_data.sh.tftpl` replaces the instance on the next `apply`.
-- Terraform state is local (`infra/ec2/terraform.tfstate`, gitignored).
-  Move it to S3 before sharing this stack.
+- Terraform state lives in S3 (`talon-tfstate-<account id>`, versioned,
+  encrypted, native locking), created by the small `infra/state` stack, whose
+  own state stays local. Rebuilding on a new machine needs only
+  `terraform init -backend-config=backend.hcl`. If you ever lose
+  `infra/state/terraform.tfstate`, re-import the bucket
+  (`terraform import aws_s3_bucket.state <bucket name>`) and apply.
 
 ## Later: going public
 

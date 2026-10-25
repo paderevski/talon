@@ -1,0 +1,2 @@
+# Copy to backend.hcl (gitignored). Bucket is created by infra/state.
+bucket = "talon-tfstate-123456789012"
