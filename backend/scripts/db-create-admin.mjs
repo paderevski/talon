@@ -3,7 +3,7 @@
 //   npm run db:create-admin --workspace backend -- --username you@lcps.org --name "Your Name"
 import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";
-import { closePool, getDatabaseUrl, getPool, withTransaction } from "../src/db/pool.js";
+import { closePool, describeDatabase, getPool, withTransaction } from "../src/db/pool.js";
 import { runMigrations } from "../src/db/migrate.js";
 import { ensureAccount } from "../src/budget/ledger.js";
 import { createPasswordHash } from "../src/utils/passwords.js";
@@ -60,7 +60,7 @@ try {
     return isNew;
   });
 
-  console.log(`${created ? "Created" : "Updated"} admin '${username}' in ${getDatabaseUrl()}`);
+  console.log(`${created ? "Created" : "Updated"} admin '${username}' in ${describeDatabase()}`);
   console.log(`Password (shown once, store it in a password manager): ${password}`);
 } catch (error) {
   console.error(error?.message || String(error));

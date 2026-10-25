@@ -12,6 +12,25 @@ export function getDatabaseUrl() {
   return String(process.env.DATABASE_URL ?? "").trim() || defaultDatabaseUrl;
 }
 
+// Safe to print: the connection URL with any password masked. Use this in
+// logs and console output, never getDatabaseUrl().
+export function describeDatabase(url = getDatabaseUrl()) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.password) {
+      parsed.password = "****";
+    }
+    for (const key of ["password", "sslpassword"]) {
+      if (parsed.searchParams.has(key)) {
+        parsed.searchParams.set(key, "****");
+      }
+    }
+    return decodeURI(parsed.toString());
+  } catch {
+    return "(unparseable DATABASE_URL, hidden)";
+  }
+}
+
 export function getPool() {
   if (!pool) {
     pool = new pg.Pool({
