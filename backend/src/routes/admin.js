@@ -4,7 +4,7 @@ import {
   addClassMember,
   createClass,
   createUser,
-  grantBudget,
+  adjustBudget,
   listClasses,
   listUsers,
   removeClassMember,
@@ -102,12 +102,12 @@ router.delete("/classes/:classId/members/:userId", handle(async (req, res) => {
   return res.json({ ok: true });
 }));
 
-router.post("/budget/grants", handle(async (req, res) => {
-  const { userId, target, amount, note } = req.body ?? {};
+router.post("/budget/adjustments", handle(async (req, res) => {
+  const { userId, target, direction, amount, note } = req.body ?? {};
   if (!uuidPattern.test(String(userId ?? ""))) {
     return res.status(400).json({ message: "Choose a user" });
   }
-  await grantBudget({ userId, target, amount, note }, req.user.id);
+  await adjustBudget({ userId, target, direction, amount, note }, req.user.id);
   return res.status(201).json({ ok: true });
 }));
 

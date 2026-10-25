@@ -509,7 +509,9 @@ export const removeAdminClassMember = (classId, userId) =>
     `/api/admin/classes/${encodeURIComponent(classId)}/members/${encodeURIComponent(userId)}`,
   );
 
-export const grantAdminBudget = (grant) => requestJson("POST", "/api/admin/budget/grants", grant);
+// direction: "increase" | "decrease"; target: "personal" | "pool"; amount in dollars.
+export const adjustAdminBudget = (adjustment) =>
+  requestJson("POST", "/api/admin/budget/adjustments", adjustment);
 export const allocateStudentBudget = (studentUsername, amount) =>
   requestJson("POST", "/api/teacher/allocations", { studentUsername, amount });
 export const changeOwnPassword = (currentPassword, newPassword) =>

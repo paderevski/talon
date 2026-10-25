@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { getPool, withTransaction } from "../db/pool.js";
 import {
   BudgetError,
+  adjust,
   centsToDollars,
   dollarsToCents,
   ensureAccount,
@@ -433,10 +434,14 @@ export async function removeClassMember(classId, userId) {
 
 // ---- Budgets -----------------------------------------------------------
 
-// Admin adds money: to a teacher's pool, or straight to anyone's personal budget.
-export async function grantBudget({ userId, target, amount, note }, actorId) {
+// Admin changes a balance: to a teacher's pool, or anyone's personal budget.
+// "increase" creates money (a grant); "decrease" removes it (never below $0).
+export async function adjustBudget({ userId, target, direction, amount, note }, actorId) {
   if (!["pool", "personal"].includes(target)) {
     throw new ManagementError("Target must be pool or personal");
+  }
+  if (!["increase", "decrease"].includes(direction)) {
+    throw new ManagementError("Direction must be increase or decrease");
   }
   const amountCents = toCents(amount);
 
@@ -453,12 +458,13 @@ export async function grantBudget({ userId, target, amount, note }, actorId) {
       userId,
       target === "pool" ? "teacher_pool" : "personal",
     );
-    await grant(client, {
-      accountId,
-      amountCents,
-      note: cleanText(note, 200) || "Admin grant",
-      createdBy: actorId,
-    });
+    const fallbackNote = direction === "increase" ? "Admin grant" : "Admin adjustment";
+    const entry = { accountId, note: cleanText(note, 200) || fallbackNote, createdBy: actorId };
+    if (direction === "increase") {
+      await grant(client, { ...entry, amountCents });
+    } else {
+      await adjust(client, { ...entry, amountCents: -amountCents });
+    }
   });
 }
 

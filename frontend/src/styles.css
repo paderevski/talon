@@ -746,3 +746,44 @@ td:last-child, th:last-child { border-right: none; }
   flex-direction: column;
   gap: 12px;
 }
+
+/* Inline budget editing and sortable user lists */
+.budget-link {
+  background: none;
+  border: 1px dashed transparent;
+  border-radius: 6px;
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+  padding: 2px 6px;
+  margin: -2px -6px;
+  text-align: left;
+}
+.budget-link:hover { border-color: var(--accent-blue); color: var(--accent-blue); }
+.budget-editor { display: flex; flex-direction: column; gap: 6px; min-width: 210px; }
+.budget-editor form { display: flex; flex-direction: column; gap: 6px; }
+.budget-editor .form-input { padding: 6px 8px; }
+.segmented { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.segmented button {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  padding: 6px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.segmented button.active { background: var(--accent-blue); color: white; }
+.list-controls { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.list-controls .form-input, .list-controls .form-select { width: auto; min-width: 150px; padding: 8px 10px; }
+.sort-btn {
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+.sort-btn:hover { color: var(--accent-blue); }
+.panel-head .panel-count { color: var(--text-muted); font-size: 13px; font-weight: 400; margin-left: 8px; }

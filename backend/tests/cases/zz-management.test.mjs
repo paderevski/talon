@@ -25,7 +25,7 @@ export async function run({ baseUrl }) {
   for (const [method, path] of [
     ["GET", "/api/admin/users"],
     ["POST", "/api/admin/users"],
-    ["POST", "/api/admin/budget/grants"],
+    ["POST", "/api/admin/budget/adjustments"],
     ["POST", "/api/teacher/allocations"],
   ]) {
     const denied = await send(student, baseUrl, method, path, {});
@@ -99,23 +99,26 @@ export async function run({ baseUrl }) {
   assert(blocked.status === 409, `Expected removing the teacher role mid-class 409, got ${blocked.status}`);
 
   // Budgets
-  const noTeacherPool = await send(admin, baseUrl, "POST", "/api/admin/budget/grants", {
+  const noTeacherPool = await send(admin, baseUrl, "POST", "/api/admin/budget/adjustments", {
     userId: pupil.payload.id,
     target: "pool",
+    direction: "increase",
     amount: 5,
   });
   assert(noTeacherPool.status === 409, `Expected pool grant to a student 409, got ${noTeacherPool.status}`);
   for (const amount of [0, -3, "abc", 1_000_000]) {
-    const invalid = await send(admin, baseUrl, "POST", "/api/admin/budget/grants", {
+    const invalid = await send(admin, baseUrl, "POST", "/api/admin/budget/adjustments", {
       userId: teacher.payload.id,
       target: "pool",
+      direction: "increase",
       amount,
     });
     assert(invalid.status === 400, `Expected amount ${amount} rejected with 400, got ${invalid.status}`);
   }
-  const funded = await send(admin, baseUrl, "POST", "/api/admin/budget/grants", {
+  const funded = await send(admin, baseUrl, "POST", "/api/admin/budget/adjustments", {
     userId: teacher.payload.id,
     target: "pool",
+    direction: "increase",
     amount: 20.5,
   });
   assert(funded.status === 201, `Expected pool grant, got ${funded.status}`);
@@ -130,6 +133,21 @@ export async function run({ baseUrl }) {
   assert(roster.payload.roster.teacher.poolBalance === 12.25, "Expected pool to drop to $12.25");
   const pupilRow = roster.payload.roster.classes[0].students.find((s) => s.username === "mgmt_pupil");
   assert(pupilRow.tokensRemaining === 8.25, "Expected the student to hold $8.25");
+
+  // Decrease: pool and personal budgets, never below zero
+  const adjust = (userId, target, direction, amount) =>
+    send(admin, baseUrl, "POST", "/api/admin/budget/adjustments", { userId, target, direction, amount });
+  assert((await adjust(teacher.payload.id, "pool", "decrease", 100)).status === 409,
+    "Expected removing more than the pool holds to be refused with 409");
+  assert((await adjust(teacher.payload.id, "pool", "sideways", 1)).status === 400, "Expected bad direction 400");
+  assert((await adjust(teacher.payload.id, "pool", "decrease", 2.25)).status === 201, "Expected pool decrease");
+  assert((await adjust(pupil.payload.id, "personal", "decrease", 1.25)).status === 201, "Expected personal decrease");
+  assert((await adjust(pupil.payload.id, "personal", "decrease", 50)).status === 409,
+    "Expected removing more than a student holds to be refused with 409");
+  const afterDecrease = await send(teacherJar, baseUrl, "GET", "/api/teacher/students");
+  assert(afterDecrease.payload.roster.teacher.poolBalance === 10, "Expected pool at $10.00 after the decrease");
+  const pupilAfter = afterDecrease.payload.roster.classes[0].students.find((s) => s.username === "mgmt_pupil");
+  assert(pupilAfter.tokensRemaining === 7, "Expected the student at $7.00 after the decrease");
 
   // Disable signs the user out; reset password replaces the old one
   const pupilJar = createCookieJar();

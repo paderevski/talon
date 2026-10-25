@@ -1,17 +1,17 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   createAdminUser,
   resetAdminUserPassword,
   unlockAdminUser,
   updateAdminUser,
 } from "../api/client";
-import { formatDollars } from "../utils/format";
 import CredentialsNotice from "./CredentialsNotice";
+import UserList from "./UserList";
 
 const allRoles = ["student", "teacher", "admin"];
 const emptyForm = { username: "", fullName: "", email: "", roles: ["student"] };
 
-export default function AdminUsersPanel({ users, authUser, onChanged }) {
+export default function AdminUsersPanel({ users, classes, authUser, onChanged }) {
   const [form, setForm] = useState(emptyForm);
   const [editing, setEditing] = useState(null); // user being edited, or null when adding
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -19,20 +19,28 @@ export default function AdminUsersPanel({ users, authUser, onChanged }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
-  const [search, setSearch] = useState("");
+  const formRef = useRef(null);
 
-  const needle = search.trim().toLowerCase();
-  const visibleUsers = needle
-    ? users.filter((user) =>
-        [user.fullName, user.username, user.email || ""].some((value) => value.toLowerCase().includes(needle)),
-      )
-    : users;
+  // The form opens above the lists; bring it into view from wherever the button was.
+  useEffect(() => {
+    if (isFormOpen) {
+      formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [isFormOpen, editing]);
 
-  function openAdd() {
+  function openAdd(role = "student") {
     setEditing(null);
-    setForm(emptyForm);
+    setForm({ ...emptyForm, roles: [role] });
     setIsFormOpen(true);
     setError("");
+  }
+
+  async function onToggleStatus(user) {
+    const disabling = user.status === "active";
+    await run(
+      () => updateAdminUser(user.id, { status: disabling ? "disabled" : "active" }),
+      `${disabling ? "Disabled" : "Enabled"} ${user.username}`,
+    );
   }
 
   function openEdit(user) {
@@ -112,15 +120,20 @@ export default function AdminUsersPanel({ users, authUser, onChanged }) {
     }
   }
 
-  return (
-    <section className="panel admin-section" id="admin-users">
-      <div className="panel-head">
-        <h2 className="panel-title">Users</h2>
-        <button type="button" className="btn btn-primary btn-sm" onClick={openAdd}>
-          Add user
-        </button>
-      </div>
+  const shared = {
+    classes,
+    authUser,
+    isBusy,
+    onAdd: openAdd,
+    onEdit: openEdit,
+    onResetPassword,
+    onToggleStatus,
+    onChanged,
+  };
 
+  return (
+    <>
+      <div className="admin-section">
       {credentials ? (
         <CredentialsNotice {...credentials} onDismiss={() => setCredentials(null)} />
       ) : null}
@@ -128,7 +141,8 @@ export default function AdminUsersPanel({ users, authUser, onChanged }) {
       {error ? <div className="repo-error">{error}</div> : null}
 
       {isFormOpen ? (
-        <form className="inline-form" onSubmit={onSubmit}>
+        <form className="inline-form" ref={formRef} onSubmit={onSubmit}>
+          <h3 className="panel-title form-group full">{editing ? `Edit ${editing.username}` : "Add user"}</h3>
           <div className="form-group">
             <label className="form-label" htmlFor="user-username">Username</label>
             <input
@@ -199,88 +213,11 @@ export default function AdminUsersPanel({ users, authUser, onChanged }) {
         </form>
       ) : null}
 
-      <div className="form-group" style={{ marginBottom: 10, maxWidth: 320 }}>
-        <input
-          className="form-input"
-          placeholder="Search name, username or email"
-          aria-label="Search users"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-        />
       </div>
 
-      <div className="table-card table-scroll-region">
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Roles</th>
-              <th>Classes</th>
-              <th>Budget</th>
-              <th>Last sign-in</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {visibleUsers.map((user) => {
-              const isSelf = user.username.toLowerCase() === String(authUser?.username ?? "").toLowerCase();
-              return (
-                <tr key={user.id} className={user.status === "disabled" ? "row-disabled" : undefined}>
-                  <td>
-                    {user.fullName}
-                    <div className="form-hint mono-sm">{user.username}</div>
-                    {user.status === "disabled" ? <div className="form-hint">Disabled</div> : null}
-                  </td>
-                  <td>
-                    {user.roles.map((role) => (
-                      <span key={role} className={`role-chip ${role}`}>{role}</span>
-                    ))}
-                  </td>
-                  <td>{user.classes.map((classItem) => classItem.name).join(", ") || "—"}</td>
-                  <td>
-                    {formatDollars(user.personalBalance)}
-                    {user.poolBalance !== null ? (
-                      <div className="form-hint">pool {formatDollars(user.poolBalance)}</div>
-                    ) : null}
-                  </td>
-                  <td className="mono-sm">
-                    {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleDateString() : "never"}
-                  </td>
-                  <td>
-                    <div className="row-actions">
-                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => openEdit(user)}>
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-sm"
-                        disabled={isBusy}
-                        onClick={() => onResetPassword(user)}
-                      >
-                        Reset password
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-sm"
-                        disabled={isBusy || isSelf}
-                        title={isSelf ? "You cannot disable your own account" : undefined}
-                        onClick={() =>
-                          run(
-                            () => updateAdminUser(user.id, { status: user.status === "active" ? "disabled" : "active" }),
-                            `${user.status === "active" ? "Disabled" : "Enabled"} ${user.username}`,
-                          )
-                        }
-                      >
-                        {user.status === "active" ? "Disable" : "Enable"}
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </section>
+      <UserList id="admin-students" title="Students" kind="student" users={users.filter((user) => user.roles.includes("student"))} {...shared} />
+      <UserList id="admin-teachers" title="Teachers" kind="teacher" users={users.filter((user) => user.roles.includes("teacher"))} {...shared} />
+      <UserList id="admin-admins" title="Admins" kind="admin" users={users.filter((user) => user.roles.includes("admin"))} {...shared} />
+    </>
   );
 }

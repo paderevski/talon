@@ -32,9 +32,10 @@ function getNavSections(role, hasTeacherStudentView) {
   if (normalizedRole === "admin") {
     return [
       { id: "admin-roster", label: "Overview" },
-      { id: "admin-users", label: "Users" },
+      { id: "admin-students", label: "Students" },
+      { id: "admin-teachers", label: "Teachers" },
+      { id: "admin-admins", label: "Admins" },
       { id: "admin-classes", label: "Classes" },
-      { id: "admin-budgets", label: "Budgets" },
     ];
   }
 
@@ -92,7 +93,7 @@ function getLandingContentForRole(role) {
       highlights: [
         "Add users, change roles, reset passwords and disable accounts.",
         "Create classes and assign teachers and students.",
-        "Add money to a teacher's pool or to a personal budget.",
+        "Click any budget to add or remove money.",
       ],
       primaryAction: "Open Admin Workspace",
     };

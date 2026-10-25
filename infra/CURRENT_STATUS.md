@@ -342,12 +342,14 @@ jobs (previous section). Rough priority order.
 ### 1. Management screens and budget API
 
 Done on branch `feature/management-screens` (not yet merged or deployed):
-admin Users / Classes / Budgets screens (add and edit users, roles, disable,
-reset password with a generated one-time password, clear login lockout;
-create, rename and archive classes, add and remove teachers and students;
-add money to a teacher pool or personal budget), teacher "add from pool"
-per student, and self-service change password (user menu). API:
-`/api/admin/users|classes|budget/grants`, `/api/teacher/allocations`,
+admin Students / Teachers / Admins lists (search, status and class filters,
+sort by name (last name), budget or last sign-in; add and edit users, roles,
+disable, reset password with a generated one-time password, clear login
+lockout; click any budget to add or remove money in place, with a
+confirmation step; removal never goes below $0) and a Classes screen
+(create, rename, archive, add and remove teachers and students), teacher
+"add from pool" per student, and self-service change password (user menu). API:
+`/api/admin/users|classes|budget/adjustments`, `/api/teacher/allocations`,
 `/api/auth/password`; logic in `backend/src/services/management.js`. Still to do:
 
 - Roster provisioning: only pre-provisioned users may sign in (decided), so

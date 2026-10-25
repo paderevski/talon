@@ -91,6 +91,24 @@ export async function grant(client, { accountId, amountCents, note, createdBy })
   await postEntry(client, { accountId, amountCents, kind: "grant", note, createdBy });
 }
 
+// Admin takes money out (a correction or clawback). Never takes an account
+// below zero; the removed money simply leaves the system.
+export async function adjust(client, { accountId, amountCents, note, createdBy }) {
+  if (!Number.isSafeInteger(amountCents) || amountCents >= 0) {
+    throw new BudgetError(
+      `Adjustment must be a negative whole number of cents, got ${amountCents}`,
+      "invalid_amount",
+    );
+  }
+
+  const accounts = await lockAccounts(client, [accountId]);
+  if (accounts.get(accountId).balanceCents + amountCents < 0) {
+    throw new BudgetError("Cannot remove more than the current balance", "insufficient_funds");
+  }
+
+  await postEntry(client, { accountId, amountCents, kind: "adjustment", note, createdBy });
+}
+
 // Moves money between accounts (pool -> student, pool -> admin at term end).
 export async function transfer(
   client,
