@@ -9,11 +9,15 @@
     "start": "node src/server.js",
     "seed:demo-users": "node scripts/seed-demo-users.mjs",
     "test": "node tests/run.mjs",
-    "test:regression": "node tests/run.mjs"
+    "test:regression": "node tests/run.mjs",
+    "db:migrate": "node scripts/db-migrate.mjs",
+    "db:seed:demo": "node scripts/db-seed-demo.mjs",
+    "test:postgres": "node tests/postgres/run.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.21.2",
+    "pg": "^8.23.1",
     "talon-shared": "0.1.0"
   },
   "devDependencies": {

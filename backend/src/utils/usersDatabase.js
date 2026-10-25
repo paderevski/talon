@@ -1,6 +1,9 @@
 import { mkdir } from "node:fs/promises";
-import { scryptSync, randomBytes, timingSafeEqual } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
+import {
+  createPasswordHash as hashPassword,
+  verifyPassword,
+} from "./passwords.js";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -30,32 +33,8 @@ function getDatabasePath() {
   return configuredPath || defaultDatabasePath;
 }
 
-function hashPassword(password, salt = randomBytes(16).toString("hex")) {
-  const normalizedPassword = String(password ?? "");
-  const derivedKey = scryptSync(normalizedPassword, salt, 64).toString("hex");
-  return `${salt}:${derivedKey}`;
-}
-
 export function createPasswordHash(password) {
   return hashPassword(password);
-}
-
-function verifyPassword(password, passwordHash) {
-  const normalizedHash = String(passwordHash ?? "").trim();
-  const [salt, storedHash] = normalizedHash.split(":");
-
-  if (!salt || !storedHash) {
-    return false;
-  }
-
-  const candidateHash = scryptSync(String(password ?? ""), salt, 64);
-  const storedHashBuffer = Buffer.from(storedHash, "hex");
-
-  if (candidateHash.length !== storedHashBuffer.length) {
-    return false;
-  }
-
-  return timingSafeEqual(candidateHash, storedHashBuffer);
 }
 
 function mapUserRow(row) {
@@ -63,10 +42,12 @@ function mapUserRow(row) {
     return null;
   }
 
+  const role = normalizeUserType(row.user_type);
   return {
     username: String(row.username ?? "").trim(),
     fullName: String(row.full_name ?? "").trim(),
-    role: normalizeUserType(row.user_type),
+    role,
+    roles: [role],
   };
 }
 

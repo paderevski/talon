@@ -1,4 +1,5 @@
 import { createUsersSqliteRepository } from "./sqlite/usersSqliteRepository.js";
+import { createUsersPostgresRepository } from "./postgres/usersPostgresRepository.js";
 
 let usersRepositoryPromise = null;
 
@@ -7,14 +8,16 @@ export function getUsersRepository(
 ) {
   const normalizedProvider = String(provider).trim().toLowerCase();
 
-  if (normalizedProvider !== "sqlite") {
-    throw new Error(
-      `Unsupported users repository provider: ${normalizedProvider}`,
-    );
-  }
-
   if (!usersRepositoryPromise) {
-    usersRepositoryPromise = createUsersSqliteRepository();
+    if (normalizedProvider === "sqlite") {
+      usersRepositoryPromise = createUsersSqliteRepository();
+    } else if (normalizedProvider === "postgres") {
+      usersRepositoryPromise = Promise.resolve(createUsersPostgresRepository());
+    } else {
+      throw new Error(
+        `Unsupported users repository provider: ${normalizedProvider}`,
+      );
+    }
   }
 
   return usersRepositoryPromise;

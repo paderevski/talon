@@ -20,7 +20,7 @@ router.get("/roster", async (req, res) => {
     return res.status(404).json({ message: "Requesting user was not found" });
   }
 
-  if (requestingUser.role !== "admin") {
+  if (!(requestingUser.roles ?? [requestingUser.role]).includes("admin")) {
     return res.status(403).json({ message: "Admin access is required" });
   }
 

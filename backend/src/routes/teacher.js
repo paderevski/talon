@@ -20,7 +20,7 @@ router.get("/students", async (req, res) => {
     return res.status(404).json({ message: "Requesting user was not found" });
   }
 
-  if (requestingUser.role !== "teacher") {
+  if (!(requestingUser.roles ?? [requestingUser.role]).includes("teacher")) {
     return res.status(403).json({ message: "Teacher access is required" });
   }
 
