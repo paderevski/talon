@@ -44,12 +44,11 @@ Key paths: app `/opt/talon`, config `/etc/talon/talon.env`, secrets
 
 - Users/sessions/budgets are in Postgres and survive deploys; jobs and
   results are still tracked JSON files and reset on each deploy.
-- No database backups yet (instance replacement loses users).
+- Nightly database backups exist, but restoring onto a new instance is manual.
 - `githubCredentials.json` is untracked, so it survives deploys but not
   instance replacement. Changing `user_data.sh.tftpl` replaces the instance.
 - The local job runner executes `git clone` / `python3` directly on the host
   as the `talon` user, so jobs are not isolated.
-- No backups. The instance is disposable; rebuild with `terraform apply`.
 
 ## To-do (in order)
 
@@ -73,9 +72,18 @@ decisions.
    `/etc/talon/secrets.env` before each backend start. Production refuses to
    start without them. Do not delete the parameters: stored GitHub tokens and
    backups depend on them.)_
-4. **Nightly backups.** `pg_dump` to an S3 bucket (Terraform: bucket,
-   lifecycle, instance-role policy; systemd timer on the box). Do one
-   test restore.
+4. ~~**Nightly backups.**~~ _(done 2026-10-25: `pg_dump` at 03:15 UTC to a
+   private, versioned, KMS-encrypted S3 bucket; 35 days of nightly dumps plus
+   the first dump of each month for 12 months (variables in `backups.tf`);
+   the instance can write/read but not delete. Weekly automatic test restore
+   into a scratch DB. Sessions and login-attempt data are not backed up.
+   Scripts are in `infra/backup/` and read their settings from
+   `/etc/talon/backup.env`, so a separate Postgres server or RDS only needs
+   `BACKUP_DATABASE_URL` (and `RESTORE_ADMIN_URL`). Helpers:
+   `infra/scripts/backup.sh status|now|restore-test|install`.)_
+   Still to do: an alarm if no dump has landed in 36 hours (today you must
+   run `backup.sh status` to notice), and restoring from a dump onto a
+   replacement instance is only tested in the scratch DB, not end to end.
 5. **Terraform state to S3** (with `use_lockfile`). It is local on one Mac
    today; losing it orphans the infrastructure.
 

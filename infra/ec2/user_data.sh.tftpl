@@ -189,6 +189,11 @@ systemctl enable nginx
 # --- first deploy ---
 /usr/local/bin/talon-deploy "${git_ref}"
 
+# --- nightly database backups + weekly restore test (scripts live in the repo) ---
+if [ -x /opt/talon/infra/backup/install.sh ]; then
+  /opt/talon/infra/backup/install.sh
+fi
+
 # --- demo users, first boot only (re-seeding would wipe demo data) ---
 if [ -f /opt/talon/backend/scripts/db-seed-demo.mjs ] && [ ! -f /var/lib/talon/.demo-seeded ]; then
   cd /opt/talon
