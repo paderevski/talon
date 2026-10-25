@@ -53,10 +53,23 @@ EXECUTION_PROVIDER=kubernetes
 
 ## Run locally
 
+Talon needs a local Postgres 16 (e.g. `brew install postgresql@16`). One-time setup:
+
 ```bash
+createdb talon_dev
+createdb talon_test                  # only for the test suites
 npm install
-npm run dev
+npm run db:migrate --workspace backend
+npm run db:seed:demo --workspace backend   # demo users (wipes the DB; dev only)
 ```
+
+Then, every time:
+
+```bash
+npm run dev                          # applies pending migrations, then starts both servers
+```
+
+The backend reads `DATABASE_URL` (default `postgres://localhost/talon_dev`).
 
 This starts:
 - frontend on `http://localhost:5173`
@@ -64,9 +77,9 @@ This starts:
 
 ### Demo login (local)
 
-The login screen authenticates against a simple backend text file at `backend/src/data/users.txt`.
+The login screen authenticates against the `users` table in Postgres, filled by `db:seed:demo`.
 
-Current demo credentials:
+Example demo credentials:
 - username: `jane_smith`
 - password: `talon123`
 
@@ -140,7 +153,7 @@ If you no longer want Talon to use it, click **Delete Token**.
 
 ## Deploy (AWS, single EC2 instance)
 
-**Automated version (Terraform + SSM, no open ports): see [`infra/README.md`](infra/README.md).** The manual steps below are kept for reference. Node 22.13+ is required (the backend uses `node:sqlite`); use Node 24 LTS.
+**Automated version (Terraform + SSM, no open ports): see [`infra/README.md`](infra/README.md).** The manual steps below are kept for reference. Use Node 24 LTS; the backend also needs Postgres 16.
 
 If it has been a while, this is the simplest production setup for this repo:
 - build the React app once

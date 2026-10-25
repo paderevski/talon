@@ -4,6 +4,14 @@ This folder contains lightweight integration/regression tests for backend behavi
 
 ## Run
 
+Needs a local Postgres with an empty database named `talon_test`
+(`createdb talon_test`; override with `TEST_DATABASE_URL`). Each run drops and
+recreates its schema, runs migrations, and seeds the demo users. Only
+databases whose name contains "test" are accepted. Run the two suites one
+after the other, not at the same time: they share that database.
+`npm run test:postgres --workspace backend` runs the repository, budget and
+session tests.
+
 From workspace root:
 
 - `npm run test:backend`

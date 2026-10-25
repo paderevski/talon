@@ -36,9 +36,7 @@ app.use("/api/github-credentials", requireAuth, githubCredentialsRouter);
 app.use("/api/admin", requireRole("admin"), adminRouter);
 app.use("/api/teacher", requireRole("teacher"), teacherRouter);
 
-if (String(process.env.USERS_REPOSITORY_PROVIDER || "").toLowerCase() === "postgres") {
-  await warnIfDemoUsersInProduction();
-}
+await warnIfDemoUsersInProduction();
 
 app.listen(port, bindHost, () => {
   // eslint-disable-next-line no-console

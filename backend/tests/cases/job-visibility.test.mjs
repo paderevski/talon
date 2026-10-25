@@ -40,7 +40,7 @@ export async function run({ baseUrl }) {
     "Student saw another user's results",
   );
 
-  // Teacher (talon_user teaches jane_smith in the SQLite seed) sees jane's job, not admin's.
+  // Teacher (talon_user teaches jane_smith in the demo seed) sees jane's job, not admin's.
   const teacher = createCookieJar();
   await login(teacher, baseUrl, "talon_user", "youwillneverguesswhereiwasyesterday");
   const teacherList = await (await teacher.fetch(`${baseUrl}/api/jobs?status=all`)).json();

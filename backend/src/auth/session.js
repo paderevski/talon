@@ -19,31 +19,20 @@ function getSessionSecret() {
   return randomBytes(32).toString("hex");
 }
 
-function createStore(provider) {
-  if (provider === "postgres") {
-    const PgSessionStore = connectPgSimple(session);
-    return new PgSessionStore({
-      pool: getPool(),
-      tableName: "sessions",
-      createTableIfMissing: false, // created by migrations/001_users.sql
-    });
-  }
-
-  // SQLite provider: in-memory store. Fine for dev/tests and the single-
-  // process demo box; sessions end on restart. Use Postgres for real use.
-  if (process.env.NODE_ENV === "production") {
-    console.warn("[session] using in-memory sessions; set USERS_REPOSITORY_PROVIDER=postgres");
-  }
-  return undefined;
+function createStore() {
+  const PgSessionStore = connectPgSimple(session);
+  return new PgSessionStore({
+    pool: getPool(),
+    tableName: "sessions",
+    createTableIfMissing: false, // created by migrations/001_users.sql
+  });
 }
 
-export function createSessionMiddleware({
-  provider = String(process.env.USERS_REPOSITORY_PROVIDER || "sqlite").trim().toLowerCase(),
-} = {}) {
+export function createSessionMiddleware() {
   return session({
     name: sessionCookieName,
     secret: getSessionSecret(),
-    store: createStore(provider),
+    store: createStore(),
     resave: false,
     saveUninitialized: false,
     rolling: true,

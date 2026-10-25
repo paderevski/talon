@@ -57,10 +57,8 @@ decisions.
 
 **Foundation**
 
-1. **Postgres-only users** (plan step 8). Make Postgres the default, delete
-   the SQLite users code and `.sqlite` files, move regression tests to
-   `talon_test`. One code path for everything after this; plain
-   `npm run dev` then uses Postgres.
+1. ~~**Postgres-only users**~~ _(done: SQLite code and files removed,
+   Postgres is the only provider, tests run against `talon_test`)._
 2. **Login throttling per account.** Slow down / temporarily lock after
    repeated failed logins. Small, independent, required before any
    exposure (WAF can only limit per IP).

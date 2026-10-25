@@ -65,7 +65,7 @@ export default function AdminRosterPanel({ authUser }) {
       </div>
 
       {error ? <div className="repo-error">{error}</div> : null}
-      {isLoading ? <div className="form-hint">Loading roster from SQLite...</div> : null}
+      {isLoading ? <div className="form-hint">Loading roster...</div> : null}
 
       {!isLoading ? (
         <>

@@ -2,7 +2,7 @@
 // whose public schema is dropped and recreated on every run.
 //   npm run test:postgres --workspace backend
 import pg from "pg";
-import { assert, createCookieJar, login, startBackendForTests } from "../lib/harness.mjs";
+import { assert, createCookieJar, login, resetTestDatabase, startBackendForTests, testDatabaseUrl } from "../lib/harness.mjs";
 import { runMigrations } from "../../src/db/migrate.js";
 import { withTransaction } from "../../src/db/pool.js";
 import { seedDemoUsers } from "../../src/db/seedDemo.js";
@@ -10,21 +10,12 @@ import { createUsersPostgresRepository } from "../../src/repositories/postgres/u
 import { createPasswordHash } from "../../src/utils/passwords.js";
 import { BudgetError, ensureAccount, grant, transfer } from "../../src/budget/ledger.js";
 
-const databaseUrl =
-  process.env.TEST_DATABASE_URL || "postgres://localhost/talon_test";
-
-if (!/test/i.test(new URL(databaseUrl).pathname)) {
-  throw new Error(`Refusing to reset non-test database ${databaseUrl}`);
-}
+const databaseUrl = testDatabaseUrl;
 
 const pool = new pg.Pool({ connectionString: databaseUrl });
 const repo = createUsersPostgresRepository({ pool });
 
-async function resetDatabase() {
-  await pool.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
-  await runMigrations(pool);
-  await seedDemoUsers(pool);
-}
+const resetDatabase = () => resetTestDatabase(databaseUrl);
 
 async function scalar(sql, params = []) {
   const result = await pool.query(sql, params);
@@ -344,7 +335,7 @@ try {
   }
 
   server = await startBackendForTests({
-    env: { USERS_REPOSITORY_PROVIDER: "postgres", DATABASE_URL: databaseUrl },
+    reset: false,
   });
   for (const [name, run] of httpTests) {
     const startedAt = Date.now();

@@ -22,8 +22,8 @@ export async function run({ baseUrl }) {
   const payload = await response.json();
   assert(payload?.ok === true, "Expected roster payload ok=true");
   assert(payload?.roster?.stats?.adminCount === 1, "Expected one admin in roster stats");
-  assert(payload?.roster?.stats?.teacherCount === 1, "Expected one teacher in roster stats");
-  assert(payload?.roster?.stats?.studentCount === 1, "Expected one student in roster stats");
+  assert(payload?.roster?.stats?.teacherCount === 4, "Expected four teachers in roster stats");
+  assert(payload?.roster?.stats?.studentCount === 16, "Expected sixteen students in roster stats");
   assert(Array.isArray(payload?.roster?.teachers), "Expected teachers[] in roster payload");
-  assert(payload.roster.teachers.length === 1, "Expected one teacher record in roster payload");
+  assert(payload.roster.teachers.length === 4, "Expected four teacher records in roster payload");
 }

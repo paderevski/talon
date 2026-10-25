@@ -1,6 +1,6 @@
 import { assert } from "../lib/harness.mjs";
 
-export const name = "auth login uses sqlite seeded users";
+export const name = "auth login uses Postgres seeded users";
 
 export async function run({ baseUrl }) {
   const response = await fetch(`${baseUrl}/api/auth/login`, {
@@ -21,16 +21,7 @@ export async function run({ baseUrl }) {
 
   const payload = await response.json();
   assert(payload?.ok === true, "Expected login payload ok=true");
-  assert(
-    payload?.user?.username === "jane_smith",
-    "Expected sqlite-backed login to return jane_smith",
-  );
-  assert(
-    payload?.user?.role === "student",
-    "Expected sqlite-backed login to return student role",
-  );
-  assert(
-    payload?.user?.fullName === "Jane Smith",
-    "Expected sqlite-backed login to return full name",
-  );
+  assert(payload?.user?.username === "jane_smith", "Expected login to return jane_smith");
+  assert(payload?.user?.role === "student", "Expected login to return student role");
+  assert(payload?.user?.fullName === "Jane Smith", "Expected login to return full name");
 }

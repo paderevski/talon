@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
-import { mkdir, rm } from "node:fs/promises";
+import pg from "pg";
+import { runMigrations } from "../../src/db/migrate.js";
+import { seedDemoUsers } from "../../src/db/seedDemo.js";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -8,6 +10,26 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export const backendRoot = path.resolve(__dirname, "../..");
+
+export const testDatabaseUrl =
+  process.env.TEST_DATABASE_URL || "postgres://localhost/talon_test";
+
+// Drops everything in the throwaway test database, then migrates and seeds
+// the demo users. Refuses any database whose name does not contain "test".
+export async function resetTestDatabase(databaseUrl = testDatabaseUrl) {
+  if (!/test/i.test(new URL(databaseUrl).pathname)) {
+    throw new Error(`Refusing to reset non-test database ${databaseUrl}`);
+  }
+
+  const pool = new pg.Pool({ connectionString: databaseUrl });
+  try {
+    await pool.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
+    await runMigrations(pool);
+    await seedDemoUsers(pool);
+  } finally {
+    await pool.end();
+  }
+}
 
 export function assert(condition, message) {
   if (!condition) {
@@ -68,21 +90,20 @@ function pickPort() {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-export async function startBackendForTests({ env: extraEnv = {} } = {}) {
+export async function startBackendForTests({ env: extraEnv = {}, reset = true } = {}) {
   const port = pickPort();
   const baseUrl = `http://127.0.0.1:${port}`;
-  const tempDir = path.resolve(backendRoot, "tests/.tmp");
-  const databasePath = path.resolve(tempDir, `talon-test-${port}.sqlite`);
 
-  await mkdir(tempDir, { recursive: true });
-  await rm(databasePath, { force: true });
+  if (reset) {
+    await resetTestDatabase();
+  }
 
   const child = spawn("node", ["src/server.js"], {
     cwd: backendRoot,
     env: {
       ...process.env,
       PORT: String(port),
-      TALON_DB_PATH: databasePath,
+      DATABASE_URL: testDatabaseUrl,
       ...extraEnv,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -126,8 +147,6 @@ export async function startBackendForTests({ env: extraEnv = {} } = {}) {
       if (!child.killed) {
         child.kill("SIGKILL");
       }
-
-      await rm(databasePath, { force: true });
     },
   };
 }
