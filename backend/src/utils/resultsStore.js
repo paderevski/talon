@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { results as seedResults } from "../data/mockData.js";
+import { withOwnedResult } from "./demoOwnership.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,11 +18,11 @@ function clone(value) {
 
 function normalizeStoredResults(payload) {
   if (Array.isArray(payload)) {
-    return payload;
+    return payload.map((result) => withOwnedResult(result));
   }
 
   if (Array.isArray(payload?.items)) {
-    return payload.items;
+    return payload.items.map((result) => withOwnedResult(result));
   }
 
   return [];
@@ -58,6 +59,11 @@ export async function initializeResultsStore() {
     if (!Array.isArray(resultsCache) || resultsCache.length === 0) {
       resultsCache = clone(seedResults);
       await persistResults();
+    } else if (
+      resultsCache.some((result) => !String(result?.ownerUsername ?? "").trim())
+    ) {
+      resultsCache = resultsCache.map((result) => withOwnedResult(result));
+      await persistResults();
     }
   } catch (error) {
     if (error?.code !== "ENOENT") {
@@ -76,7 +82,9 @@ export function listResults() {
 }
 
 export async function setResults(nextResults) {
-  resultsCache = Array.isArray(nextResults) ? nextResults : resultsCache;
+  resultsCache = Array.isArray(nextResults)
+    ? nextResults.map((result) => withOwnedResult(result))
+    : resultsCache;
   await persistResults();
   return resultsCache;
 }
@@ -96,15 +104,16 @@ export async function upsertResultForJob(resultRecord) {
     jobId,
     id: resultRecord?.id || `result-${jobId}`,
   };
+  const normalizedRecord = withOwnedResult(nextRecord);
 
   const existingIndex = resultsCache.findIndex(
-    (result) => result?.jobId === jobId || result?.id === nextRecord.id,
+    (result) => result?.jobId === jobId || result?.id === normalizedRecord.id,
   );
 
   if (existingIndex >= 0) {
     resultsCache[existingIndex] = {
       ...resultsCache[existingIndex],
-      ...nextRecord,
+      ...normalizedRecord,
     };
 
     if (existingIndex > 0) {
@@ -112,9 +121,9 @@ export async function upsertResultForJob(resultRecord) {
       resultsCache.unshift(updated);
     }
   } else {
-    resultsCache.unshift(nextRecord);
+    resultsCache.unshift(normalizedRecord);
   }
 
   await persistResults();
-  return nextRecord;
+  return normalizedRecord;
 }

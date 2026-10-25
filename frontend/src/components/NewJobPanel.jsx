@@ -3,6 +3,20 @@ import { fetchGithubPublicRepos, fetchRepoTree } from "../api/client";
 import { normalizeRepoInput } from "../utils/repo";
 
 const jobNameCountersStorageKey = "talon.jobNameCounters";
+const machineTypeOptions = [
+  { value: "cpu-small", label: "CPU Small" },
+  { value: "cpu-medium", label: "CPU Medium" },
+  { value: "cpu-large", label: "CPU Large" },
+  { value: "gpu-small", label: "GPU Small" },
+  { value: "gpu-large", label: "GPU Large" },
+];
+const machineImageOptions = [
+  { value: "python-ml-base", label: "Python ML Base" },
+  { value: "pytorch-2.4-cuda12", label: "PyTorch 2.4 / CUDA 12" },
+  { value: "tensorflow-2.17-cuda12", label: "TensorFlow 2.17 / CUDA 12" },
+  { value: "jax-cuda12", label: "JAX / CUDA 12" },
+  { value: "huggingface-transformers", label: "Hugging Face Transformers" },
+];
 
 function toRepoKey(repo) {
   return normalizeRepoInput(repo) || "job";
@@ -67,8 +81,8 @@ function makeInitialForm(defaultRepo, defaultBranch) {
     repo,
     branch: defaultBranch || "main",
     entryScript: "train.py",
-    gpuMemory: "Auto (use available)",
-    maxRuntime: "4 hours",
+    machineType: "cpu-medium",
+    machineImage: "python-ml-base",
     s3DataSource: "",
     outputDestination: "Home Directory (~/$JOB_NAME/)",
     environmentVariables: ""
@@ -340,22 +354,19 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
           </span>
         </div>
         <div className="form-group form-group-half">
-          <label className="form-label">GPU Memory Limit</label>
-          <select className="form-select" value={form.gpuMemory} onChange={update("gpuMemory")}>
-            <option>Auto (use available)</option>
-            <option>4 GB</option>
-            <option>8 GB</option>
-            <option>12 GB</option>
-            <option>16 GB (full T4)</option>
+          <label className="form-label">Machine Type</label>
+          <select className="form-select" value={form.machineType} onChange={update("machineType")}>
+            {machineTypeOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
           </select>
         </div>
         <div className="form-group form-group-half">
-          <label className="form-label">Max Runtime</label>
-          <select className="form-select" value={form.maxRuntime} onChange={update("maxRuntime")}>
-            <option>1 hour</option>
-            <option>2 hours</option>
-            <option>4 hours</option>
-            <option>8 hours</option>
+          <label className="form-label">Machine Image</label>
+          <select className="form-select" value={form.machineImage} onChange={update("machineImage")}>
+            {machineImageOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
           </select>
         </div>
         <div className="form-group full">

@@ -132,7 +132,7 @@ export default function GitHubCredentialsPanel({ settings, onSave, authUsername 
       console.info(
         `[github-credentials][frontend] saving token from panel for auth user='${authUsername || "(missing)"}'`,
       );
-      const response = await saveGithubToken(token, authUsername);
+      const response = await saveGithubToken(token, authUsername, githubUsername);
       const savedGithubUsername = String(response?.status?.githubUsername ?? githubUsername).trim();
       setGithubUsername(savedGithubUsername);
       onSave({ githubUsername: savedGithubUsername });
@@ -147,7 +147,7 @@ export default function GitHubCredentialsPanel({ settings, onSave, authUsername 
       console.error(
         `[github-credentials][frontend] save token failed: ${error?.message || "unknown error"}`,
       );
-      setTokenMessage(error.message || "Unable to save token");
+      setTokenMessage((error.message || "Unable to save token") + ". Existing token was not replaced.");
     } finally {
       setIsSavingToken(false);
     }

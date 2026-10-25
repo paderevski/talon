@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -70,12 +71,18 @@ function pickPort() {
 export async function startBackendForTests() {
   const port = pickPort();
   const baseUrl = `http://localhost:${port}`;
+  const tempDir = path.resolve(backendRoot, "tests/.tmp");
+  const databasePath = path.resolve(tempDir, `talon-test-${port}.sqlite`);
+
+  await mkdir(tempDir, { recursive: true });
+  await rm(databasePath, { force: true });
 
   const child = spawn("node", ["src/server.js"], {
     cwd: backendRoot,
     env: {
       ...process.env,
       PORT: String(port),
+      TALON_DB_PATH: databasePath,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -118,6 +125,8 @@ export async function startBackendForTests() {
       if (!child.killed) {
         child.kill("SIGKILL");
       }
+
+      await rm(databasePath, { force: true });
     },
   };
 }

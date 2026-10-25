@@ -229,7 +229,9 @@ export async function saveGithubUsernameForUser(talonUsername, githubUsername) {
   store.users[normalizedUsername] = {
     ...existingEntry,
     githubUsername: normalizedGithubUsername,
-    updatedAt: new Date().toISOString(),
+    updatedAt: existingEntry.encryptedToken
+      ? existingEntry.updatedAt || null
+      : new Date().toISOString(),
   };
 
   await saveStore(store);

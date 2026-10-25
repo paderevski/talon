@@ -1,0 +1,138 @@
+export const adminUser = {
+  username: "admin",
+  fullName: "Talon Administrator",
+  password: "admin123",
+  userType: "admin",
+};
+
+export const teacherSeeds = [
+  {
+    username: "teacher_ada",
+    fullName: "Ada Lovelace",
+    password: "teach123",
+    className: "ML Foundations A",
+    students: [
+      {
+        username: "student_a1",
+        fullName: "Avery Nguyen",
+        password: "student123",
+        quota: 1200,
+        tokensRemaining: 1100,
+      },
+      {
+        username: "student_a2",
+        fullName: "Jordan Patel",
+        password: "student123",
+        quota: 1200,
+        tokensRemaining: 980,
+      },
+      {
+        username: "student_a3",
+        fullName: "Morgan Lee",
+        password: "student123",
+        quota: 1200,
+        tokensRemaining: 875,
+      },
+      {
+        username: "student_a4",
+        fullName: "Casey Brooks",
+        password: "student123",
+        quota: 1200,
+        tokensRemaining: 940,
+      },
+      {
+        username: "student_a5",
+        fullName: "Riley Chen",
+        password: "student123",
+        quota: 1200,
+        tokensRemaining: 1025,
+      },
+    ],
+  },
+  {
+    username: "teacher_grace",
+    fullName: "Grace Hopper",
+    password: "teach123",
+    className: "Computer Vision Lab",
+    students: [
+      {
+        username: "student_g1",
+        fullName: "Parker Davis",
+        password: "student123",
+        quota: 1400,
+        tokensRemaining: 1295,
+      },
+      {
+        username: "student_g2",
+        fullName: "Quinn Foster",
+        password: "student123",
+        quota: 1400,
+        tokensRemaining: 1170,
+      },
+      {
+        username: "student_g3",
+        fullName: "Reese Kim",
+        password: "student123",
+        quota: 1400,
+        tokensRemaining: 1210,
+      },
+      {
+        username: "student_g4",
+        fullName: "Skyler Ahmed",
+        password: "student123",
+        quota: 1400,
+        tokensRemaining: 990,
+      },
+      {
+        username: "student_g5",
+        fullName: "Taylor Reed",
+        password: "student123",
+        quota: 1400,
+        tokensRemaining: 1080,
+      },
+    ],
+  },
+  {
+    username: "teacher_katherine",
+    fullName: "Katherine Johnson",
+    password: "teach123",
+    className: "NLP Studio",
+    students: [
+      {
+        username: "student_k1",
+        fullName: "Alex Rivera",
+        password: "student123",
+        quota: 1000,
+        tokensRemaining: 930,
+      },
+      {
+        username: "student_k2",
+        fullName: "Bailey Morgan",
+        password: "student123",
+        quota: 1000,
+        tokensRemaining: 875,
+      },
+      {
+        username: "student_k3",
+        fullName: "Cameron Ellis",
+        password: "student123",
+        quota: 1000,
+        tokensRemaining: 810,
+      },
+      {
+        username: "student_k4",
+        fullName: "Dakota Price",
+        password: "student123",
+        quota: 1000,
+        tokensRemaining: 965,
+      },
+      {
+        username: "student_k5",
+        fullName: "Emerson Shah",
+        password: "student123",
+        quota: 1000,
+        tokensRemaining: 905,
+      },
+    ],
+  },
+];

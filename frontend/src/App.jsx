@@ -6,16 +6,43 @@ import JobStatusPanel from "./components/JobStatusPanel";
 import ResultsPanel from "./components/ResultsPanel";
 import GitHubCredentialsPanel from "./components/GitHubCredentialsPanel";
 import ExecutionDebugPanel from "./components/ExecutionDebugPanel";
+import AdminRosterPanel from "./components/AdminRosterPanel";
+import TeacherStudentsPanel from "./components/TeacherStudentsPanel";
 import talonLogo from "../../assets/talon-logo.png";
 import { normalizeRepoInput } from "./utils/repo";
 
-const navSections = [
-  { id: "job-status", label: "Job Status" },
-  { id: "results", label: "Results" },
-  { id: "new-job", label: "Submit New Job" },
-  { id: "repo-browser", label: "Repo Browser" },
-  { id: "github-credentials", label: "GitHub Credentials" },
-];
+function filterItemsByOwner(items, ownerUsername) {
+  const normalizedOwner = String(ownerUsername ?? "").trim();
+  if (!normalizedOwner) {
+    return Array.isArray(items) ? items : [];
+  }
+
+  return (Array.isArray(items) ? items : []).filter(
+    (item) => String(item?.ownerUsername ?? "").trim() === normalizedOwner,
+  );
+}
+
+function getNavSections(role, hasTeacherStudentView) {
+  const normalizedRole = normalizeUserRole(role);
+
+  if (normalizedRole === "teacher" && !hasTeacherStudentView) {
+    return [{ id: "teacher-students", label: "Students" }];
+  }
+
+  if (normalizedRole === "admin") {
+    return [{ id: "admin-roster", label: "Admin" }];
+  }
+
+  const sections = [
+    { id: "job-status", label: "Job Status" },
+    { id: "results", label: "Results" },
+    { id: "new-job", label: "Submit New Job" },
+    { id: "repo-browser", label: "Repo Browser" },
+    { id: "github-credentials", label: "GitHub Credentials" },
+  ];
+
+  return sections;
+}
 
 const emptyRepo = { repository: "", branch: "", lastCommit: "", items: [] };
 const authStorageKey = "talon.authUser";
@@ -26,8 +53,58 @@ const fallbackBranch = "main";
 const defaultGithubSettings = {
   githubUsername: "",
 };
+const validUserRoles = new Set(["student", "teacher", "admin"]);
 
 const autoStatusFilters = new Set(["completed", "queued", "running"]);
+
+function normalizeUserRole(role) {
+  const normalizedRole = String(role ?? "").trim().toLowerCase();
+  return validUserRoles.has(normalizedRole) ? normalizedRole : "student";
+}
+
+function getLandingContentForRole(role) {
+  const normalizedRole = normalizeUserRole(role);
+
+  if (normalizedRole === "teacher") {
+    return {
+      kicker: "Teacher Home",
+      title: "Review class workloads and unblock student runs",
+      description: "Teacher accounts land on a teaching-focused overview with quick access to current experiments, recent outputs, and repo checks.",
+      highlights: [
+        "Review active and queued jobs across your class projects.",
+        "Open the repo browser to verify assignment branches and entry scripts.",
+        "Check recent results before sharing feedback with students.",
+      ],
+      primaryAction: "Open Teaching Workspace",
+    };
+  }
+
+  if (normalizedRole === "admin") {
+    return {
+      kicker: "Admin Home",
+      title: "Oversee compute usage and manage the demo environment",
+      description: "Admin accounts land on an operations-focused entry point with fast access to jobs, credentials, and execution debugging.",
+      highlights: [
+        "Monitor queued and running jobs for cluster pressure.",
+        "Inspect results, hidden jobs, and operational state.",
+        "Update shared GitHub credentials and use debug tools when needed.",
+      ],
+      primaryAction: "Open Admin Workspace",
+    };
+  }
+
+  return {
+    kicker: "Student Home",
+    title: "Launch experiments and track your training progress",
+    description: "Student accounts land on a workspace tuned for submitting jobs, watching status changes, and reviewing outputs.",
+    highlights: [
+      "Submit a new training job from your repository.",
+      "Track queued and running work without leaving the page.",
+      "Review generated results and output files after completion.",
+    ],
+    primaryAction: "Open Student Workspace",
+  };
+}
 
 function getPreferredStatusFilter(jobItems) {
   const visibleJobs = Array.isArray(jobItems)
@@ -68,7 +145,10 @@ function getStoredAuthUser() {
       return null;
     }
 
-    return { username: parsed.username.trim() };
+    return {
+      username: parsed.username.trim(),
+      role: normalizeUserRole(parsed.role),
+    };
   } catch {
     return null;
   }
@@ -103,7 +183,9 @@ function getStoredGithubSettings() {
 export default function App() {
   const showDebugPanel = new URLSearchParams(window.location.search).get("debug") === "1";
   const [authUser, setAuthUser] = useState(getStoredAuthUser);
+  const [activePage, setActivePage] = useState("landing");
   const [githubSettings, setGithubSettings] = useState(getStoredGithubSettings);
+  const [selectedStudentView, setSelectedStudentView] = useState(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
@@ -118,6 +200,7 @@ export default function App() {
   const [repoData, setRepoData] = useState(emptyRepo);
   const [repoError, setRepoError] = useState("");
   const [jobs, setJobs] = useState([]);
+  const [allJobs, setAllJobs] = useState([]);
   const [results, setResults] = useState([]);
   const [executionByJobId, setExecutionByJobId] = useState({});
   const [filesByJobId, setFilesByJobId] = useState({});
@@ -130,9 +213,40 @@ export default function App() {
   const [isRefreshingRepo, setIsRefreshingRepo] = useState(false);
   const userMenuRef = useRef(null);
 
+  const effectiveOwnerUsername = useMemo(() => {
+    const normalizedRole = normalizeUserRole(authUser?.role);
+
+    if (normalizedRole === "student") {
+      return authUser?.username || "";
+    }
+
+    if (normalizedRole === "teacher") {
+      return selectedStudentView?.username || "";
+    }
+
+    return "";
+  }, [authUser, selectedStudentView]);
+
+  const visibleJobs = useMemo(
+    () => filterItemsByOwner(jobs, effectiveOwnerUsername),
+    [jobs, effectiveOwnerUsername],
+  );
+  const visibleAllJobs = useMemo(
+    () => filterItemsByOwner(allJobs, effectiveOwnerUsername),
+    [allJobs, effectiveOwnerUsername],
+  );
+  const visibleResults = useMemo(
+    () => filterItemsByOwner(results, effectiveOwnerUsername),
+    [results, effectiveOwnerUsername],
+  );
+  const visibleStatusAvailability = useMemo(
+    () => getStatusAvailability(visibleAllJobs),
+    [visibleAllJobs],
+  );
+
   const hasActiveJobs = useMemo(
-    () => jobs.some((job) => job.status === "running" || job.status === "queued"),
-    [jobs],
+    () => visibleAllJobs.some((job) => job.status === "running" || job.status === "queued"),
+    [visibleAllJobs],
   );
 
   useEffect(() => {
@@ -195,6 +309,7 @@ export default function App() {
       await hydrateJobRuntime(items);
     } else {
       setJobs([]);
+      setAllJobs([]);
       setExecutionByJobId({});
       setFilesByJobId({});
     }
@@ -204,13 +319,19 @@ export default function App() {
       autoStatusFilters.has(activeFilter)
     ) {
       const allJobs = allJobsResult.value.items || [];
-      setStatusAvailability(getStatusAvailability(allJobs));
-      const preferredFilter = getPreferredStatusFilter(allJobs);
+      const filteredAllJobs = filterItemsByOwner(allJobs, effectiveOwnerUsername);
+      setAllJobs(allJobs);
+      setStatusAvailability(getStatusAvailability(filteredAllJobs));
+      const preferredFilter = getPreferredStatusFilter(filteredAllJobs);
       if (preferredFilter !== activeFilter) {
         setActiveFilter(preferredFilter);
       }
     } else if (allJobsResult.status === "fulfilled") {
-      setStatusAvailability(getStatusAvailability(allJobsResult.value.items || []));
+      const nextAllJobs = allJobsResult.value.items || [];
+      setAllJobs(nextAllJobs);
+      setStatusAvailability(getStatusAvailability(filterItemsByOwner(nextAllJobs, effectiveOwnerUsername)));
+    } else {
+      setAllJobs([]);
     }
 
     if (resultsResult.status === "fulfilled") {
@@ -226,7 +347,7 @@ export default function App() {
     }
 
     load();
-  }, [authUser, repoPath, repoBranch, repoDirectoryPath, activeFilter]);
+  }, [authUser, repoPath, repoBranch, repoDirectoryPath, activeFilter, effectiveOwnerUsername]);
 
   useEffect(() => {
     if (!authUser) {
@@ -293,16 +414,18 @@ export default function App() {
     const items = jobsData.items || [];
     setJobs(items);
     await hydrateJobRuntime(items);
+    const nextAllJobs = allJobsData.items || [];
+    setAllJobs(nextAllJobs);
 
     if (autoStatusFilters.has(activeFilter)) {
-      const allJobs = allJobsData.items || [];
-      setStatusAvailability(getStatusAvailability(allJobs));
-      const preferredFilter = getPreferredStatusFilter(allJobs);
+      const filteredAllJobs = filterItemsByOwner(nextAllJobs, effectiveOwnerUsername);
+      setStatusAvailability(getStatusAvailability(filteredAllJobs));
+      const preferredFilter = getPreferredStatusFilter(filteredAllJobs);
       if (preferredFilter !== activeFilter) {
         setActiveFilter(preferredFilter);
       }
     } else {
-      setStatusAvailability(getStatusAvailability(allJobsData.items || []));
+      setStatusAvailability(getStatusAvailability(filterItemsByOwner(nextAllJobs, effectiveOwnerUsername)));
     }
   };
 
@@ -324,14 +447,18 @@ export default function App() {
       allJobsResult.status === "fulfilled" &&
       autoStatusFilters.has(activeFilter)
     ) {
-      const allJobs = allJobsResult.value.items || [];
-      setStatusAvailability(getStatusAvailability(allJobs));
-      const preferredFilter = getPreferredStatusFilter(allJobs);
+      const nextAllJobs = allJobsResult.value.items || [];
+      const filteredAllJobs = filterItemsByOwner(nextAllJobs, effectiveOwnerUsername);
+      setAllJobs(nextAllJobs);
+      setStatusAvailability(getStatusAvailability(filteredAllJobs));
+      const preferredFilter = getPreferredStatusFilter(filteredAllJobs);
       if (preferredFilter !== activeFilter) {
         setActiveFilter(preferredFilter);
       }
     } else if (allJobsResult.status === "fulfilled") {
-      setStatusAvailability(getStatusAvailability(allJobsResult.value.items || []));
+      const nextAllJobs = allJobsResult.value.items || [];
+      setAllJobs(nextAllJobs);
+      setStatusAvailability(getStatusAvailability(filterItemsByOwner(nextAllJobs, effectiveOwnerUsername)));
     }
 
     if (resultsResult.status === "fulfilled") {
@@ -391,9 +518,13 @@ export default function App() {
 
   const onSubmitJob = async (form) => {
     const normalizedRepo = normalizeRepoInput(form.repo);
+    const ownerUsername = isTeacher && selectedStudentView?.username
+      ? selectedStudentView.username
+      : authUser?.username || "";
     const payload = {
       ...form,
       repo: normalizedRepo || form.repo,
+      ownerUsername,
     };
 
     await submitJob(payload);
@@ -424,7 +555,7 @@ export default function App() {
     setRepoDirectoryPath(String(nextPath ?? "").trim());
   };
 
-  const statusCount = useMemo(() => jobs.length, [jobs]);
+  const statusCount = useMemo(() => visibleJobs.length, [visibleJobs]);
 
   const avatar = useMemo(() => {
     const value = authUser?.username ?? "";
@@ -437,6 +568,17 @@ export default function App() {
     }
     return value.slice(0, 2).toUpperCase();
   }, [authUser]);
+  const landingContent = useMemo(
+    () => getLandingContentForRole(authUser?.role),
+    [authUser],
+  );
+  const isAdmin = normalizeUserRole(authUser?.role) === "admin";
+  const isTeacher = normalizeUserRole(authUser?.role) === "teacher";
+  const hasTeacherStudentView = Boolean(selectedStudentView);
+  const navSections = useMemo(
+    () => getNavSections(authUser?.role, hasTeacherStudentView),
+    [authUser, hasTeacherStudentView],
+  );
 
   const onLogin = async (event) => {
     event.preventDefault();
@@ -445,11 +587,18 @@ export default function App() {
 
     try {
       const response = await login(username, password);
-      const user = response.user || null;
+      const user = response.user
+        ? {
+          username: String(response.user.username ?? "").trim(),
+          role: normalizeUserRole(response.user.role),
+        }
+        : null;
       setAuthUser(user);
       if (user?.username) {
         window.localStorage.setItem(authStorageKey, JSON.stringify(user));
       }
+      setSelectedStudentView(null);
+      setActivePage("landing");
       setPassword("");
     } catch (error) {
       setAuthError(error.message || "Login failed");
@@ -474,6 +623,8 @@ export default function App() {
     setFilesByJobId({});
     setJobActionError("");
     setActiveFilter("completed");
+    setSelectedStudentView(null);
+    setActivePage("landing");
   };
 
   const onSaveGithubSettings = (nextSettings) => {
@@ -526,6 +677,38 @@ export default function App() {
     );
   }
 
+  if (activePage === "landing") {
+    return (
+      <div className="login-shell">
+        <div className="login-card">
+          <p className="login-kicker">{landingContent.kicker}</p>
+          <h1 className="login-title">{landingContent.title}</h1>
+          <img src={talonLogo} alt="Talon" className="login-logo" />
+          <p className="form-hint">Signed in as {authUser.username} ({normalizeUserRole(authUser.role)}).</p>
+          <p className="form-hint">{landingContent.description}</p>
+
+          <div className="form-group full">
+            <label className="form-label">Quick Start</label>
+            <ul>
+              {landingContent.highlights.map((highlight) => (
+                <li key={highlight}>{highlight}</li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="form-group full form-actions submit-actions-row">
+            <button type="button" className="btn btn-primary" onClick={() => setActivePage("workspace")}>
+              {landingContent.primaryAction}
+            </button>
+            <button type="button" className="btn btn-secondary" onClick={onLogout}>
+              Logout
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <nav className="topbar">
@@ -538,6 +721,13 @@ export default function App() {
             onClick={() => setIsMobileNavOpen((previous) => !previous)}
           >
             Menu
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => setActivePage("landing")}
+          >
+            Role Home
           </button>
           <div className="topbar-brand">Academies of Loudoun</div>
         </div>
@@ -552,7 +742,7 @@ export default function App() {
               onClick={() => setIsUserMenuOpen((previous) => !previous)}
             >
               <div className="user-avatar">{avatar}</div>
-              {authUser.username}
+              {authUser.username} · {normalizeUserRole(authUser.role)}
             </button>
             <div className="user-menu-hint">Click for account menu</div>
             <div className={`user-menu${isUserMenuOpen ? " open" : ""}`} role="menu">
@@ -589,17 +779,52 @@ export default function App() {
         </nav>
 
         <main className="main">
+          {isAdmin ? <AdminRosterPanel authUser={authUser} /> : null}
+
+          {!isAdmin && isTeacher && !hasTeacherStudentView ? (
+            <TeacherStudentsPanel
+              authUser={authUser}
+              onOpenStudentView={(student) => setSelectedStudentView(student)}
+            />
+          ) : null}
+
+          {!isAdmin && isTeacher && hasTeacherStudentView ? (
+            <section className="panel" id="teacher-student-view">
+              <div className="panel-head">
+                <h2 className="panel-title">Student Workspace</h2>
+              </div>
+              <div className="result-card">
+                <div className="result-job-name">Viewing {selectedStudentView.fullName}</div>
+                <div className="form-hint mono-sm">{selectedStudentView.username}</div>
+                <div className="form-hint">
+                  Demo note: jobs and results are filtered to the selected student context in this shared workspace.
+                </div>
+                <div className="form-actions">
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => setSelectedStudentView(null)}
+                  >
+                    Back to Class Roster
+                  </button>
+                </div>
+              </div>
+            </section>
+          ) : null}
+
+          {!isAdmin && (!isTeacher || hasTeacherStudentView) ? (
+            <>
           <JobStatusPanel
-            jobs={jobs}
+            jobs={visibleJobs}
             activeFilter={activeFilter}
             setActiveFilter={setActiveFilter}
-            statusAvailability={statusAvailability}
+            statusAvailability={visibleStatusAvailability}
             onCancelJob={onCancelJob}
             onHideJob={onHideJob}
             onUnhideJob={onUnhideJob}
             jobActionError={jobActionError}
           />
-          <ResultsPanel results={results} jobs={jobs} filesByJobId={filesByJobId} />
+          <ResultsPanel results={visibleResults} jobs={visibleJobs} filesByJobId={filesByJobId} />
           <NewJobPanel
             onSubmit={onSubmitJob}
             defaultRepo={repoPath}
@@ -621,6 +846,8 @@ export default function App() {
             authUsername={authUser?.username || ""}
           />
           {showDebugPanel ? <ExecutionDebugPanel /> : null}
+            </>
+          ) : null}
         </main>
       </div>
     </div>

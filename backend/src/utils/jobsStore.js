@@ -2,6 +2,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { jobs as seedJobs } from "../data/mockData.js";
+import { withOwnedJob } from "./demoOwnership.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,13 +17,7 @@ function clone(value) {
 }
 
 function normalizeStoredJobs(payload) {
-  const normalizeJob = (job) => {
-    const normalizedCost = String(job?.cost ?? "").trim() || "$0.00";
-    return {
-      ...job,
-      cost: normalizedCost,
-    };
-  };
+  const normalizeJob = (job) => withOwnedJob(job);
 
   if (Array.isArray(payload)) {
     return payload.map(normalizeJob);
@@ -84,6 +79,11 @@ export async function initializeJobsStore() {
     if (!Array.isArray(jobsCache) || jobsCache.length === 0) {
       jobsCache = clone(seedJobs);
       await persistJobs();
+    } else if (
+      jobsCache.some((job) => !String(job?.ownerUsername ?? "").trim())
+    ) {
+      jobsCache = jobsCache.map((job) => withOwnedJob(job));
+      await persistJobs();
     }
   } catch (error) {
     if (error?.code !== "ENOENT") {
@@ -106,16 +106,18 @@ export function findJobById(jobId) {
 }
 
 export async function setJobs(nextJobs) {
-  jobsCache = Array.isArray(nextJobs) ? nextJobs : jobsCache;
+  jobsCache = Array.isArray(nextJobs)
+    ? nextJobs.map((job) => withOwnedJob(job))
+    : jobsCache;
   await persistJobs();
   return jobsCache;
 }
 
 export async function prependJob(job) {
-  const nextJob = {
+  const nextJob = withOwnedJob({
     ...job,
     id: job?.id || nextJobId(),
-  };
+  });
 
   jobsCache.unshift(nextJob);
   await persistJobs();

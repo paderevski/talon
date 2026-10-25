@@ -23,7 +23,10 @@ async function getJson(path) {
   return response.json();
 }
 
-function getRequestHeaders(includeJsonContentType = false, usernameOverride = "") {
+function getRequestHeaders(
+  includeJsonContentType = false,
+  usernameOverride = "",
+) {
   const effectiveUser = String(usernameOverride ?? "").trim() || currentApiUser;
   return {
     ...(includeJsonContentType ? headers : {}),
@@ -220,6 +223,48 @@ export async function login(username, password) {
   return response.json();
 }
 
+export async function fetchAdminRoster() {
+  const response = await fetch("/api/admin/roster", {
+    headers: getRequestHeaders(),
+  });
+
+  if (!response.ok) {
+    let message = `Unable to load admin roster (${response.status})`;
+    try {
+      const body = await response.json();
+      if (body?.message) {
+        message = body.message;
+      }
+    } catch {
+      // Ignore parse errors and keep fallback message.
+    }
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+export async function fetchTeacherRoster() {
+  const response = await fetch("/api/teacher/students", {
+    headers: getRequestHeaders(),
+  });
+
+  if (!response.ok) {
+    let message = `Unable to load teacher roster (${response.status})`;
+    try {
+      const body = await response.json();
+      if (body?.message) {
+        message = body.message;
+      }
+    } catch {
+      // Ignore parse errors and keep fallback message.
+    }
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
 export async function fetchGithubPublicRepos(username) {
   const normalizedUsername = String(username ?? "").trim();
   if (!normalizedUsername) {
@@ -295,7 +340,7 @@ export async function getGithubTokenStatus(usernameOverride = "") {
   return payload;
 }
 
-export async function saveGithubToken(token, usernameOverride = "") {
+export async function saveGithubToken(token, usernameOverride = "", githubUsername = "") {
   const effectiveUser = String(usernameOverride ?? "").trim() || currentApiUser;
   console.info(
     `[github-credentials][frontend] sending token save request (user='${effectiveUser || "(missing)"}', tokenProvided=${Boolean(String(token ?? "").trim())})`,
@@ -303,7 +348,10 @@ export async function saveGithubToken(token, usernameOverride = "") {
   const response = await fetch("/api/github-credentials", {
     method: "PUT",
     headers: getRequestHeaders(true, usernameOverride),
-    body: JSON.stringify({ token }),
+    body: JSON.stringify({
+      token,
+      githubUsername: String(githubUsername ?? "").trim(),
+    }),
   });
 
   console.info(
@@ -355,7 +403,10 @@ export async function deleteGithubToken(usernameOverride = "") {
   return payload;
 }
 
-export async function saveGithubCredentialSettings(githubUsername, usernameOverride = "") {
+export async function saveGithubCredentialSettings(
+  githubUsername,
+  usernameOverride = "",
+) {
   const effectiveUser = String(usernameOverride ?? "").trim() || currentApiUser;
   const normalizedGithubUsername = String(githubUsername ?? "").trim();
   console.info(

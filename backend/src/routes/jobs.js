@@ -25,6 +25,10 @@ const runsRootDir = path.resolve(__dirname, "../../data/runs");
 const jobsRepository = await getJobsRepository();
 const resultsRepository = await getResultsRepository();
 
+function getTalonUserFromRequest(req) {
+  return String(req.get("x-talon-user") ?? "").trim();
+}
+
 function formatDurationFromExecution(startedAt, endedAt) {
   if (!startedAt || !endedAt) {
     return "—";
@@ -153,6 +157,7 @@ async function markJobAsExecutionLost(job) {
       id: `result-${job.id}`,
       jobId: job.id,
       executionId: job.executionRef?.executionId || "",
+      ownerUsername: job.ownerUsername,
       name: job.name,
       status: "failed",
       repo: job.repo,
@@ -203,6 +208,7 @@ async function synchronizeJobFromExecution(job) {
         id: `result-${job.id}`,
         jobId: job.id,
         executionId: job.executionRef?.executionId || "",
+        ownerUsername: job.ownerUsername,
         name: job.name,
         status: nextResultStatus,
         repo: job.repo,
@@ -292,6 +298,8 @@ router.get("/", async (req, res) => {
 
 router.post("/", async (req, res) => {
   const payload = req.body ?? {};
+  const talonUser = getTalonUserFromRequest(req);
+  const ownerUsername = String(payload.ownerUsername ?? "").trim() || talonUser;
 
   const executionRef = await submitExecution({
     name: payload.name || "untitled-job",
@@ -305,6 +313,7 @@ router.post("/", async (req, res) => {
     repo: payload.repo || "unknown/repo",
     status: "queued",
     hidden: false,
+    ownerUsername,
     gpu: "—",
     submitted: "just now",
     duration: "—",

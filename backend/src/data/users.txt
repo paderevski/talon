@@ -1,4 +1,6 @@
-# Demo credentials for local development
-jane_smith:talon123
-admin:admin123
-talon_user:youwillneverguesswhereiwasyesterday
+# Demo auth data migrated to SQLite.
+# Database file: backend/data/talon-demo.sqlite
+# Seeded demo users on first boot:
+# jane_smith / talon123 / student
+# admin / admin123 / admin
+# talon_user / youwillneverguesswhereiwasyesterday / teacher
