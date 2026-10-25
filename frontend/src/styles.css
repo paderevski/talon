@@ -663,3 +663,86 @@ td:last-child, th:last-child { border-right: none; }
 .panel-head.subhead {
   margin-top: 24px;
 }
+
+/* Management screens */
+.admin-section { margin-bottom: 28px; }
+.inline-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  align-items: end;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+.inline-form .form-group.full { grid-column: 1 / -1; }
+.check-row { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; }
+.check-row label { display: flex; gap: 6px; align-items: center; font-size: 13px; color: var(--text-secondary); }
+.role-chip {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  color: var(--accent-purple);
+  background: var(--accent-purple-dim);
+}
+.role-chip.admin { color: var(--accent-amber); background: var(--accent-amber-dim); }
+.role-chip.teacher { color: var(--accent-blue); background: var(--accent-blue-glow); }
+.row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.row-disabled { opacity: 0.55; }
+.credentials-notice {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  border: 1px solid var(--accent-amber);
+  background: var(--accent-amber-dim);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+.credentials-notice code {
+  font-family: "JetBrains Mono", monospace;
+  background: var(--bg-input);
+  padding: 3px 8px;
+  border-radius: 6px;
+  user-select: all;
+}
+.notice-ok {
+  margin-bottom: 10px;
+  border: 1px solid var(--accent-green);
+  background: var(--accent-green-dim);
+  color: var(--accent-green);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.class-member-add { display: flex; gap: 8px; margin-top: 8px; }
+.class-member-add .form-select { flex: 1; }
+.allocate-form { display: flex; gap: 6px; align-items: center; }
+.allocate-form .form-input { width: 90px; padding: 6px 8px; }
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 16px;
+}
+.modal {
+  width: 100%;
+  max-width: 400px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}

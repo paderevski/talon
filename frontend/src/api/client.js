@@ -461,3 +461,56 @@ export async function fetchCurrentUser() {
 export async function logout() {
   await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => {});
 }
+
+// JSON request helper for the management endpoints. Throws Error(message)
+// with the server's message when the request fails.
+async function requestJson(method, path, body) {
+  const response = await apiFetch(path, {
+    method,
+    headers: getRequestHeaders(body !== undefined),
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+
+  let payload = {};
+  try {
+    payload = await response.json();
+  } catch {
+    // Non-JSON error body; fall through to the status message.
+  }
+
+  if (!response.ok) {
+    throw new Error(payload?.message || `Request failed (${response.status})`);
+  }
+
+  return payload;
+}
+
+export const fetchAdminUsers = () => requestJson("GET", "/api/admin/users");
+export const createAdminUser = (user) => requestJson("POST", "/api/admin/users", user);
+export const updateAdminUser = (id, changes) =>
+  requestJson("PATCH", `/api/admin/users/${encodeURIComponent(id)}`, changes);
+export const resetAdminUserPassword = (id) =>
+  requestJson("POST", `/api/admin/users/${encodeURIComponent(id)}/reset-password`);
+export const unlockAdminUser = (id) =>
+  requestJson("POST", `/api/admin/users/${encodeURIComponent(id)}/unlock`);
+
+export const fetchAdminClasses = () => requestJson("GET", "/api/admin/classes");
+export const createAdminClass = (classInfo) => requestJson("POST", "/api/admin/classes", classInfo);
+export const updateAdminClass = (id, changes) =>
+  requestJson("PATCH", `/api/admin/classes/${encodeURIComponent(id)}`, changes);
+export const addAdminClassMember = (classId, userId, memberRole) =>
+  requestJson("POST", `/api/admin/classes/${encodeURIComponent(classId)}/members`, {
+    userId,
+    memberRole,
+  });
+export const removeAdminClassMember = (classId, userId) =>
+  requestJson(
+    "DELETE",
+    `/api/admin/classes/${encodeURIComponent(classId)}/members/${encodeURIComponent(userId)}`,
+  );
+
+export const grantAdminBudget = (grant) => requestJson("POST", "/api/admin/budget/grants", grant);
+export const allocateStudentBudget = (studentUsername, amount) =>
+  requestJson("POST", "/api/teacher/allocations", { studentUsername, amount });
+export const changeOwnPassword = (currentPassword, newPassword) =>
+  requestJson("POST", "/api/auth/password", { currentPassword, newPassword });

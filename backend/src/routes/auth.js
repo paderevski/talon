@@ -3,6 +3,7 @@ import { getUsersRepository } from "../repositories/usersRepository.js";
 import { publicUser } from "../auth/middleware.js";
 import { sessionCookieName } from "../auth/session.js";
 import { clearFailures, lockedSeconds, recordFailure } from "../auth/loginThrottle.js";
+import { changeOwnPassword, sendManagementError } from "../services/management.js";
 
 const router = Router();
 const usersRepository = await getUsersRepository();
@@ -81,6 +82,24 @@ router.get("/me", async (req, res) => {
   }
 
   return res.json({ ok: true, user: await publicUserWithBudget(req.user) });
+});
+
+router.post("/password", async (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ message: "Not signed in" });
+  }
+
+  try {
+    await changeOwnPassword(
+      req.user.id,
+      String(req.body?.currentPassword ?? ""),
+      String(req.body?.newPassword ?? ""),
+      req.sessionID,
+    );
+    return res.json({ ok: true });
+  } catch (error) {
+    return sendManagementError(error, res, next);
+  }
 });
 
 export default router;

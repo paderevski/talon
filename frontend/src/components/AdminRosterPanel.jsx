@@ -15,7 +15,7 @@ const emptyRoster = {
   classes: [],
 };
 
-export default function AdminRosterPanel({ authUser }) {
+export default function AdminRosterPanel({ authUser, refreshKey = 0 }) {
   const [roster, setRoster] = useState(emptyRoster);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
@@ -57,12 +57,12 @@ export default function AdminRosterPanel({ authUser }) {
     return () => {
       cancelled = true;
     };
-  }, [authUser]);
+  }, [authUser, refreshKey]);
 
   return (
     <section className="panel" id="admin-roster">
       <div className="panel-head">
-        <h2 className="panel-title">Admin Roster</h2>
+        <h2 className="panel-title">Overview</h2>
       </div>
 
       {error ? <div className="repo-error">{error}</div> : null}
@@ -94,33 +94,7 @@ export default function AdminRosterPanel({ authUser }) {
           </div>
 
           <div className="panel-head subhead">
-            <h3 className="panel-title">Teachers</h3>
-          </div>
-          <div className="table-card table-scroll-region">
-            <table>
-              <thead>
-                <tr>
-                  <th>Teacher</th>
-                  <th>Username</th>
-                  <th>Class</th>
-                  <th>Students</th>
-                </tr>
-              </thead>
-              <tbody>
-                {roster.teachers.map((teacher) => (
-                  <tr key={teacher.username}>
-                    <td>{teacher.fullName}</td>
-                    <td className="mono-sm">{teacher.username}</td>
-                    <td>{teacher.className}</td>
-                    <td>{teacher.students.length}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="panel-head subhead">
-            <h3 className="panel-title">Classes</h3>
+            <h3 className="panel-title">Student budgets by class</h3>
           </div>
           <div className="results-grid">
             {roster.classes.map((classItem) => (
@@ -159,27 +133,6 @@ export default function AdminRosterPanel({ authUser }) {
             ))}
           </div>
 
-          <div className="panel-head subhead">
-            <h3 className="panel-title">Admins</h3>
-          </div>
-          <div className="table-card table-scroll-region">
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Username</th>
-                </tr>
-              </thead>
-              <tbody>
-                {roster.admins.map((admin) => (
-                  <tr key={admin.username}>
-                    <td>{admin.fullName}</td>
-                    <td className="mono-sm">{admin.username}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
         </>
       ) : null}
     </section>

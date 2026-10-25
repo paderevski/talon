@@ -6,7 +6,8 @@ import JobStatusPanel from "./components/JobStatusPanel";
 import ResultsPanel from "./components/ResultsPanel";
 import GitHubCredentialsPanel from "./components/GitHubCredentialsPanel";
 import ExecutionDebugPanel from "./components/ExecutionDebugPanel";
-import AdminRosterPanel from "./components/AdminRosterPanel";
+import AdminConsole from "./components/AdminConsole";
+import ChangePasswordDialog from "./components/ChangePasswordDialog";
 import TeacherStudentsPanel from "./components/TeacherStudentsPanel";
 import talonLogo from "../../assets/talon-logo.png";
 import { normalizeRepoInput } from "./utils/repo";
@@ -29,7 +30,12 @@ function getNavSections(role, hasTeacherStudentView) {
   }
 
   if (normalizedRole === "admin") {
-    return [{ id: "admin-roster", label: "Admin" }];
+    return [
+      { id: "admin-roster", label: "Overview" },
+      { id: "admin-users", label: "Users" },
+      { id: "admin-classes", label: "Classes" },
+      { id: "admin-budgets", label: "Budgets" },
+    ];
   }
 
   const sections = [
@@ -81,12 +87,12 @@ function getLandingContentForRole(role) {
   if (normalizedRole === "admin") {
     return {
       kicker: "Admin Home",
-      title: "Oversee compute usage and manage the demo environment",
-      description: "Admin accounts land on an operations-focused entry point with fast access to jobs, credentials, and execution debugging.",
+      title: "Manage users, classes and budgets",
+      description: "Admin accounts land on the management screens: who can sign in, which classes exist, and how much each teacher can hand out.",
       highlights: [
-        "Monitor queued and running jobs for cluster pressure.",
-        "Inspect results, hidden jobs, and operational state.",
-        "Update shared GitHub credentials and use debug tools when needed.",
+        "Add users, change roles, reset passwords and disable accounts.",
+        "Create classes and assign teachers and students.",
+        "Add money to a teacher's pool or to a personal budget.",
       ],
       primaryAction: "Open Admin Workspace",
     };
@@ -193,6 +199,7 @@ export default function App() {
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
   const [repoPath, setRepoPath] = useState(
     fallbackRepo
   );
@@ -785,8 +792,16 @@ export default function App() {
             </button>
             <div className="user-menu-hint">Click for account menu</div>
             <div className={`user-menu${isUserMenuOpen ? " open" : ""}`} role="menu">
-              <button type="button" className="user-menu-item user-menu-item-disabled" role="menuitem" disabled>
-                Settings (coming soon)
+              <button
+                type="button"
+                className="user-menu-item"
+                role="menuitem"
+                onClick={() => {
+                  setIsUserMenuOpen(false);
+                  setIsPasswordDialogOpen(true);
+                }}
+              >
+                Change password
               </button>
               <a className="user-menu-item" href="#github-credentials" role="menuitem" onClick={() => setIsUserMenuOpen(false)}>
                 GitHub Credentials
@@ -798,6 +813,8 @@ export default function App() {
           </div>
         </div>
       </nav>
+
+      {isPasswordDialogOpen ? <ChangePasswordDialog onClose={() => setIsPasswordDialogOpen(false)} /> : null}
 
       <div className="layout">
         <nav className={`leftnav ${isMobileNavOpen ? "mobile-open" : ""}`}>
@@ -818,7 +835,7 @@ export default function App() {
         </nav>
 
         <main className="main">
-          {isAdmin ? <AdminRosterPanel authUser={authUser} /> : null}
+          {isAdmin ? <AdminConsole authUser={authUser} /> : null}
 
           {!isAdmin && isTeacher && !hasTeacherStudentView ? (
             <TeacherStudentsPanel

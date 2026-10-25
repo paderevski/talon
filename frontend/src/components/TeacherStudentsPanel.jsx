@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { fetchTeacherRoster } from "../api/client";
+import { useCallback, useEffect, useState } from "react";
+import { allocateStudentBudget, fetchTeacherRoster } from "../api/client";
 import { formatDollars } from "../utils/format";
 
 const emptyRoster = {
@@ -14,8 +14,43 @@ const emptyRoster = {
 };
 
 
+// Moves money from the teacher's pool to one student.
+function AllocateForm({ student, onAllocate }) {
+  const [amount, setAmount] = useState("");
+  const [isBusy, setIsBusy] = useState(false);
+
+  async function onSubmit(event) {
+    event.preventDefault();
+    setIsBusy(true);
+    try {
+      await onAllocate(student, Number(amount));
+      setAmount("");
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  return (
+    <form className="allocate-form" onSubmit={onSubmit}>
+      <input
+        className="form-input"
+        type="number"
+        min="0.01"
+        step="0.01"
+        placeholder="$"
+        aria-label={`Dollars to add for ${student.fullName}`}
+        value={amount}
+        onChange={(event) => setAmount(event.target.value)}
+      />
+      <button type="submit" className="btn btn-secondary btn-sm" disabled={isBusy || !amount}>
+        Add
+      </button>
+    </form>
+  );
+}
+
 // One section per class the teacher teaches, each with its own student table.
-export function ClassTables({ classes, onOpenStudentView }) {
+export function ClassTables({ classes, onOpenStudentView, onAllocate }) {
   return classes.map((classItem) => (
     <div key={classItem.id ?? classItem.className}>
       <div className="panel-head subhead">
@@ -33,6 +68,7 @@ export function ClassTables({ classes, onOpenStudentView }) {
               <th>Username</th>
               <th>Allocated</th>
               <th>Remaining</th>
+              <th>Add from pool</th>
               <th>Workspace</th>
             </tr>
           </thead>
@@ -43,6 +79,9 @@ export function ClassTables({ classes, onOpenStudentView }) {
                 <td className="mono-sm">{student.username}</td>
                 <td>{formatDollars(student.quota)}</td>
                 <td>{formatDollars(student.tokensRemaining)}</td>
+                <td>
+                  <AllocateForm student={student} onAllocate={onAllocate} />
+                </td>
                 <td>
                   <button
                     type="button"
@@ -65,6 +104,21 @@ export default function TeacherStudentsPanel({ authUser, onOpenStudentView }) {
   const [roster, setRoster] = useState(emptyRoster);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [version, setVersion] = useState(0);
+
+  const onAllocate = useCallback(async (student, amount) => {
+    setActionMessage("");
+    setActionError("");
+    try {
+      await allocateStudentBudget(student.username, amount);
+      setActionMessage(`Added ${formatDollars(amount)} to ${student.fullName}`);
+      setVersion((current) => current + 1);
+    } catch (nextError) {
+      setActionError(nextError.message || "Unable to add funds");
+    }
+  }, []);
 
   useEffect(() => {
     if (!authUser?.username) {
@@ -75,7 +129,7 @@ export default function TeacherStudentsPanel({ authUser, onOpenStudentView }) {
     }
 
     let cancelled = false;
-    setIsLoading(true);
+    setIsLoading(version === 0);
     setError("");
 
     fetchTeacherRoster()
@@ -103,7 +157,7 @@ export default function TeacherStudentsPanel({ authUser, onOpenStudentView }) {
     return () => {
       cancelled = true;
     };
-  }, [authUser]);
+  }, [authUser, version]);
 
   return (
     <section className="panel" id="teacher-students">
@@ -133,13 +187,16 @@ export default function TeacherStudentsPanel({ authUser, onOpenStudentView }) {
         </div>
       ) : null}
 
+      {actionMessage ? <div className="notice-ok">{actionMessage}</div> : null}
+      {actionError ? <div className="repo-error">{actionError}</div> : null}
+
       {isLoading ? <div className="form-hint">Loading student roster...</div> : null}
 
       {!isLoading && !error && roster.classes.length === 0 ? (
         <div className="form-hint">You are not assigned to any classes yet.</div>
       ) : null}
 
-      {!isLoading && !error ? <ClassTables classes={roster.classes} onOpenStudentView={onOpenStudentView} /> : null}
+      {!isLoading && !error ? <ClassTables classes={roster.classes} onOpenStudentView={onOpenStudentView} onAllocate={onAllocate} /> : null}
     </section>
   );
 }

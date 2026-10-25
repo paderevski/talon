@@ -339,17 +339,23 @@ makes cost real. What we know, and what to decide.
 Beyond the blocked items above (Entra, ALB/WAF, `lcps-ro`) and EC2-launched
 jobs (previous section). Rough priority order.
 
-### 1. Management screens and budget API (nothing is usable by real classes without these)
+### 1. Management screens and budget API
 
-- Users, classes, teacher pools and student allocations only come from the
-  demo seed or scripts. The ledger functions (grant, transfer, charge,
-  refund) exist but no API or screen calls them. Needed: admin screens to
-  add users, assign classes, set teacher pools, unlock/disable accounts and
-  revoke sessions; teacher screens to allocate budget to students.
+Done on branch `feature/management-screens` (not yet merged or deployed):
+admin Users / Classes / Budgets screens (add and edit users, roles, disable,
+reset password with a generated one-time password, clear login lockout;
+create, rename and archive classes, add and remove teachers and students;
+add money to a teacher pool or personal budget), teacher "add from pool"
+per student, and self-service change password (user menu). API:
+`/api/admin/users|classes|budget/grants`, `/api/teacher/allocations`,
+`/api/auth/password`; logic in `backend/src/services/management.js`. Still to do:
+
 - Roster provisioning: only pre-provisioned users may sign in (decided), so
   a roster import (CSV first, SIS sync later) is needed.
-- Term rollover: archive classes, reset budgets, return pool money to the
-  admin, remove graduated students; per-user storage quota overrides.
+- Term rollover: reset budgets, return pool money to the admin (archiving
+  classes exists), remove graduated students; per-user storage quota
+  overrides. No audit screen yet (grants record who did them, nothing reads
+  them). New users have no forced password change on first sign-in.
 - Submit form: the design has compute tier, on-demand / Spot / overnight
   queue, max runtime, environment choice, and a cost estimate before
   submitting. The Machine Type and Image dropdowns do nothing today.
