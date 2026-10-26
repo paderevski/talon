@@ -341,7 +341,7 @@ jobs (previous section). Rough priority order.
 
 ### 1. Management screens and budget API
 
-Done on branch `feature/management-screens` (not yet merged or deployed):
+Done, merged to `main` and deployed to the demo box (2026-10-25, a78f8ec):
 admin Students / Teachers / Admins lists (search, status and class filters,
 sort by name (last name), budget or last sign-in; add and edit users, roles,
 disable, reset password with a generated one-time password, clear login
