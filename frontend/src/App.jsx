@@ -35,6 +35,7 @@ function getNavSections(role, hasTeacherStudentView) {
       { id: "admin-students", label: "Students" },
       { id: "admin-teachers", label: "Teachers" },
       { id: "admin-admins", label: "Admins" },
+      { id: "admin-import", label: "Import" },
       { id: "admin-classes", label: "Classes" },
     ];
   }

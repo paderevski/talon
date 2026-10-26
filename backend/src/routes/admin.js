@@ -14,6 +14,7 @@ import {
   updateClass,
   updateUser,
 } from "../services/management.js";
+import { importRoster } from "../services/rosterImport.js";
 
 // Mounted behind requireRole("admin") in server.js.
 const router = Router();
@@ -71,6 +72,17 @@ router.post("/users/:userId/reset-password", handle(async (req, res) => {
 router.post("/users/:userId/unlock", handle(async (req, res) => {
   await unlockUser(req.params.userId);
   return res.json({ ok: true });
+}));
+
+// CSV roster import. { csv, defaultRole, dryRun }; dryRun defaults to true so
+// nothing is written unless the caller says dryRun: false.
+router.post("/import", handle(async (req, res) => {
+  const { csv, defaultRole, dryRun } = req.body ?? {};
+  const result = await importRoster(
+    { csv: String(csv ?? ""), defaultRole: defaultRole || "student", dryRun: dryRun !== false },
+    req.user.id,
+  );
+  return res.status(result.dryRun ? 200 : 201).json({ ok: true, ...result });
 }));
 
 router.get("/classes", handle(async (req, res) => {

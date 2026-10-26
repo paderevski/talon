@@ -3,6 +3,7 @@ import { fetchAdminClasses, fetchAdminUsers } from "../api/client";
 import AdminRosterPanel from "./AdminRosterPanel";
 import AdminUsersPanel from "./AdminUsersPanel";
 import AdminClassesPanel from "./AdminClassesPanel";
+import AdminImportPanel from "./AdminImportPanel";
 
 // Owns the users and classes lists shared by the admin panels; any change
 // calls reload() so every panel (and the overview counts) stays in step.
@@ -39,6 +40,7 @@ export default function AdminConsole({ authUser }) {
       <AdminRosterPanel authUser={authUser} refreshKey={version} />
       {error ? <div className="repo-error">{error}</div> : null}
       <AdminUsersPanel users={users} classes={classes} authUser={authUser} onChanged={reload} />
+      <AdminImportPanel onChanged={reload} />
       <AdminClassesPanel classes={classes} users={users} onChanged={reload} />
     </>
   );

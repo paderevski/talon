@@ -30,11 +30,11 @@ export function generatePassword() {
   return randomBytes(12).toString("base64url");
 }
 
-function cleanText(value, maxLength) {
+export function cleanText(value, maxLength) {
   return String(value ?? "").trim().slice(0, maxLength);
 }
 
-function cleanRoles(roles) {
+export function cleanRoles(roles) {
   const list = [...new Set((Array.isArray(roles) ? roles : []).map((role) => String(role)))];
   if (list.length === 0 || list.some((role) => !allRoles.includes(role))) {
     throw new ManagementError("Choose at least one role: student, teacher or admin");
@@ -42,7 +42,7 @@ function cleanRoles(roles) {
   return list;
 }
 
-function cleanUsername(value) {
+export function cleanUsername(value) {
   const username = cleanText(value, 100);
   if (!/^[A-Za-z0-9._@+-]{3,100}$/.test(username)) {
     throw new ManagementError(
@@ -52,7 +52,7 @@ function cleanUsername(value) {
   return username;
 }
 
-function cleanEmail(value) {
+export function cleanEmail(value) {
   const email = cleanText(value, 200);
   if (!email) {
     return null;
@@ -63,7 +63,7 @@ function cleanEmail(value) {
   return email;
 }
 
-function toCents(dollars) {
+export function toCents(dollars) {
   const cents = dollarsToCents(dollars);
   if (!Number.isSafeInteger(cents) || cents <= 0 || cents > maxGrantCents) {
     throw new ManagementError("Amount must be more than $0 and at most $100,000");
@@ -78,7 +78,7 @@ function uniqueViolation(error, message) {
   throw error;
 }
 
-async function setRoles(client, userId, roles, grantedBy) {
+export async function setRoles(client, userId, roles, grantedBy) {
   await client.query(
     "DELETE FROM user_roles WHERE user_id = $1 AND NOT (role::text = ANY($2::text[]))",
     [userId, roles],
@@ -502,7 +502,7 @@ export async function allocateToStudent({ teacher, studentUsername, amount, note
 // generic error handler.
 export function sendManagementError(error, res, next) {
   if (error instanceof ManagementError) {
-    return res.status(error.status).json({ message: error.message });
+    return res.status(error.status).json({ message: error.message, report: error.report });
   }
   if (error instanceof BudgetError) {
     const status = error.code === "insufficient_funds" ? 409 : 400;

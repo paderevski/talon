@@ -347,13 +347,17 @@ sort by name (last name), budget or last sign-in; add and edit users, roles,
 disable, reset password with a generated one-time password, clear login
 lockout; click any budget to add or remove money in place, with a
 confirmation step; removal never goes below $0) and a Classes screen
-(create, rename, archive, add and remove teachers and students), teacher
+(create, rename, archive, add and remove teachers and students), a CSV
+roster import (paste or upload; columns username, name, email, role, class,
+budget; preview first, all-or-nothing, up to 500 rows, new classes created,
+existing usernames left alone but still added to the class; generated
+passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
 "add from pool" per student, and self-service change password (user menu). API:
 `/api/admin/users|classes|budget/adjustments`, `/api/teacher/allocations`,
 `/api/auth/password`; logic in `backend/src/services/management.js`. Still to do:
 
-- Roster provisioning: only pre-provisioned users may sign in (decided), so
-  a roster import (CSV first, SIS sync later) is needed.
+- Roster provisioning: only pre-provisioned users may sign in (decided).
+  CSV import exists; an SIS sync is still to do.
 - Term rollover: reset budgets, return pool money to the admin (archiving
   classes exists), remove graduated students; per-user storage quota
   overrides. No audit screen yet (grants record who did them, nothing reads

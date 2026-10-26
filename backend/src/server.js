@@ -20,7 +20,7 @@ const bindHost = String(process.env.TALON_BIND_HOST || "127.0.0.1").trim();
 // nginx terminates client connections in front of us (needed for secure cookies).
 app.set("trust proxy", 1);
 // No CORS: the frontend is same-origin (Vite proxy in dev, nginx in prod).
-app.use(express.json());
+app.use(express.json({ limit: "512kb" })); // roster imports are the large bodies
 
 app.get("/api/health", (_, res) => {
   res.json({ ok: true, service: "talon-backend" });

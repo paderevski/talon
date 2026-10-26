@@ -516,3 +516,7 @@ export const allocateStudentBudget = (studentUsername, amount) =>
   requestJson("POST", "/api/teacher/allocations", { studentUsername, amount });
 export const changeOwnPassword = (currentPassword, newPassword) =>
   requestJson("POST", "/api/auth/password", { currentPassword, newPassword });
+
+// dryRun true previews without writing; false imports and returns the passwords.
+export const importRoster = (csv, { defaultRole = "student", dryRun = true } = {}) =>
+  requestJson("POST", "/api/admin/import", { csv, defaultRole, dryRun });
