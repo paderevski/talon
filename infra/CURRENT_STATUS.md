@@ -334,6 +334,94 @@ makes cost real. What we know, and what to decide.
 11. **Keep the local adapter** for development and tests (the test suite
     relies on it) behind the same adapter interface.
 
+### Decided approach for the first build (2026-10-26)
+
+Where this differs from the architecture doc (v7), and why. Nothing here is
+built yet.
+
+**Changes from the doc**
+
+- **S3 status file, not an HTTP callback.** The instance writes
+  `status.json`, logs and outputs under `jobs/<id>/` in S3; the web server
+  only reads. No inbound path to the web server and no per-job callback
+  token (closes the "authenticated completion callback" gap).
+- **Postgres is the queue, not SQS + DLQ, to start.** Job state is already in
+  Postgres. A dispatcher claims queued rows with `FOR UPDATE SKIP LOCKED`; a
+  `not_before` column gives overnight scheduling; capacity failures retry with
+  backoff. Build it behind a small `enqueue / claim` interface so SQS can be
+  swapped in later (message carries only the job id, Postgres stays the truth).
+  Reason SQS is not worth it yet: per-user caps, budget reservation and cancel
+  all need DB queries anyway, SQS adds a second place to keep consistent
+  (enqueue can fail after the commit), and delays max out at 15 minutes.
+- **No Docker / ECR / GPU in the first slice.** First slice is one CPU
+  instance type on a stock Ubuntu AMI. Student code runs as an unprivileged
+  user with the instance metadata service blocked for that user (iptables
+  owner match). The web server clones the repo and ships it to S3, so no
+  GitHub token goes near the instance. Docker, ECR images and GPU (`g4dn`
+  first; check the current Deep Learning AMI name and SSM parameter before
+  relying on it) come after the lifecycle works.
+- **A background reconciler is required.** Today a finished job is only
+  finalized and charged when someone loads it (`synchronizeJobFromExecution`
+  in `jobs.js`). With real instances that would leave a finished instance
+  billing. Every 30-60 s the reconciler describes running instances, reads
+  each `status.json`, terminates finished or over-limit instances, finalizes
+  through the existing path, and sweeps for orphans by tag.
+
+**Build order** (each step shippable)
+
+1. Terraform in `infra/ec2/jobs.tf`: encrypted jobs bucket with lifecycle
+   expiry, security group with no inbound rules, job instance role scoped to
+   `jobs/*` plus the SSM managed-instance policy, launch template (IMDSv2
+   required, terminate on shutdown, encrypted root volume), web server
+   permissions limited by an instance-type allowlist and `Project=talon` tag
+   conditions, AWS Budgets alarm. Smoke-test with a hand-launched hello-world
+   job (boots, uploads, terminates itself).
+2. `ec2ExecutionAdapter.js` behind `EXECUTION_PROVIDER=ec2`, tested with a
+   fake EC2 client; local adapter stays for dev and tests. Admin-only at
+   first. Reserve cost at launch and refund the unused part (add a ledger
+   `refund` function). Static rate table for the doc's Appendix A instance
+   types; Pricing API later.
+3. Submit form: real instance menu with rate and cost estimate (replaces the
+   dead Machine Type dropdown), per-user concurrent job cap (doc: 10 total),
+   log upload about every 30 s.
+4. GPU: Deep Learning AMI, Docker, ECR image, `g4dn` first.
+5. Spot, overnight queue, interruption handling, checkpoint docs.
+
+**Network.** Stay in the default VPC for steps 1-3 (job security group with
+no inbound; never allow it to reach the web server's group), but make VPC and
+subnet ids Terraform variables so a Talon-owned or LCPS VPC is a change of
+values. Open questions for LCPS IT: do they require their VPC, and which CIDR
+ranges do they use (avoid overlap so peering stays possible). Unchecked:
+whether the default VPC in the Academies account is shared with other
+workloads. A dedicated VPC with private subnets is the go-public (ALB/WAF)
+step. A VPC cannot be moved, so the web server would be replaced, not moved;
+job instances are ephemeral and simply launch elsewhere.
+
+**Not to use (for now).** No Kubernetes or Fargate to start and stop
+instances: the control plane is `RunInstances` / `TerminateInstances` from
+Express. Fargate has no GPU (verify current limits) and its sizes fall short
+of the largest CPU tiers; it could later be a second backend for small CPU
+jobs behind the same adapter. AWS Batch only if the hand-written dispatcher
+becomes painful (it can pack several jobs on one instance, and it has no idea
+of a student's budget).
+
+**Keeping the door open for shells and notebooks (not planned yet)**
+
+- Admin debugging shell is free: SSM policy on the job role, then
+  `aws ssm start-session`. Tag every instance with the job id and owner.
+- Student shell or Jupyter would be a separate "interactive session" job type.
+  Students have no AWS identity, so the web server must broker access (SSM
+  port forwarding or session proxied to the browser), scoped by tag and
+  checked against job ownership. Jupyter needs WebSocket proxying and, above
+  all, its own origin per job (wildcard certificate and DNS): a notebook runs
+  arbitrary JavaScript and must not be served from the Talon origin. Needs an
+  idle timeout, a hard session limit and budget reservation.
+- Cheaper first step for notebooks: run `.ipynb` entry scripts headless
+  (`papermill` / `nbconvert`) and return the executed notebook as output.
+- Session secrets do not need sticky sessions behind an ALB: sessions are in
+  Postgres and `SESSION_SECRET` / `TALON_CREDENTIALS_KEY` come from the same
+  SSM parameters on every server.
+
 ## Gaps to production (compared with the architecture doc, 2026-10-25)
 
 Beyond the blocked items above (Entra, ALB/WAF, `lcps-ro`) and EC2-launched
