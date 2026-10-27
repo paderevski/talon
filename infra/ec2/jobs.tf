@@ -14,6 +14,12 @@ variable "jobs_retention_days" {
   default     = 30
 }
 
+variable "ec2_jobs_enabled" {
+  description = "Write EC2_JOBS_ENABLED into the web server's config at first boot. Changing it replaces the web instance (user_data), which resets the database."
+  type        = bool
+  default     = true
+}
+
 variable "job_instance_type" {
   description = "Default instance type in the job launch template (Graviton, matching the AMI)."
   type        = string

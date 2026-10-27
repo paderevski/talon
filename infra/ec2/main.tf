@@ -75,6 +75,8 @@ resource "aws_instance" "app" {
     region         = var.aws_region
     secrets_prefix = local.secrets_prefix
     kms_alias      = aws_kms_alias.secrets.name
+
+    ec2_jobs_enabled = var.ec2_jobs_enabled
   })
   user_data_replace_on_change = true
 

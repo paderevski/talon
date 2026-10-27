@@ -408,13 +408,15 @@ done (below); the adapter and everything after it are not built yet.
    in the submit form, and job panels now shown to admins. Job sync moved to
    `services/jobSync.js`; execution calls dispatch on `executionRef.provider`.
    Launch is synchronous: a capacity failure fails the job and refunds (no
-   queue yet). Off unless `EC2_JOBS_ENABLED=true` in `/etc/talon/talon.env`
-   (add by hand on the box; `user_data` only writes that file on first boot,
-   so also add it there the next time the instance is replaced). Settings come
+   queue yet). Off unless `EC2_JOBS_ENABLED=true`; Terraform
+   writes it into `/etc/talon/talon.env` at first boot from the
+   `ec2_jobs_enabled` variable (default true), so a rebuilt web server comes
+   back configured. Settings come
    from SSM `/talon/demo/jobs-bucket|jobs-launch-template-id|jobs-subnet-ids`
    (created by `jobs.tf`), so a VPC move is a variable change.
-   To finish: `terraform apply` (new launch template version, SSM parameters,
-   web role permissions), enable the flag, deploy, and run a real job (clone a
+   To finish: replace the web instance (`terraform apply`; the launch template,
+   SSM parameters and web role permissions are already applied), deploy this
+   branch, and run a real job (clone a
    small repo with a `requirements.txt`, check logs, files, cost, one charge
    and one refund in the ledger, cancel, and kill the backend mid-job).
 3. Submit form: real instance menu with rate and cost estimate (replaces the
