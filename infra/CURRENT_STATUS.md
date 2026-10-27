@@ -391,8 +391,7 @@ done (below); the adapter and everything after it are not built yet.
    IMDSv2 optional, and terminating the web server. Not tested: `PassRole`
    limit, and a private subnet with NAT. Boot installs the AWS CLI with snap
    each time (billed boot time): bake an AMI later.
-2. **Code written and tested with fake AWS clients (2026-10-27); not yet
-   run against AWS.** `ec2ExecutionAdapter.js` (stateless: clones the repo on
+2. **Built, deployed to the demo box and verified on AWS (2026-10-27).** `ec2ExecutionAdapter.js` (stateless: clones the repo on
    the web server, ships `repo.tgz` and a generated `run.sh` to S3, launches
    from the launch template, reads `status.json`, logs and outputs back from
    S3, cancel writes `control/cancelled` and terminates), reserve-then-settle
@@ -414,11 +413,14 @@ done (below); the adapter and everything after it are not built yet.
    back configured. Settings come
    from SSM `/talon/demo/jobs-bucket|jobs-launch-template-id|jobs-subnet-ids`
    (created by `jobs.tf`), so a VPC move is a variable change.
-   To finish: replace the web instance (`terraform apply`; the launch template,
-   SSM parameters and web role permissions are already applied), deploy this
-   branch, and run a real job (clone a
-   small repo with a `requirements.txt`, check logs, files, cost, one charge
-   and one refund in the ledger, cancel, and kill the backend mid-job).
+   Verified on the box as admin (t4g.small, `paderevski/minimal-rnn`
+   `script.py`): a job ran in 74 s, logs came back, cost 1 cent, ledger shows
+   one 2-cent charge and one 1-cent refund; a cancel during boot ended as
+   failed "Job cancelled" and billed the 60 s minimum; restarting the backend
+   mid-job lost nothing: the reconciler finalized and charged the job without
+   anyone loading it; no job instances were left running. Not yet exercised:
+   a repo with `requirements.txt` (the pip/venv path), a job that hits its
+   time limit, and the `PassRole` limit.
 3. Submit form: real instance menu with rate and cost estimate (replaces the
    dead Machine Type dropdown), per-user concurrent job cap (doc: 10 total),
    log upload about every 30 s.
