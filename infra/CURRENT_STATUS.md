@@ -17,7 +17,7 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 | Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`, Postgres 16 (local socket, peer auth) |
 | Deployed | `origin/main` |
 | Approx cost | ~$20/month (instance ~$12, EBS ~$1.60, public IPv4 ~$3.65, 2 KMS keys ~$2, alarms/S3/SNS pennies). Estimate, not read from the bill |
-| Other AWS resources | S3 backups bucket (`backups.tf`), SSM parameters under `/talon/demo/`, KMS keys `alias/talon-demo-secrets` and `alias/talon-demo-backups`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), 2 CloudWatch alarms (`alarms.tf`), S3 state bucket (`infra/state`) |
+| Other AWS resources | S3 backups bucket (`backups.tf`), SSM parameters under `/talon/demo/`, KMS keys `alias/talon-demo-secrets` and `alias/talon-demo-backups`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), 2 CloudWatch alarms (`alarms.tf`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and launch template (`jobs.tf`), 2 AWS Budgets alerts |
 | Root volume | 20 GB gp3, encrypted with the default AWS-managed EBS key (the architecture doc asks for a KMS key; not changed) |
 | OS patching | `unattended-upgrades` enabled on the box (checked) |
 | Terraform state | S3 `talon-tfstate-<account id>` (versioned, locked); `infra/state` stack's own state is local and tiny |
@@ -336,8 +336,8 @@ makes cost real. What we know, and what to decide.
 
 ### Decided approach for the first build (2026-10-26)
 
-Where this differs from the architecture doc (v7), and why. Nothing here is
-built yet.
+Where this differs from the architecture doc (v7), and why. Build step 1 is
+done (below); the adapter and everything after it are not built yet.
 
 **Changes from the doc**
 
@@ -369,13 +369,28 @@ built yet.
 
 **Build order** (each step shippable)
 
-1. Terraform in `infra/ec2/jobs.tf`: encrypted jobs bucket with lifecycle
-   expiry, security group with no inbound rules, job instance role scoped to
-   `jobs/*` plus the SSM managed-instance policy, launch template (IMDSv2
-   required, terminate on shutdown, encrypted root volume), web server
-   permissions limited by an instance-type allowlist and `Project=talon` tag
-   conditions, AWS Budgets alarm. Smoke-test with a hand-launched hello-world
-   job (boots, uploads, terminates itself).
+1. ~~Terraform in `infra/ec2/jobs.tf`~~ _(done and applied 2026-10-27)_:
+   encrypted jobs bucket (30-day expiry, variable `jobs_retention_days`;
+   **we may need longer retention** for class projects), job security group
+   (no inbound; outbound 443 and 53 only), job instance role (SSM plus S3
+   limited to `jobs/*/input|status.json|logs|output`), launch template
+   (IMDSv2 required, tags readable, terminate on shutdown, encrypted root),
+   `job_boot.sh` (runs `run.sh` as user `student` with the metadata service
+   blocked for that user, under `timeout`, uploads, powers off), web server
+   permissions (allowed instance types, template-only launch, IMDSv2 required,
+   terminate only `Project=talon` + `Component=job`), monthly and daily AWS
+   Budgets email alerts (account-wide, alerts only). VPC and subnets are
+   variables (`job_vpc_id`, `job_subnet_ids`). Outbound is open on 443 on
+   purpose: students use kagglehub, Hugging Face and online datasets. Risk
+   is bounded by the metadata block, no secrets on the box, the time limit
+   and budget, and the 443/53-only group; GuardDuty is not enabled yet.
+   Smoke test passed: a hand-launched job ran as `student`, metadata was
+   blocked, log/output/status reached S3, and the instance terminated itself.
+   From the web server's role (dry runs): allowed `t4g.small` and the
+   template default; denied a disallowed type, a launch without the template,
+   IMDSv2 optional, and terminating the web server. Not tested: `PassRole`
+   limit, and a private subnet with NAT. Boot installs the AWS CLI with snap
+   each time (billed boot time): bake an AMI later.
 2. `ec2ExecutionAdapter.js` behind `EXECUTION_PROVIDER=ec2`, tested with a
    fake EC2 client; local adapter stays for dev and tests. Admin-only at
    first. Reserve cost at launch and refund the unused part (add a ledger
