@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { cancelJob, fetchCurrentUser, fetchJobDetails, fetchJobFiles, fetchJobs, fetchRepoTree, fetchResults, hideJob, login, logout, setUnauthorizedHandler, submitJob, unhideJob } from "./api/client";
+import { cancelJob, fetchComputeOptions, fetchCurrentUser, fetchJobDetails, fetchJobFiles, fetchJobs, fetchRepoTree, fetchResults, hideJob, login, logout, setUnauthorizedHandler, submitJob, unhideJob } from "./api/client";
 import NewJobPanel from "./components/NewJobPanel";
 import RepoBrowserPanel from "./components/RepoBrowserPanel";
 import JobStatusPanel from "./components/JobStatusPanel";
@@ -37,6 +37,9 @@ function getNavSections(role, hasTeacherStudentView) {
       { id: "admin-admins", label: "Admins" },
       { id: "admin-import", label: "Import" },
       { id: "admin-classes", label: "Classes" },
+      { id: "job-status", label: "Job Status" },
+      { id: "results", label: "Results" },
+      { id: "new-job", label: "Submit New Job" },
     ];
   }
 
@@ -611,6 +614,16 @@ export default function App() {
     [authUser],
   );
   const isAdmin = normalizeUserRole(authUser?.role) === "admin";
+  const [ec2Options, setEc2Options] = useState([]);
+  useEffect(() => {
+    if (!isAdmin) {
+      setEc2Options([]);
+      return;
+    }
+    fetchComputeOptions()
+      .then((data) => setEc2Options(data?.ec2?.enabled ? data.ec2.options : []))
+      .catch(() => setEc2Options([]));
+  }, [isAdmin]);
   const isTeacher = normalizeUserRole(authUser?.role) === "teacher";
   const hasTeacherStudentView = Boolean(selectedStudentView);
   const navSections = useMemo(
@@ -872,7 +885,7 @@ export default function App() {
             </section>
           ) : null}
 
-          {!isAdmin && (!isTeacher || hasTeacherStudentView) ? (
+          {isAdmin || !isTeacher || hasTeacherStudentView ? (
             <>
           <JobStatusPanel
             jobs={visibleJobs}
@@ -894,6 +907,7 @@ export default function App() {
             defaultBranch={repoBranch}
             githubUsername={githubSettings.githubUsername}
             onRepoBranchChange={onRepoBranchChange}
+            ec2Options={ec2Options}
           />
           <RepoBrowserPanel
             repoData={repoData}

@@ -10,6 +10,10 @@ import teacherRouter from "./routes/teacher.js";
 import { createSessionMiddleware } from "./auth/session.js";
 import { attachUser, requireAuth, requireRole } from "./auth/middleware.js";
 import { warnIfDemoUsersInProduction } from "./db/demoUserCheck.js";
+import { ec2JobsEnabled, getEc2Adapter } from "./services/jobExecutionService.js";
+import { markJobAsExecutionLost, synchronizeJobFromExecution } from "./services/jobSync.js";
+import { createEc2Reconciler } from "./services/ec2Reconciler.js";
+import { getJobsRepository } from "./repositories/jobsRepository.js";
 
 const app = express();
 const port = Number(process.env.PORT || 5174);
@@ -47,6 +51,16 @@ app.use((error, _req, res, next) => {
 });
 
 await warnIfDemoUsersInProduction();
+
+if (ec2JobsEnabled()) {
+  createEc2Reconciler({
+    jobsRepository: await getJobsRepository(),
+    adapter: getEc2Adapter(),
+    sync: synchronizeJobFromExecution,
+    markLost: markJobAsExecutionLost,
+  }).start(Number(process.env.EC2_RECONCILE_INTERVAL_MS || 45_000));
+  console.log("EC2 jobs enabled: reconciler started");
+}
 
 app.listen(port, bindHost, () => {
   // eslint-disable-next-line no-console

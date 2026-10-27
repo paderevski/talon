@@ -19,6 +19,9 @@
     "db:create-admin": "node scripts/db-create-admin.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-ec2": "^3.1158.0",
+    "@aws-sdk/client-s3": "^3.1158.0",
+    "@aws-sdk/client-ssm": "^3.1158.0",
     "connect-pg-simple": "^10.0.0",
     "express": "^4.21.2",
     "express-session": "^1.19.0",

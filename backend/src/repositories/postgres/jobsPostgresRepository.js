@@ -1,5 +1,5 @@
 import { getPool, withTransaction } from "../../db/pool.js";
-import { charge, ensureAccount } from "../../budget/ledger.js";
+import { BudgetError, charge, ensureAccount, refund } from "../../budget/ledger.js";
 import {
   computeCostCents,
   formatCost,
@@ -36,6 +36,7 @@ function mapJobRow(row) {
     cost: formatCost(row.cost_cents),
     costCents: Number(row.cost_cents),
     maxRuntimeSeconds: row.max_runtime_seconds,
+    reservedCents: Number(row.reserved_cents),
     executionProvider: row.execution_provider || undefined,
     executionRef: row.execution_ref || undefined,
     resultSyncKey: row.result_sync_key || undefined,
@@ -121,6 +122,79 @@ export function createJobsPostgresRepository({ pool } = {}) {
     return findById(result.rows[0].id);
   }
 
+  // Creates a job and reserves its maximum cost in one transaction: the
+  // reserved amount is charged to the owner's personal budget now and the
+  // unused part is refunded when the job is finalized. Throws a BudgetError
+  // (code "insufficient_funds") when the balance does not cover it, unless
+  // `enforceBalance` is false (admins), in which case the balance may go
+  // negative.
+  async function createWithReservation({
+    ownerUserId,
+    name,
+    repo,
+    branch = "main",
+    entryScript = "train.py",
+    executionProvider,
+    computeType,
+    hourlyRateCents,
+    maxRuntimeSeconds,
+    reserveCents,
+    enforceBalance = true,
+  }) {
+    const jobId = await withTransaction(
+      async (client) => {
+        const accountId = await ensureAccount(client, ownerUserId, "personal");
+
+        if (enforceBalance) {
+          const balance = await client.query(
+            "SELECT balance_cents FROM budget_accounts WHERE id = $1 FOR UPDATE",
+            [accountId],
+          );
+          if (Number(balance.rows[0].balance_cents) < reserveCents) {
+            throw new BudgetError("Not enough budget left for this job", "insufficient_funds");
+          }
+        }
+
+        const inserted = await client.query(
+          `INSERT INTO jobs
+             (owner_user_id, name, repo, branch, entry_script, status, execution_provider,
+              compute_type, hourly_rate_cents, max_runtime_seconds, reserved_cents)
+           VALUES ($1, $2, $3, $4, $5, 'queued', $6, $7, $8, $9, $10)
+           RETURNING id`,
+          [
+            ownerUserId, name, repo, branch, entryScript, executionProvider,
+            computeType, hourlyRateCents, maxRuntimeSeconds, reserveCents,
+          ],
+        );
+        const id = inserted.rows[0].id;
+        await charge(client, { accountId, amountCents: reserveCents, jobId: id, note: `Reserved for job ${id}` });
+        return id;
+      },
+      { pool: db() },
+    );
+    return findById(jobId);
+  }
+
+  // Saves where the job is running once it has launched.
+  async function setExecutionRef(jobId, executionRef) {
+    await db().query(
+      "UPDATE jobs SET execution_ref = $2::jsonb, updated_at = now() WHERE id = $1",
+      [jobId, JSON.stringify(executionRef)],
+    );
+    return findById(jobId);
+  }
+
+  // Jobs of one provider that have not finished yet (for the reconciler).
+  async function listUnfinished(provider) {
+    const result = await db().query(
+      `${jobSelect}
+       WHERE j.execution_provider = $1 AND j.status IN ('queued', 'running')
+       ORDER BY j.created_at`,
+      [provider],
+    );
+    return result.rows.map(mapJobRow);
+  }
+
   // Status/duration while a job is running (or after a status change).
   async function recordProgress(jobId, { status, durationSeconds }) {
     await db().query(
@@ -137,7 +211,7 @@ export function createJobsPostgresRepository({ pool } = {}) {
   // transaction. Safe to call repeatedly or concurrently: the first call for a
   // given syncKey does the work, later ones return the job unchanged, and the
   // ledger allows only one charge per job.
-  async function finalize(jobId, { syncKey, status, durationSeconds, executionId = "", files = [], output = "Run output files", error = null, finalizedAt = null }) {
+  async function finalize(jobId, { syncKey, status, durationSeconds, executionId = "", files = [], output = "Run output files", error = null, finalizedAt = null, neverRan = false }) {
     await withTransaction(
       async (client) => {
         const found = await client.query(`${jobSelect} WHERE j.id = $1 FOR UPDATE OF j`, [jobId]);
@@ -162,7 +236,26 @@ export function createJobsPostgresRepository({ pool } = {}) {
         );
 
         let costCents = Number(job.cost_cents);
-        if (costCents === 0) {
+        const reservedCents = Number(job.reserved_cents);
+        if (reservedCents > 0) {
+          // Reserved at launch: keep what the run cost (never more than was
+          // reserved) and give back the rest, once. A job that never ran gets
+          // everything back.
+          const alreadyRefunded = await client.query(
+            "SELECT 1 FROM budget_ledger WHERE job_id = $1 AND kind = 'refund'",
+            [jobId],
+          );
+          if (costCents === 0 && alreadyRefunded.rows.length === 0) {
+            costCents = neverRan
+              ? 0
+              : Math.min(reservedCents, computeCostCents(durationSeconds ?? job.duration_seconds, job.hourly_rate_cents));
+            const unusedCents = reservedCents - costCents;
+            if (unusedCents > 0) {
+              const accountId = await ensureAccount(client, job.owner_user_id, "personal");
+              await refund(client, { accountId, amountCents: unusedCents, jobId, note: `Unused reservation for job ${jobId}` });
+            }
+          }
+        } else if (costCents === 0) {
           costCents = computeCostCents(durationSeconds ?? job.duration_seconds, job.hourly_rate_cents);
           if (costCents > 0) {
             const accountId = await ensureAccount(client, job.owner_user_id, "personal");
@@ -217,5 +310,5 @@ export function createJobsPostgresRepository({ pool } = {}) {
     return result.rows.length ? Number(result.rows[0].balance_cents) : 0;
   }
 
-  return { list, findById, create, recordProgress, finalize, setHidden, listResults, personalBalanceCents };
+  return { list, findById, create, createWithReservation, setExecutionRef, listUnfinished, recordProgress, finalize, setHidden, listResults, personalBalanceCents };
 }

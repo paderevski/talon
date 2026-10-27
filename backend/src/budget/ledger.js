@@ -162,3 +162,18 @@ export async function charge(client, { accountId, amountCents, jobId, note, crea
     createdBy,
   });
 }
+
+// Gives back the unused part of a job's reservation. A job gets at most one
+// refund (enforced by a unique index).
+export async function refund(client, { accountId, amountCents, jobId, note, createdBy = null }) {
+  assertPositiveCents(amountCents);
+  await lockAccounts(client, [accountId]);
+  await postEntry(client, {
+    accountId,
+    amountCents,
+    kind: "refund",
+    jobId,
+    note,
+    createdBy,
+  });
+}

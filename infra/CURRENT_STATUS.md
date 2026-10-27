@@ -391,11 +391,32 @@ done (below); the adapter and everything after it are not built yet.
    IMDSv2 optional, and terminating the web server. Not tested: `PassRole`
    limit, and a private subnet with NAT. Boot installs the AWS CLI with snap
    each time (billed boot time): bake an AMI later.
-2. `ec2ExecutionAdapter.js` behind `EXECUTION_PROVIDER=ec2`, tested with a
-   fake EC2 client; local adapter stays for dev and tests. Admin-only at
-   first. Reserve cost at launch and refund the unused part (add a ledger
-   `refund` function). Static rate table for the doc's Appendix A instance
-   types; Pricing API later.
+2. **Code written and tested with fake AWS clients (2026-10-27); not yet
+   run against AWS.** `ec2ExecutionAdapter.js` (stateless: clones the repo on
+   the web server, ships `repo.tgz` and a generated `run.sh` to S3, launches
+   from the launch template, reads `status.json`, logs and outputs back from
+   S3, cancel writes `control/cancelled` and terminates), reserve-then-settle
+   (migration 005 `jobs.reserved_cents`; launch charges `rate x (limit + 300 s
+   allowance)`, finalize keeps the actual cost capped at the reservation and
+   refunds the rest once; a failed launch refunds everything),
+   `ec2Reconciler.js` (every 45 s: syncs unfinished EC2 jobs so results and
+   charges do not wait for someone to load them, terminates instances with no
+   job row, a finished job, or past limit + 10 min), static rate table
+   (`ec2Rates.js`; t4g.small/medium/large plus `JOB_RATE_OVERHEAD_CENTS_PER_HOUR`,
+   default 1 cent/h for IPv4 and EBS), admin-only `compute: "ec2"` on
+   `POST /api/jobs`, `GET /api/jobs/compute-options`, a "Run on (admin)" select
+   in the submit form, and job panels now shown to admins. Job sync moved to
+   `services/jobSync.js`; execution calls dispatch on `executionRef.provider`.
+   Launch is synchronous: a capacity failure fails the job and refunds (no
+   queue yet). Off unless `EC2_JOBS_ENABLED=true` in `/etc/talon/talon.env`
+   (add by hand on the box; `user_data` only writes that file on first boot,
+   so also add it there the next time the instance is replaced). Settings come
+   from SSM `/talon/demo/jobs-bucket|jobs-launch-template-id|jobs-subnet-ids`
+   (created by `jobs.tf`), so a VPC move is a variable change.
+   To finish: `terraform apply` (new launch template version, SSM parameters,
+   web role permissions), enable the flag, deploy, and run a real job (clone a
+   small repo with a `requirements.txt`, check logs, files, cost, one charge
+   and one refund in the ledger, cancel, and kill the backend mid-job).
 3. Submit form: real instance menu with rate and cost estimate (replaces the
    dead Machine Type dropdown), per-user concurrent job cap (doc: 10 total),
    log upload about every 30 s.

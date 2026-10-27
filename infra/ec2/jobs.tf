@@ -300,6 +300,28 @@ resource "aws_launch_template" "job" {
   }
 }
 
+# ---------------------------------------------------------------- settings for the web server
+
+# The backend reads these at startup, so moving jobs to another VPC is a
+# change of variables here, not of backend configuration.
+resource "aws_ssm_parameter" "jobs_bucket" {
+  name  = "${local.secrets_prefix}/jobs-bucket"
+  type  = "String"
+  value = aws_s3_bucket.jobs.id
+}
+
+resource "aws_ssm_parameter" "jobs_launch_template" {
+  name  = "${local.secrets_prefix}/jobs-launch-template-id"
+  type  = "String"
+  value = aws_launch_template.job.id
+}
+
+resource "aws_ssm_parameter" "jobs_subnets" {
+  name  = "${local.secrets_prefix}/jobs-subnet-ids"
+  type  = "String"
+  value = join(",", local.job_subnet_ids)
+}
+
 # ---------------------------------------------------------------- web server permissions
 
 locals {
@@ -408,9 +430,22 @@ data "aws_iam_policy_document" "web_launch_jobs" {
   }
 
   statement {
-    sid       = "WriteJobInput"
-    actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.jobs.arn}/jobs/*/input/*"]
+    sid     = "WriteJobInputAndCancelMarkers"
+    actions = ["s3:PutObject"]
+    resources = [
+      "${aws_s3_bucket.jobs.arn}/jobs/*/input/*",
+      "${aws_s3_bucket.jobs.arn}/jobs/*/control/*",
+    ]
+  }
+
+  statement {
+    sid     = "ReadJobSettings"
+    actions = ["ssm:GetParameter", "ssm:GetParameters"]
+    resources = [
+      aws_ssm_parameter.jobs_bucket.arn,
+      aws_ssm_parameter.jobs_launch_template.arn,
+      aws_ssm_parameter.jobs_subnets.arn,
+    ]
   }
 
   statement {

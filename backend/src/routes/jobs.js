@@ -3,7 +3,6 @@ import { access } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { mapExecutionStateToJobStatus } from "talon-shared/status";
 import {
   cancelExecution,
   getExecutionDebugSnapshot,
@@ -11,10 +10,15 @@ import {
   getExecutionOutputFiles,
   getExecutionProvider,
   getExecutionStatus,
+  ec2JobsEnabled,
+  getEc2Adapter,
+  openExecutionOutputFile,
   submitExecution,
 } from "../services/jobExecutionService.js";
+import { budgetErrorStatus, launchEc2Job } from "../services/ec2Jobs.js";
+import { listInstanceOptions } from "../execution/ec2Rates.js";
+import { markJobAsExecutionLost, synchronizeJobFromExecution } from "../services/jobSync.js";
 import { getJobsRepository } from "../repositories/jobsRepository.js";
-import { durationSecondsBetween, formatDuration } from "../utils/jobFormat.js";
 import { attachAccessScope, canModify, hasRole, narrowScopeToOwner, scopeAllows } from "../auth/access.js";
 
 const router = Router();
@@ -40,22 +44,6 @@ const jobMaxRuntimeSeconds = () => readNumber("JOB_MAX_RUNTIME_SECONDS", 1800) |
 async function findVisibleJob(req) {
   const job = await jobsRepository.findById(req.params.id);
   return job && scopeAllows(req.accessScope, job.ownerUsername) ? job : null;
-}
-
-function isTerminalExecutionState(executionState) {
-  return ["completed", "failed", "cancelled"].includes(executionState);
-}
-
-function normalizeResultFiles(items) {
-  if (!Array.isArray(items)) {
-    return [];
-  }
-
-  return items.map((item) => ({
-    name: String(item?.name ?? "").trim() || "unnamed",
-    size: String(item?.size ?? "").trim(),
-    source: item?.source || undefined,
-  }));
 }
 
 async function resolveDownloadFilePath(job, source, relativeName) {
@@ -125,71 +113,6 @@ function isTruthyQuery(value) {
   return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
-async function markJobAsExecutionLost(job) {
-  // Already finalized once (result stored): just make sure it shows as failed.
-  if (job.resultSyncKey) {
-    return jobsRepository.recordProgress(job.id, { status: "failed" });
-  }
-
-  return jobsRepository.finalize(job.id, {
-    syncKey: `lost:${job.executionRef?.executionId || "unknown"}`,
-    status: "failed",
-    executionId: job.executionRef?.executionId || "",
-    error: "Execution record missing (backend restart or lost worker state)",
-    finalizedAt: new Date().toISOString(),
-  });
-}
-
-async function synchronizeJobFromExecution(job) {
-  if (!job?.executionRef) {
-    return { job };
-  }
-
-  const execution = await getExecutionStatus(job.executionRef);
-  const mappedStatus = mapExecutionStateToJobStatus(execution.state);
-  const durationSeconds = durationSecondsBetween(execution.startedAt, execution.endedAt);
-
-  if (isTerminalExecutionState(execution.state)) {
-    const syncKey = execution.endedAt || execution.state;
-    if (job.resultSyncKey === syncKey) {
-      return { job, execution };
-    }
-
-    let files = [];
-    try {
-      files = await getExecutionOutputFiles(job.executionRef);
-    } catch {
-      files = [];
-    }
-
-    const status = execution.state === "completed" ? "completed" : "failed";
-    const finalized = await jobsRepository.finalize(job.id, {
-      syncKey,
-      status,
-      durationSeconds,
-      executionId: job.executionRef.executionId || "",
-      files: normalizeResultFiles(files),
-      error:
-        status === "failed"
-          ? execution.state === "cancelled"
-            ? "Job cancelled"
-            : `Execution failed${Number.isFinite(execution.exitCode) ? ` (exit code ${execution.exitCode})` : ""}`
-          : null,
-      finalizedAt: execution.endedAt || null,
-    });
-    return { job: finalized, execution };
-  }
-
-  if (mappedStatus !== job.status || (durationSeconds !== null && formatDuration(durationSeconds) !== job.duration)) {
-    return {
-      job: await jobsRepository.recordProgress(job.id, { status: mappedStatus, durationSeconds }),
-      execution,
-    };
-  }
-
-  return { job, execution };
-}
-
 router.get("/", async (req, res) => {
   const status = req.query.status;
   const includeHidden = isTruthyQuery(String(req.query.includeHidden ?? ""));
@@ -235,8 +158,40 @@ router.get("/", async (req, res) => {
   });
 });
 
+// What the submit form may offer. EC2 jobs are admin-only for now.
+router.get("/compute-options", (req, res) => {
+  const enabled = ec2JobsEnabled() && hasRole(req.user, "admin");
+  res.json({ ec2: { enabled, options: enabled ? listInstanceOptions() : [] } });
+});
+
 router.post("/", async (req, res) => {
   const payload = req.body ?? {};
+
+  if (String(payload.compute ?? "").toLowerCase() === "ec2") {
+    if (!hasRole(req.user, "admin")) {
+      return res.status(403).json({ message: "Running jobs on EC2 is limited to admins for now" });
+    }
+    if (!ec2JobsEnabled()) {
+      return res.status(503).json({ message: "EC2 jobs are not enabled on this server" });
+    }
+
+    try {
+      const job = await launchEc2Job({
+        jobsRepository,
+        adapter: getEc2Adapter(),
+        user: req.user,
+        isAdmin: true,
+        payload,
+        maxRuntimeSeconds: jobMaxRuntimeSeconds(),
+      });
+      return res.status(201).json({ message: "Job started on EC2", job });
+    } catch (error) {
+      const status = budgetErrorStatus(error) || error?.status || 500;
+      return res.status(status).json({
+        message: status === 402 ? "No budget remaining for this job." : error?.message || "Unable to start the job",
+      });
+    }
+  }
   // Always the signed-in user; any owner in the body is ignored.
   const hourlyRateCents = jobRateCentsPerHour();
 
@@ -421,6 +376,19 @@ router.get("/:id/files/download", async (req, res) => {
 
   if (!job.executionRef) {
     return res.status(400).json({ message: "Job has no execution reference" });
+  }
+
+  if (job.executionRef.provider === "ec2") {
+    try {
+      const file = await openExecutionOutputFile(job.executionRef, req.query.name);
+      res.attachment(file.downloadName);
+      if (Number.isFinite(file.size)) {
+        res.setHeader("Content-Length", file.size);
+      }
+      return file.stream.pipe(res);
+    } catch (error) {
+      return res.status(error?.status || 500).json({ message: error?.message || "Unable to download file" });
+    }
   }
 
   try {

@@ -81,6 +81,7 @@ function makeInitialForm(defaultRepo, defaultBranch) {
     repo,
     branch: defaultBranch || "main",
     entryScript: "train.py",
+    runOn: "local",
     machineType: "cpu-medium",
     machineImage: "python-ml-base",
     s3DataSource: "",
@@ -89,7 +90,7 @@ function makeInitialForm(defaultRepo, defaultBranch) {
   };
 }
 
-export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, githubUsername, onRepoBranchChange }) {
+export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, githubUsername, onRepoBranchChange, ec2Options = [] }) {
   const [form, setForm] = useState(makeInitialForm(defaultRepo, defaultBranch));
   const [isAutoName, setIsAutoName] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -274,10 +275,12 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
     const nameForSubmit = shouldUseAutoName ? generatedName : trimmedName;
 
     try {
+      const { runOn, ...fields } = form;
       await onSubmit({
-        ...form,
+        ...fields,
         repo: normalizedRepo,
         name: nameForSubmit,
+        ...(runOn !== "local" ? { compute: "ec2", instanceType: runOn } : {}),
       });
 
       if (shouldUseAutoName) {
@@ -292,8 +295,8 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
         branch: prev.branch,
       }));
       setIsAutoName(true);
-    } catch {
-      setMessage("Unable to submit job.");
+    } catch (error) {
+      setMessage(error?.message || "Unable to submit job.");
     } finally {
       setSubmitting(false);
     }
@@ -353,6 +356,20 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
                   : "No top-level .py files found on this branch. You can enter one manually."))}
           </span>
         </div>
+        {ec2Options.length ? (
+          <div className="form-group full">
+            <label className="form-label">Run on (admin)</label>
+            <select className="form-select" value={form.runOn} onChange={update("runOn")}>
+              <option value="local">Web server (free, no isolation)</option>
+              {ec2Options.map((option) => (
+                <option key={option.instanceType} value={option.instanceType}>
+                  EC2 {option.label} - {(option.hourlyRateCents / 100).toFixed(4)} dollars/hour
+                </option>
+              ))}
+            </select>
+            <span className="form-hint">EC2 jobs start their own instance, reserve their maximum cost, and are billed per second.</span>
+          </div>
+        ) : null}
         <div className="form-group form-group-half">
           <label className="form-label">Machine Type</label>
           <select className="form-select" value={form.machineType} onChange={update("machineType")}>

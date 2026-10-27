@@ -88,6 +88,11 @@ export function fetchJobs(filter = "all", { owner = "" } = {}) {
   return getJson(`/api/jobs?${query.toString()}`);
 }
 
+// What the submit form may offer (EC2 instance types, admins only for now).
+export function fetchComputeOptions() {
+  return getJson("/api/jobs/compute-options");
+}
+
 export function fetchResults({ owner = "" } = {}) {
   return getJson(owner ? `/api/results?owner=${encodeURIComponent(owner)}` : "/api/results");
 }
@@ -197,7 +202,13 @@ export async function submitJob(payload) {
   });
 
   if (!response.ok) {
-    throw new Error(`Submit failed: ${response.status}`);
+    let message = `Submit failed: ${response.status}`;
+    try {
+      message = (await response.json()).message || message;
+    } catch {
+      // keep the status message
+    }
+    throw new Error(message);
   }
 
   return response.json();

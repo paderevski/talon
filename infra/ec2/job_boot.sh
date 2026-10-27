@@ -5,6 +5,8 @@
 #   talon-job          job id (falls back to manual-<instance id>)
 #   talon-bucket       jobs bucket (set by the launch template)
 #   talon-max-seconds  time limit for the user's script (default 1800)
+# Input (jobs/<id>/input/ in the bucket) is run.sh and, for real jobs,
+# repo.tgz (the cloned repository, unpacked to /work/repo).
 #
 # Flow: fetch input from S3 -> run run.sh as an unprivileged user under
 # `timeout` -> upload log, output and status.json -> power off (the launch
@@ -44,6 +46,10 @@ for i in 1 2 3; do snap install aws-cli --classic && break; sleep 5; done
 if ! command -v aws >/dev/null; then echo "no aws cli"; exit 1; fi
 if [ -z "$BUCKET" ]; then echo "no talon-bucket tag"; exit 1; fi
 
+# Ubuntu's default apt mirrors are plain HTTP and the security group only lets
+# HTTPS out, so switch them to HTTPS.
+sed -i 's#http://#https://#g' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null
+
 # Untrusted code runs as 'student'. Fail closed: if the instance metadata
 # service cannot be blocked for that user, the job does not run.
 useradd -m -s /bin/bash student
@@ -58,6 +64,12 @@ mkdir -p /work/output
 if ! aws s3 cp --recursive "$PREFIX/input/" /work --only-show-errors; then
   status failed "" "could not fetch input"
   exit 1
+fi
+if [ -f /work/repo.tgz ]; then # a Talon job: the cloned repository
+  mkdir -p /work/repo && tar -xzf /work/repo.tgz -C /work/repo && rm -f /work/repo.tgz
+  # pip and venv are not on the stock image (a baked AMI will replace this).
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq && apt-get install -y -qq python3-venv python3-pip
 fi
 if [ ! -f /work/run.sh ]; then # smoke test when launched by hand with no input
   cat > /work/run.sh <<'EOF'

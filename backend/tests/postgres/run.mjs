@@ -2,6 +2,9 @@
 // whose public schema is dropped and recreated on every run.
 //   npm run test:postgres --workspace backend
 import pg from "pg";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { assert, createCookieJar, login, resetTestDatabase, startBackendForTests, testDatabaseUrl } from "../lib/harness.mjs";
 import { runMigrations } from "../../src/db/migrate.js";
 import { withTransaction } from "../../src/db/pool.js";
@@ -12,6 +15,10 @@ import { createJobsPostgresRepository } from "../../src/repositories/postgres/jo
 import { computeCostCents } from "../../src/utils/jobFormat.js";
 import { createGithubCredentialsStore } from "../../src/utils/githubCredentialsStore.js";
 import { BudgetError, ensureAccount, grant, transfer } from "../../src/budget/ledger.js";
+import { hourlyRateCentsFor, reservationCentsFor } from "../../src/execution/ec2Rates.js";
+import createEc2ExecutionAdapter, { assertEntryScript, buildRunScript } from "../../src/execution/adapters/ec2ExecutionAdapter.js";
+import { launchEc2Job } from "../../src/services/ec2Jobs.js";
+import { createEc2Reconciler } from "../../src/services/ec2Reconciler.js";
 
 const databaseUrl = testDatabaseUrl;
 
@@ -23,6 +30,52 @@ const resetDatabase = () => resetTestDatabase(databaseUrl);
 async function scalar(sql, params = []) {
   const result = await pool.query(sql, params);
   return Object.values(result.rows[0])[0];
+}
+
+
+// Fake AWS clients for the EC2 adapter: S3 is a map, EC2 records its calls.
+function makeFakeAws({ instance = { state: "running" } } = {}) {
+  const objects = new Map();
+  const calls = [];
+  let instanceState = instance;
+  const noSuchKey = () => Object.assign(new Error("NoSuchKey"), { name: "NoSuchKey" });
+  return {
+    objects, calls,
+    setInstance(next) { instanceState = next; },
+    s3: {
+      async send(command) {
+        const name = command.constructor.name;
+        const input = command.input;
+        if (name === "PutObjectCommand") { objects.set(input.Key, String(input.Body)); return {}; }
+        if (name === "GetObjectCommand") {
+          if (!objects.has(input.Key)) throw noSuchKey();
+          const text = objects.get(input.Key);
+          return { Body: { transformToString: async () => text }, ContentLength: text.length };
+        }
+        if (name === "ListObjectsV2Command") {
+          return { Contents: [...objects.keys()].filter((k) => k.startsWith(input.Prefix)).map((Key) => ({ Key, Size: objects.get(Key).length })), IsTruncated: false };
+        }
+        throw new Error(`unexpected s3 ${name}`);
+      },
+    },
+    ec2: {
+      async send(command) {
+        const name = command.constructor.name;
+        calls.push({ name, input: command.input });
+        if (name === "RunInstancesCommand") {
+          if (command.input.SubnetId === "subnet-full") throw Object.assign(new Error("no capacity"), { name: "InsufficientInstanceCapacity" });
+          return { Instances: [{ InstanceId: "i-abc", LaunchTime: new Date("2026-01-01T00:00:00Z") }] };
+        }
+        if (name === "DescribeInstancesCommand") {
+          return instanceState
+            ? { Reservations: [{ Instances: [{ InstanceId: "i-abc", State: { Name: instanceState.state }, LaunchTime: new Date("2026-01-01T00:00:00Z") }] }] }
+            : { Reservations: [] };
+        }
+        if (name === "TerminateInstancesCommand") return {};
+        throw new Error(`unexpected ec2 ${name}`);
+      },
+    },
+  };
 }
 
 const tests = [
@@ -345,6 +398,226 @@ const tests = [
 
     const stored = await jobs.findById(job.id);
     assert(stored.cost === "$1.00" && stored.status === "completed" && stored.duration === "10m 0s", `Unexpected job ${JSON.stringify(stored)}`);
+  }],
+
+  ["ec2 rates: overhead is added and the reservation covers limit plus boot allowance", async () => {
+    assert(hourlyRateCentsFor("t4g.medium") === 4.36, `t4g.medium rate ${hourlyRateCentsFor("t4g.medium")}`);
+    // 4.36 c/h for (1800 + 300) s = 2.543 c -> 3 c
+    assert(reservationCentsFor(4.36, 1800) === 3, `reservation ${reservationCentsFor(4.36, 1800)}`);
+    let refused = false;
+    try { hourlyRateCentsFor("p5.48xlarge"); } catch { refused = true; }
+    assert(refused, "unknown instance types must be refused");
+  }],
+
+  ["ec2 jobs: reserve at launch, refund the unused part once, ledger stays balanced", async () => {
+    const jobs = createJobsPostgresRepository({ pool });
+    const userId = await scalar("SELECT id FROM users WHERE username = 'student_a1'");
+    const accountId = await withTransaction((client) => ensureAccount(client, userId, "personal"), { pool });
+    const balance = async () => Number(await scalar("SELECT balance_cents FROM budget_accounts WHERE id = $1", [accountId]));
+    await pool.query("UPDATE budget_accounts SET balance_cents = balance_cents + 1000 WHERE id = $1", [accountId]);
+    await pool.query("INSERT INTO budget_ledger (account_id, amount_cents, kind, note) VALUES ($1, 1000, 'grant', 'test top-up')", [accountId]);
+    const start = await balance();
+
+    const job = await jobs.createWithReservation({
+      ownerUserId: userId, name: "reserve-test", repo: "x/y", executionProvider: "ec2",
+      computeType: "t4g.medium", hourlyRateCents: 360, maxRuntimeSeconds: 1800, reserveCents: 200,
+    });
+    assert(job.reservedCents === 200 && (await balance()) === start - 200, "reservation must be charged at creation");
+
+    // Ran 10 minutes at 3.60 dollars/hour = 60c; 140c comes back. Repeats do nothing.
+    const args = (key) => ({ syncKey: key, status: "completed", durationSeconds: 600 });
+    await Promise.all([jobs.finalize(job.id, args("a")), jobs.finalize(job.id, args("a")), jobs.finalize(job.id, args("b"))]);
+    const settled = await jobs.findById(job.id);
+    assert(settled.costCents === 60, `cost ${settled.costCents}`);
+    assert((await balance()) === start - 60, `balance moved ${start - (await balance())}`);
+    assert(Number(await scalar("SELECT count(*) FROM budget_ledger WHERE job_id = $1 AND kind = 'refund'", [job.id])) === 1, "exactly one refund");
+    assert(Number(await scalar("SELECT count(*) FROM budget_ledger WHERE job_id = $1 AND kind = 'charge'", [job.id])) === 1, "exactly one charge");
+
+    // Cost never exceeds the reservation, even for a run that overran it.
+    const long = await jobs.createWithReservation({
+      ownerUserId: userId, name: "overrun-test", repo: "x/y", executionProvider: "ec2",
+      hourlyRateCents: 360, maxRuntimeSeconds: 1800, reserveCents: 200,
+    });
+    await jobs.finalize(long.id, { syncKey: "a", status: "failed", durationSeconds: 7200 });
+    assert((await jobs.findById(long.id)).costCents === 200, "cost must be capped at the reservation");
+    assert(Number(await scalar("SELECT count(*) FROM budget_ledger WHERE job_id = $1 AND kind = 'refund'", [long.id])) === 0, "no refund when the whole reservation was used");
+
+    // A job that never ran gets everything back.
+    const never = await jobs.createWithReservation({
+      ownerUserId: userId, name: "never-ran", repo: "x/y", executionProvider: "ec2",
+      hourlyRateCents: 360, maxRuntimeSeconds: 1800, reserveCents: 200,
+    });
+    await jobs.finalize(never.id, { syncKey: "launch-failed", status: "failed", neverRan: true, error: "x" });
+    assert((await jobs.findById(never.id)).costCents === 0, "never-ran job must cost nothing");
+    assert((await balance()) === start - 60 - 200, `balance after all three: ${await balance()}`);
+  }],
+
+  ["ec2 jobs: not enough budget refuses the launch and creates nothing; admins may overdraw", async () => {
+    const jobs = createJobsPostgresRepository({ pool });
+    const userId = await scalar("SELECT id FROM users WHERE username = 'student_a1'");
+    const before = await scalar("SELECT count(*) FROM jobs");
+    let code = null;
+    try {
+      await jobs.createWithReservation({ ownerUserId: userId, name: "too-big", repo: "x/y", executionProvider: "ec2", hourlyRateCents: 360, maxRuntimeSeconds: 1800, reserveCents: 100000000 });
+    } catch (error) {
+      code = error instanceof BudgetError ? error.code : error.message;
+    }
+    assert(code === "insufficient_funds", `Expected insufficient_funds, got ${code}`);
+    assert((await scalar("SELECT count(*) FROM jobs")) === before, "a refused launch must not leave a job");
+
+    const admin = await scalar("SELECT id FROM users WHERE username = 'admin'");
+    const adminJob = await jobs.createWithReservation({ ownerUserId: admin, name: "admin-run", repo: "x/y", executionProvider: "ec2", hourlyRateCents: 360, maxRuntimeSeconds: 1800, reserveCents: 5, enforceBalance: false });
+    assert(adminJob.reservedCents === 5, "admin launch should be allowed without balance");
+  }],
+
+  ["ec2 jobs: a failed launch fails the job and refunds everything", async () => {
+    const jobs = createJobsPostgresRepository({ pool });
+    const userId = await scalar("SELECT id FROM users WHERE username = 'student_a1'");
+    const accountId = await withTransaction((client) => ensureAccount(client, userId, "personal"), { pool });
+    await pool.query("UPDATE budget_accounts SET balance_cents = balance_cents + 500 WHERE id = $1", [accountId]);
+    await pool.query("INSERT INTO budget_ledger (account_id, amount_cents, kind, note) VALUES ($1, 500, 'grant', 'test top-up')", [accountId]);
+    const balanceBefore = Number(await scalar("SELECT balance_cents FROM budget_accounts WHERE id = $1", [accountId]));
+    const user = { id: userId, username: "student_a1" };
+
+    let message = "";
+    try {
+      await launchEc2Job({
+        jobsRepository: jobs, user, isAdmin: false, maxRuntimeSeconds: 1800,
+        payload: { name: "fails", repo: "x/y", instanceType: "t4g.small" },
+        adapter: { async start() { throw new Error("InsufficientInstanceCapacity"); } },
+      });
+    } catch (error) {
+      message = error.message;
+    }
+    assert(/InsufficientInstanceCapacity/.test(message), `launch error ${message}`);
+    const failed = (await jobs.list({ all: true })).find((j) => j.name === "fails");
+    assert(failed && failed.status === "failed" && failed.costCents === 0, `failed job ${JSON.stringify(failed)}`);
+    assert(Number(await scalar("SELECT balance_cents FROM budget_accounts WHERE id = $1", [accountId])) === balanceBefore, "full refund expected");
+
+    const ok = await launchEc2Job({
+      jobsRepository: jobs, user, isAdmin: false, maxRuntimeSeconds: 1800,
+      payload: { name: "works", repo: "x/y", instanceType: "t4g.small" },
+      adapter: { async start(spec) { return { provider: "ec2", executionId: spec.jobId, jobId: spec.jobId, instanceId: "i-1" }; } },
+    });
+    assert(ok.executionRef.instanceId === "i-1" && ok.reservedCents > 0 && ok.computeType === undefined, `launched job ${JSON.stringify(ok)}`);
+  }],
+
+  ["ec2 reconciler: terminates orphan, finished and overrun instances, leaves live ones", async () => {
+    const jobs = createJobsPostgresRepository({ pool });
+    const owner = await scalar("SELECT id FROM users WHERE username = 'admin'");
+    const mk = async (name, extra = {}) => jobs.createWithReservation({
+      ownerUserId: owner, name, repo: "x/y", executionProvider: "ec2", hourlyRateCents: 360,
+      maxRuntimeSeconds: 100, reserveCents: 5, enforceBalance: false, ...extra,
+    });
+    const live = await mk("rec-live");
+    const finished = await mk("rec-finished");
+    await jobs.finalize(finished.id, { syncKey: "k", status: "completed", durationSeconds: 70 });
+    const overrun = await mk("rec-overrun");
+
+    const longAgo = new Date(Date.now() - 3600 * 1000).toISOString();
+    const justNow = new Date().toISOString();
+    const terminated = [];
+    const reconciler = createEc2Reconciler({
+      jobsRepository: jobs,
+      adapter: {
+        async listJobInstances() {
+          return [
+            { instanceId: "i-live", jobId: live.id, launchTime: justNow },
+            { instanceId: "i-finished", jobId: finished.id, launchTime: justNow },
+            { instanceId: "i-overrun", jobId: overrun.id, launchTime: longAgo },
+            { instanceId: "i-orphan", jobId: "job-999999", launchTime: justNow },
+            { instanceId: "i-untagged", jobId: null, launchTime: justNow },
+          ];
+        },
+        async terminateInstance(id) { terminated.push(id); },
+      },
+      sync: async () => {},
+      markLost: async () => {},
+      log: { log() {}, error() {} },
+    });
+    await reconciler.tick();
+    assert(terminated.sort().join() === "i-finished,i-orphan,i-overrun,i-untagged", `terminated ${terminated.sort()}`);
+  }],
+
+  ["ec2 adapter: launch uploads input, tags the instance, falls back to another subnet", async () => {
+    const aws = makeFakeAws();
+    const adapter = createEc2ExecutionAdapter({
+      ec2: aws.ec2, s3: aws.s3,
+      config: { bucket: "b", launchTemplateId: "lt-1", subnetIds: ["subnet-full", "subnet-ok"] },
+      prepareInput: async () => {
+        const dir = await mkdtemp(path.join(os.tmpdir(), "talon-test-"));
+        await writeFile(path.join(dir, "repo.tgz"), "archive-bytes");
+        return { workDir: dir, archive: path.join(dir, "repo.tgz") };
+      },
+      now: () => Date.parse("2026-01-01T00:00:05Z"),
+    });
+    const ref = await adapter.start({ jobId: "job-7", repo: "a/b", branch: "main", entryScript: "train.py", maxRuntimeSeconds: 600, instanceType: "t4g.small", ownerUsername: "admin" });
+    assert(ref.instanceId === "i-abc" && ref.subnetId === "subnet-ok" && ref.executionId === "job-7", `ref ${JSON.stringify(ref)}`);
+    assert(aws.objects.get("jobs/job-7/input/repo.tgz") === "archive-bytes", "repo.tgz not uploaded");
+    assert(/exec python3 'train.py'/.test(aws.objects.get("jobs/job-7/input/run.sh")), "run.sh not uploaded");
+    const run = aws.calls.filter((c) => c.name === "RunInstancesCommand").at(-1).input;
+    const tags = Object.fromEntries(run.TagSpecifications[0].Tags.map((t) => [t.Key, t.Value]));
+    assert(tags.Project === "talon" && tags.Component === "job" && tags["talon-job"] === "job-7" && tags["talon-max-seconds"] === "600", `tags ${JSON.stringify(tags)}`);
+    assert(run.InstanceType === "t4g.small" && run.ClientToken === "talon-job-7", "type or client token wrong");
+
+    let refused = "";
+    try { await adapter.start({ jobId: "job-8", instanceType: "p5.48xlarge", maxRuntimeSeconds: 60 }); } catch (e) { refused = e.message; }
+    assert(/not allowed/.test(refused), `unknown type: ${refused}`);
+  }],
+
+  ["ec2 adapter: entry script and branch cannot inject shell", async () => {
+    for (const bad of ["x.py; rm -rf /", "$(id).py", "../../etc/passwd", "a b.py", "'quote.py", "-rf"]) {
+      let refused = false;
+      try { assertEntryScript(bad); } catch { refused = true; }
+      assert(refused, `entry script ${JSON.stringify(bad)} must be refused`);
+    }
+    assert(buildRunScript("src/train_1.py").includes("python3 'src/train_1.py'"), "plain paths must pass");
+  }],
+
+  ["ec2 adapter: status, logs, files and cancel come from S3 and the instance", async () => {
+    const aws = makeFakeAws({ instance: { state: "pending" } });
+    let clock = Date.parse("2026-01-01T00:01:00Z");
+    const adapter = createEc2ExecutionAdapter({ ec2: aws.ec2, s3: aws.s3, config: { bucket: "b", launchTemplateId: "lt", subnetIds: ["s"] }, now: () => clock });
+    const ref = { provider: "ec2", jobId: "job-9", executionId: "job-9", instanceId: "i-abc", maxRuntimeSeconds: 600, submittedAt: "2026-01-01T00:00:00Z", launchedAt: "2026-01-01T00:00:00Z" };
+
+    assert((await adapter.getStatus(ref)).state === "queued", "pending instance is queued");
+    aws.setInstance({ state: "running" });
+    assert((await adapter.getStatus(ref)).state === "running", "running instance is running");
+
+    aws.objects.set("jobs/job-9/logs/job.log", "line one\nline two\n");
+    aws.objects.set("jobs/job-9/output/model.txt", "weights");
+    const logs = await adapter.getLogs(ref, 1);
+    assert(logs.lines.join() === "line two" && logs.nextCursor === 2, `logs ${JSON.stringify(logs)}`);
+    const files = await adapter.listOutputFiles(ref);
+    assert(files.length === 1 && files[0].name === "model.txt" && files[0].source === "output_dir", `files ${JSON.stringify(files)}`);
+
+    aws.objects.set("jobs/job-9/status.json", JSON.stringify({ state: "succeeded", exit_code: 0, updated_at: "2026-01-01T00:05:00Z" }));
+    const done = await adapter.getStatus(ref);
+    assert(done.state === "completed" && done.endedAt === "2026-01-01T00:05:00Z" && done.exitCode === 0, `done ${JSON.stringify(done)}`);
+
+    aws.objects.set("jobs/job-9/status.json", JSON.stringify({ state: "timeout", exit_code: 124, updated_at: "2026-01-01T00:10:00Z" }));
+    assert((await adapter.getStatus(ref)).state === "failed", "timeout is a failure");
+
+    // No result and past the limit plus grace: failed at the deadline, stable key.
+    aws.objects.delete("jobs/job-9/status.json");
+    clock = Date.parse("2026-01-01T02:00:00Z");
+    const overrun = await adapter.getStatus(ref);
+    assert(overrun.state === "failed" && overrun.endedAt === "2026-01-01T00:20:00.000Z" && overrun.syncKey === "overrun", `overrun ${JSON.stringify(overrun)}`);
+
+    // Instance vanished with no result, long after launch.
+    aws.setInstance(null);
+    clock = Date.parse("2026-01-01T00:02:00Z") + 1;
+    const young = { ...ref, submittedAt: "2026-01-01T00:00:00Z" };
+    let missing = 0;
+    try { await adapter.getStatus(young); } catch (e) { missing = e.status; }
+    assert(missing === 404, "a vanished instance is a 404 (the job is marked lost)");
+
+    aws.setInstance({ state: "running" });
+    clock = Date.parse("2026-01-01T00:03:00Z");
+    await adapter.cancel(ref);
+    assert(aws.calls.some((c) => c.name === "TerminateInstancesCommand"), "cancel must terminate the instance");
+    const cancelled = await adapter.getStatus(ref);
+    assert(cancelled.state === "cancelled", `cancelled ${JSON.stringify(cancelled)}`);
   }],
 
   ["jobs: seeded demo job costs match each student's ledger charges", async () => {
