@@ -418,9 +418,16 @@ done (below); the adapter and everything after it are not built yet.
    one 2-cent charge and one 1-cent refund; a cancel during boot ended as
    failed "Job cancelled" and billed the 60 s minimum; restarting the backend
    mid-job lost nothing: the reconciler finalized and charged the job without
-   anyone loading it; no job instances were left running. Not yet exercised:
-   a repo with `requirements.txt` (the pip/venv path), a job that hits its
-   time limit, and the `PassRole` limit.
+   anyone loading it; no job instances were left running. The first
+   `requirements.txt` run failed and found a real bug: on arm64 Ubuntu apt
+   uses the regional EC2 ports mirror, which does not serve HTTPS (the job
+   security group only allows HTTPS out), so `python3-venv` never installed.
+   Fixed in `job_boot.sh` (global `ports.ubuntu.com` over HTTPS, IPv4 only;
+   boot output now uploaded as `logs/boot.log`); needs a `terraform apply`
+   (launch template only) and a re-run. Not yet exercised: the pip path end
+   to end, a job that hits its time limit, and the `PassRole` limit. Note the
+   reconciler terminates any `Project=talon, Component=job` instance without a
+   job row, so debug instances must use another `Component` tag.
 3. Submit form: real instance menu with rate and cost estimate (replaces the
    dead Machine Type dropdown), per-user concurrent job cap (doc: 10 total),
    log upload about every 30 s.

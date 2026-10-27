@@ -46,9 +46,12 @@ for i in 1 2 3; do snap install aws-cli --classic && break; sleep 5; done
 if ! command -v aws >/dev/null; then echo "no aws cli"; exit 1; fi
 if [ -z "$BUCKET" ]; then echo "no talon-bucket tag"; exit 1; fi
 
-# Ubuntu's default apt mirrors are plain HTTP and the security group only lets
-# HTTPS out, so switch them to HTTPS.
-sed -i 's#http://#https://#g' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null
+# apt: the security group only lets HTTPS out, and the instance has no IPv6
+# route. Ubuntu's default sources are HTTP, and on arm64 the regional EC2 mirror
+# (<region>.ec2.ports.ubuntu.com) does not serve HTTPS at all, so use the
+# global mirror over HTTPS and IPv4 only.
+sed -E -i 's#https?://([a-z0-9-]+\.ec2\.)?#https://#g' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null
+echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99talon-ipv4
 
 # Untrusted code runs as 'student'. Fail closed: if the instance metadata
 # service cannot be blocked for that user, the job does not run.
@@ -95,5 +98,6 @@ case $CODE in
   *)   STATE=failed ;;
 esac
 aws s3 cp /tmp/job.log "$PREFIX/logs/job.log" --only-show-errors
+aws s3 cp /var/log/talon-job.log "$PREFIX/logs/boot.log" --only-show-errors
 aws s3 cp --recursive /work/output "$PREFIX/output/" --only-show-errors
 status "$STATE" "$CODE"
