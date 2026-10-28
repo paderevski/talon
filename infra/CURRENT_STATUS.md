@@ -430,6 +430,19 @@ done (below); the adapter and everything after it are not built yet.
    `PassRole` limit. Note the
    reconciler terminates any `Project=talon, Component=job` instance without a
    job row, so debug instances must use another `Component` tag.
+   Heavy-job findings (2026-10-28, `minimal-rnn` with 4000x4000 SVDs):
+   the time limit works (`timeout`, exit 124, "Time limit reached", cost
+   capped, instance terminated) and stdout is now unbuffered for every job
+   (`python3 -u`, `PYTHONUNBUFFERED=1`), so output survives a kill. On
+   `t4g.small` (2 GB) it was OOM-killed on the second iteration (exit 137,
+   shown to the user as "killed, usually out of memory"); on `t4g.medium`
+   (4 GB) it ran about 45-60 s per iteration without trouble. **Cost
+   caveat:** `t4g` is burstable and runs in unlimited-credit mode, so
+   sustained 100% CPU is billed as surplus CPU credits on top of the
+   per-second rate (my recollection is about 5 cents per vCPU-hour; verify).
+   Our rate and overhead do not cover that. Decide before step 3 shows prices:
+   price t4g higher, or use a non-burstable family (c7g/m7g) for compute
+   jobs. Also worth showing memory per instance type in the menu.
    **Open problem: output files.** The EC2 path only returns files written
    to `TALON_OUTPUT_DIR` (`/work/output`); a script that writes relative paths
    (like `minimal-rnn`'s `script.py`, which writes `output.txt` in its working

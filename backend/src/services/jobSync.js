@@ -74,7 +74,9 @@ export async function synchronizeJobFromExecution(job) {
           ? execution.state === "cancelled"
             ? "Job cancelled"
             : execution.message ||
-              `Execution failed${Number.isFinite(execution.exitCode) ? ` (exit code ${execution.exitCode})` : ""}`
+              (execution.exitCode === 137
+                ? "The script was killed (exit code 137), usually because it ran out of memory. Try a larger instance."
+                : `Execution failed${Number.isFinite(execution.exitCode) ? ` (exit code ${execution.exitCode})` : ""}`)
           : null,
       finalizedAt: execution.endedAt || null,
     });
