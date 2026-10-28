@@ -577,7 +577,7 @@ const tests = [
     assert(errors.length === 1 && errors[0].includes(flaky.id) && errors[0].includes("AWS throttled"), `errors ${errors}`);
   }],
 
-  ["ec2 reconciler + jobSync: a vanished instance fails the job, is free for the student (full refund, once)", async () => {
+  ["ec2 reconciler + jobSync: a vanished instance fails the job, is billed from launch time, the rest refunded once", async () => {
     const jobs = createJobsPostgresRepository({ pool });
     const userId = await scalar("SELECT id FROM users WHERE username = 'student_a1'");
     const accountId = await withTransaction((client) => ensureAccount(client, userId, "personal"), { pool });
@@ -590,13 +590,14 @@ const tests = [
       ownerUserId: userId, name: "vanished", repo: "x/y", executionProvider: "ec2",
       hourlyRateCents: 360, maxRuntimeSeconds: 1800, reserveCents: 200,
     });
-    await jobs.setExecutionRef(job.id, { provider: "ec2", executionId: job.id, jobId: job.id, instanceId: "i-gone" });
+    await jobs.setExecutionRef(job.id, { provider: "ec2", executionId: job.id, jobId: job.id, instanceId: "i-gone", launchedAt: "2026-01-01T00:00:00Z" });
     assert((await balance()) === start - 200, "reserved at creation");
 
     const sync = createJobSync({
       jobsRepository: jobs,
       getExecutionStatus: async () => { throw Object.assign(new Error("instance not found"), { status: 404 }); },
       getExecutionOutputFiles: async () => [],
+      now: () => Date.parse("2026-01-01T00:10:00Z"),
     });
     // Earlier tests leave unfinished ec2 jobs behind; only look at this one.
     const onlyThisJob = { ...jobs, async listUnfinished(provider) { return (await jobs.listUnfinished(provider)).filter((j) => j.id === job.id); } };
@@ -612,11 +613,31 @@ const tests = [
 
     const after = await jobs.findById(job.id);
     assert(after.status === "failed" && String(after.resultSyncKey).startsWith("lost:"), `job ${after.status} ${after.resultSyncKey}`);
-    // Current behavior: the run time of a lost job is unknown, so it costs nothing.
-    assert(after.costCents === 0, `a lost job has no known duration and costs nothing, got ${after.costCents}`);
-    assert((await balance()) === start, `the whole reservation comes back, balance moved ${start - (await balance())}`);
+    // Launched 10 minutes before it was found missing: 600 s at 360 c/h = 60 c.
+    assert(after.costCents === 60 && after.duration, `lost job is billed its runtime, got ${after.costCents} ${after.duration}`);
+    assert((await balance()) === start - 60, `reservation minus runtime comes back, balance moved ${start - (await balance())}`);
     assert(Number(await scalar("SELECT count(*) FROM results WHERE job_id = $1", [job.id])) === 1, "one result row");
     assert(Number(await scalar("SELECT count(*) FROM budget_ledger WHERE job_id = $1 AND kind = 'refund'", [job.id])) === 1, "one refund");
+
+    // Found missing days later: billed no more than the time limit plus the boot allowance (all that was reserved).
+    const stale = await jobs.createWithReservation({
+      ownerUserId: userId, name: "vanished-days", repo: "x/y", executionProvider: "ec2",
+      hourlyRateCents: 360, maxRuntimeSeconds: 1800, reserveCents: 200,
+    });
+    await jobs.setExecutionRef(stale.id, { provider: "ec2", executionId: stale.id, launchedAt: "2025-12-01T00:00:00Z" });
+    const lostStale = await sync.markJobAsExecutionLost(await jobs.findById(stale.id));
+    assert(lostStale.costCents === 200, `capped cost ${lostStale.costCents}`);
+    assert((await pool.query("SELECT duration_seconds FROM jobs WHERE id = $1", [stale.id])).rows[0].duration_seconds === 2100, "duration capped at limit + allowance");
+
+    // Never launched (no launch time recorded): nothing to bill, everything comes back.
+    const unlaunched = await jobs.createWithReservation({
+      ownerUserId: userId, name: "vanished-unlaunched", repo: "x/y", executionProvider: "ec2",
+      hourlyRateCents: 360, maxRuntimeSeconds: 1800, reserveCents: 200,
+    });
+    await jobs.setExecutionRef(unlaunched.id, { provider: "ec2", executionId: unlaunched.id });
+    const lostUnlaunched = await sync.markJobAsExecutionLost(await jobs.findById(unlaunched.id));
+    assert(lostUnlaunched.costCents === 0, `unlaunched cost ${lostUnlaunched.costCents}`);
+    assert((await balance()) === start - 60 - 200, `balance after all three ${start - (await balance())}`);
     assert((await onlyThisJob.listUnfinished("ec2")).length === 0, "no longer unfinished");
   }],
 

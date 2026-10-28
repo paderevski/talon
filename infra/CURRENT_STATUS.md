@@ -415,7 +415,8 @@ done (below); the adapter and everything after it are not built yet.
    charges do not wait for someone to load them, terminates instances with no
    job row, a finished job, or past limit + 20 min, the last sweep after the
    script's `timeout` at the limit and the instance's failsafe shutdown at
-   limit + 15 min), static rate table
+   limit + 15 min; a job whose instance vanished without a trace is billed
+  from its launch time, capped at limit + boot allowance), static rate table
    (`ec2Rates.js`; t4g.small/medium/large plus `JOB_RATE_OVERHEAD_CENTS_PER_HOUR`,
    default 1 cent/h for IPv4 and EBS), admin-only `compute: "ec2"` on
    `POST /api/jobs`, `GET /api/jobs/compute-options`, a "Run on (admin)" select

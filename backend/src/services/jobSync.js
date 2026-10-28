@@ -1,6 +1,7 @@
 import { mapExecutionStateToJobStatus } from "talon-shared/status";
 import { getExecutionOutputFiles, getExecutionStatus } from "./jobExecutionService.js";
 import { getJobsRepository } from "../repositories/jobsRepository.js";
+import { bootAllowanceSeconds } from "../execution/ec2Rates.js";
 import { durationSecondsBetween, formatDuration } from "../utils/jobFormat.js";
 
 // Brings a job row in line with what its execution reports: progress while it
@@ -23,16 +24,29 @@ function normalizeResultFiles(items) {
   }));
 }
 
-export function createJobSync({ jobsRepository, getExecutionStatus, getExecutionOutputFiles }) {
+export function createJobSync({ jobsRepository, getExecutionStatus, getExecutionOutputFiles, now = () => Date.now() }) {
   async function markJobAsExecutionLost(job) {
     // Already finalized once (result stored): just make sure it shows as failed.
     if (job.resultSyncKey) {
       return jobsRepository.recordProgress(job.id, { status: "failed" });
     }
 
+    // An instance that launched was billed by AWS until it vanished, so the
+    // student pays for the time since launch (never more than the time limit
+    // plus the boot allowance, which is also all that was reserved).
+    const launchedMs = Date.parse(job.executionRef?.launchedAt || "");
+    let durationSeconds;
+    if (Number.isFinite(launchedMs)) {
+      durationSeconds = Math.max(0, Math.round((now() - launchedMs) / 1000));
+      if (job.maxRuntimeSeconds) {
+        durationSeconds = Math.min(durationSeconds, job.maxRuntimeSeconds + bootAllowanceSeconds());
+      }
+    }
+
     return jobsRepository.finalize(job.id, {
       syncKey: `lost:${job.executionRef?.executionId || "unknown"}`,
       status: "failed",
+      durationSeconds,
       executionId: job.executionRef?.executionId || "",
       error: "Execution record missing (backend restart or lost worker state)",
       finalizedAt: new Date().toISOString(),
