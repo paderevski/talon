@@ -587,31 +587,5 @@ export default function createLocalExecutionAdapter() {
 
       return { ok: true, state: record.state };
     },
-
-    async getDebugSnapshot() {
-      const executions = Array.from(executionRecords.values()).map(
-        (record) => ({
-          executionId: record.executionRef.executionId,
-          state: record.state,
-          repo: record.jobSpec.repo,
-          branch: record.jobSpec.branch,
-          entryScript: record.jobSpec.entryScript,
-          queuedAt: record.queuedAt,
-          startedAt: record.startedAt,
-          endedAt: record.endedAt,
-          cancelRequested: record.cancelRequested,
-          exitCode: record.exitCode,
-        }),
-      );
-
-      return {
-        provider: "local",
-        maxConcurrentJobs,
-        runningCount,
-        queuedCount: queue.length,
-        queuedExecutionIds: [...queue],
-        executions,
-      };
-    },
   };
 }

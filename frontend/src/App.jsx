@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { cancelJob, fetchComputeOptions, fetchCurrentUser, fetchJobDetails, fetchJobFiles, fetchJobs, fetchRepoTree, fetchResults, hideJob, login, logout, setUnauthorizedHandler, submitJob, unhideJob } from "./api/client";
+import { cancelJob, fetchComputeOptions, fetchCurrentUser, fetchJobFiles, fetchJobs, fetchRepoTree, fetchResults, hideJob, login, logout, setUnauthorizedHandler, submitJob, unhideJob } from "./api/client";
 import NewJobPanel from "./components/NewJobPanel";
 import RepoBrowserPanel from "./components/RepoBrowserPanel";
 import JobStatusPanel from "./components/JobStatusPanel";
 import ResultsPanel from "./components/ResultsPanel";
 import GitHubCredentialsPanel from "./components/GitHubCredentialsPanel";
-import ExecutionDebugPanel from "./components/ExecutionDebugPanel";
 import AdminConsole from "./components/AdminConsole";
 import ChangePasswordDialog from "./components/ChangePasswordDialog";
 import TeacherStudentsPanel from "./components/TeacherStudentsPanel";
@@ -192,7 +191,6 @@ function getStoredGithubSettings() {
 }
 
 export default function App() {
-  const showDebugPanel = new URLSearchParams(window.location.search).get("debug") === "1";
   const [authUser, setAuthUser] = useState(getStoredAuthUser);
   const [activePage, setActivePage] = useState("landing");
   const [githubSettings, setGithubSettings] = useState(getStoredGithubSettings);
@@ -215,7 +213,6 @@ export default function App() {
   const [jobs, setJobs] = useState([]);
   const [allJobs, setAllJobs] = useState([]);
   const [results, setResults] = useState([]);
-  const [executionByJobId, setExecutionByJobId] = useState({});
   const [filesByJobId, setFilesByJobId] = useState({});
   const [jobActionError, setJobActionError] = useState("");
   const [activeFilter, setActiveFilter] = useState("completed");
@@ -283,38 +280,27 @@ export default function App() {
     return () => setUnauthorizedHandler(null);
   }, []);
 
+  // Result cards read their files from the stored result. Only a job that is
+  // still active has no result yet, so only those need a files request; the
+  // list endpoint already brings every job's status up to date.
   const hydrateJobRuntime = async (jobList) => {
-    if (!jobList.length) {
-      setExecutionByJobId({});
-      setFilesByJobId({});
-      return;
-    }
+    const active = jobList.filter((job) => job.status === "queued" || job.status === "running");
+    const fileResults = await Promise.allSettled(active.map((job) => fetchJobFiles(job.id)));
 
-    const detailResults = await Promise.allSettled(
-      jobList.map((job) => fetchJobDetails(job.id))
-    );
-    const fileResults = await Promise.allSettled(
-      jobList.map((job) => fetchJobFiles(job.id))
-    );
-
-    const nextExecutionByJobId = {};
-    const nextFilesByJobId = {};
-
-    jobList.forEach((job, index) => {
-      const detailResult = detailResults[index];
-      const fileResult = fileResults[index];
-
-      if (detailResult.status === "fulfilled") {
-        nextExecutionByJobId[job.id] = detailResult.value.execution || null;
-      }
-
-      if (fileResult.status === "fulfilled") {
-        nextFilesByJobId[job.id] = fileResult.value.items || [];
-      }
+    setFilesByJobId((previous) => {
+      const next = {};
+      jobList.forEach((job) => {
+        if (previous[job.id]) {
+          next[job.id] = previous[job.id];
+        }
+      });
+      active.forEach((job, index) => {
+        if (fileResults[index].status === "fulfilled") {
+          next[job.id] = fileResults[index].value.items || [];
+        }
+      });
+      return next;
     });
-
-    setExecutionByJobId(nextExecutionByJobId);
-    setFilesByJobId(nextFilesByJobId);
   };
 
   const load = async () => {
@@ -341,7 +327,6 @@ export default function App() {
     } else {
       setJobs([]);
       setAllJobs([]);
-      setExecutionByJobId({});
       setFilesByJobId({});
     }
 
@@ -669,6 +654,7 @@ export default function App() {
     window.localStorage.removeItem(authStorageKey);
     setIsUserMenuOpen(false);
     setIsMobileNavOpen(false);
+    setUsername("");
     setPassword("");
     setAuthError("");
     setRepoData(emptyRepo);
@@ -676,7 +662,6 @@ export default function App() {
     setRepoDirectoryPath("");
     setJobs([]);
     setResults([]);
-    setExecutionByJobId({});
     setFilesByJobId({});
     setJobActionError("");
     setActiveFilter("completed");
@@ -924,7 +909,6 @@ export default function App() {
             onSave={onSaveGithubSettings}
             authUsername={authUser?.username || ""}
           />
-          {showDebugPanel ? <ExecutionDebugPanel /> : null}
             </>
           ) : null}
             </>

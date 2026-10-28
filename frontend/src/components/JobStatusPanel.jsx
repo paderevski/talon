@@ -3,7 +3,9 @@ import {
   jobStatusFilters,
   statusLabel,
 } from "talon-shared/status";
+import { useState } from "react";
 import FocusScrollRegion from "./FocusScrollRegion";
+import JobLogsPanel from "./JobLogsPanel";
 
 function formatSubmittedValue(job) {
   const submittedAt = String(job?.executionRef?.submittedAt ?? "").trim();
@@ -48,6 +50,9 @@ export default function JobStatusPanel({
   jobActionError,
   readOnly = false,
 }) {
+  const [logJobId, setLogJobId] = useState(null);
+  const logJob = logJobId ? jobs.find((job) => job.id === logJobId) || null : null;
+
   const isFilterDisabled = (filter) => {
     if (filter === "running") {
       return !statusAvailability?.hasRunning;
@@ -129,6 +134,7 @@ export default function JobStatusPanel({
                 <th>Submitted</th>
                 <th>Duration</th>
                 <th>Cost</th>
+                <th>Logs</th>
                 {readOnly ? null : <th>Actions</th>}
               </tr>
             </thead>
@@ -147,6 +153,15 @@ export default function JobStatusPanel({
                   <td className="mono-sm">{formatSubmittedValue(job)}</td>
                   <td className="mono-sm">{job.duration}</td>
                   <td className="mono-sm">{String(job?.cost ?? "").trim() || "$0.00"}</td>
+                  <td>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      type="button"
+                      onClick={() => setLogJobId(logJobId === job.id ? null : job.id)}
+                    >
+                      {logJobId === job.id ? "Hide logs" : "Logs"}
+                    </button>
+                  </td>
                   {readOnly ? null : (
                   <td>
                       <>
@@ -173,6 +188,13 @@ export default function JobStatusPanel({
           </table>
         </FocusScrollRegion>
       </div>
+      {logJob ? (
+        <JobLogsPanel
+          job={logJob}
+          live={logJob.status === "queued" || logJob.status === "running"}
+          onClose={() => setLogJobId(null)}
+        />
+      ) : null}
       {jobActionError ? <div className="repo-error">{jobActionError}</div> : null}
     </section>
   );

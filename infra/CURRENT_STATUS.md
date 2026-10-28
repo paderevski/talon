@@ -1,6 +1,6 @@
 # Talon infra - current status
 
-_Last updated: 2026-10-28. The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
+_Last updated: 2026-10-28 (cleanup pass merged; the box runs it only after a redeploy, see History). The Talon app and job instances were last checked on the live box that day, before the cleanup pass; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
 Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 (gitignored). Architecture doc: `docs/talon-architecture-summary-v7.docx`
 (see "Gaps to production" for where it and reality differ).
@@ -252,7 +252,7 @@ know about AWS and the decisions behind the design.
 - Built: `ec2ExecutionAdapter.js` behind the same adapter interface
   (`start / getStatus / getLogs / listOutputFiles / cancel`), reserve-then-
   settle billing, and the reconciler (see "Decided approach"). The Kubernetes
-  adapter file is an old stub, not a guide.
+  adapter stub has been removed.
 
 ### Verified against AWS docs (2026-10-25)
 
@@ -415,7 +415,8 @@ done (below); the adapter and everything after it are not built yet.
    charges do not wait for someone to load them, terminates instances with no
    job row, a finished job, or past limit + 20 min, the last sweep after the
    script's `timeout` at the limit and the instance's failsafe shutdown at
-   limit + 15 min), static rate table
+   limit + 15 min; a job whose instance vanished without a trace is billed
+  from its launch time, capped at limit + boot allowance), static rate table
    (`ec2Rates.js`; t4g.small/medium/large plus `JOB_RATE_OVERHEAD_CENTS_PER_HOUR`,
    default 1 cent/h for IPv4 and EBS), admin-only `compute: "ec2"` on
    `POST /api/jobs`, `GET /api/jobs/compute-options`, a "Run on (admin)" select
@@ -625,7 +626,7 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   quotas. We are in LCPS's shared "Academies" account; decide if that is
   acceptable.
 - Student documentation (budgets, checkpointing examples, how to use Talon).
-- Remove the debug panel and the Kubernetes adapter stub.
+- ~~Remove the debug panel and the Kubernetes adapter stub~~ _(done 2026-10-28 with the "Save as Template" button; `EXECUTION_PROVIDER` is gone.)_
 
 ## Later: two web servers or auto-replacement
 
@@ -668,4 +669,19 @@ migrations take an advisory lock (concurrent deploys are safe).
   limits, per-user and system caps, live logs, output files from both
   sources. Fixes found by testing: apt over HTTPS on arm64, unbuffered
   Python output, the `changed/` S3 permission. Merged to `main`.
+- 2026-10-28: Cleanup pass, merged to `main` (dead code removed,
+  jobSync/reconciler/form tests, lost jobs billed for runtime). Walking the app
+  as each role found: failed jobs showed no reason, the repo browser said only
+  "Request failed: 422", and the live-log endpoint had no UI. Fixed: the result
+  card shows the error, repo and branch errors say what is wrong, and a "Logs"
+  button on each job row opens a log panel (polls while the job runs).
+  Follow-ups: job lists no longer request every job's details and files on
+  each refresh, the `[github-credentials]` debug logging is gone, logout
+  clears the typed username, an over-pool allocation says so, and the roster
+  message no longer shifts the table. Tests: `npm run test:frontend` is new
+  (form estimate/budget logic in `frontend/src/utils/jobPlan.js`), and
+  `jobSync` and the reconciler's lost-job path are covered in
+  `backend/tests/postgres/run.mjs`. Not exercised on a real instance: the
+  lost-job billing change, the log panel on EC2 jobs, and the new error
+  messages; check them after the next deploy.
 - `infra_2/` is the older EKS design, kept for reference only.

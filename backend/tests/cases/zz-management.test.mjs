@@ -127,7 +127,9 @@ export async function run({ baseUrl }) {
     send(teacherJar, baseUrl, "POST", "/api/teacher/allocations", { studentUsername, amount });
   assert((await allocate("mgmt_pupil", 8.25)).status === 201, "Expected allocation to succeed");
   assert((await allocate("mgmt_outsider", 1)).status === 404, "Expected allocation outside the class to 404");
-  assert((await allocate("mgmt_pupil", 50)).status === 409, "Expected over-allocation to be refused with 409");
+  const overAllocation = await allocate("mgmt_pupil", 50);
+  assert(overAllocation.status === 409, "Expected over-allocation to be refused with 409");
+  assert(/budget pool/i.test(overAllocation.payload.message), `Expected a pool-specific message, got ${overAllocation.payload.message}`);
 
   const roster = await send(teacherJar, baseUrl, "GET", "/api/teacher/students");
   assert(roster.payload.roster.teacher.poolBalance === 12.25, "Expected pool to drop to $12.25");

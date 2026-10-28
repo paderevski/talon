@@ -20,6 +20,7 @@ import createEc2ExecutionAdapter, { assertEntryScript, buildRunScript } from "..
 import { JobLimitError } from "../../src/repositories/postgres/jobsPostgresRepository.js";
 import { launchEc2Job, parseEnvironmentVariables } from "../../src/services/ec2Jobs.js";
 import { createEc2Reconciler } from "../../src/services/ec2Reconciler.js";
+import { createJobSync } from "../../src/services/jobSync.js";
 
 const databaseUrl = testDatabaseUrl;
 
@@ -543,6 +544,208 @@ const tests = [
     });
     await reconciler.tick();
     assert(terminated.sort().join() === "i-finished,i-orphan,i-overrun,i-untagged", `terminated ${terminated.sort()}`);
+  }],
+
+  ["ec2 reconciler: a job whose execution is gone is marked lost; other sync errors leave it alone", async () => {
+    const jobs = createJobsPostgresRepository({ pool });
+    const owner = await scalar("SELECT id FROM users WHERE username = 'admin'");
+    const mk = (name) => jobs.createWithReservation({
+      ownerUserId: owner, name, repo: "x/y", executionProvider: "ec2", hourlyRateCents: 360,
+      maxRuntimeSeconds: 100, reserveCents: 5, enforceBalance: false,
+    });
+    const gone = await mk("lost-gone");
+    const flaky = await mk("lost-flaky");
+    const fine = await mk("lost-fine");
+
+    const synced = [];
+    const lost = [];
+    const errors = [];
+    const reconciler = createEc2Reconciler({
+      jobsRepository: { ...jobs, async listUnfinished() { return [gone, flaky, fine]; } },
+      adapter: { async listJobInstances() { return []; }, async terminateInstance() {} },
+      sync: async (job) => {
+        synced.push(job.id);
+        if (job.id === gone.id) throw Object.assign(new Error("not found"), { status: 404 });
+        if (job.id === flaky.id) throw new Error("AWS throttled");
+      },
+      markLost: async (job) => { lost.push(job.id); },
+      log: { log() {}, error(message) { errors.push(message); } },
+    });
+    await reconciler.tick();
+    assert(synced.length === 3, `a failing job must not stop the others: synced ${synced}`);
+    assert(lost.length === 1 && lost[0] === gone.id, `only the 404 job is lost: ${lost}`);
+    assert(errors.length === 1 && errors[0].includes(flaky.id) && errors[0].includes("AWS throttled"), `errors ${errors}`);
+  }],
+
+  ["ec2 reconciler + jobSync: a vanished instance fails the job, is billed from launch time, the rest refunded once", async () => {
+    const jobs = createJobsPostgresRepository({ pool });
+    const userId = await scalar("SELECT id FROM users WHERE username = 'student_a1'");
+    const accountId = await withTransaction((client) => ensureAccount(client, userId, "personal"), { pool });
+    await pool.query("UPDATE budget_accounts SET balance_cents = balance_cents + 1000 WHERE id = $1", [accountId]);
+    await pool.query("INSERT INTO budget_ledger (account_id, amount_cents, kind, note) VALUES ($1, 1000, 'grant', 'test top-up')", [accountId]);
+    const balance = async () => Number(await scalar("SELECT balance_cents FROM budget_accounts WHERE id = $1", [accountId]));
+    const start = await balance();
+
+    const job = await jobs.createWithReservation({
+      ownerUserId: userId, name: "vanished", repo: "x/y", executionProvider: "ec2",
+      hourlyRateCents: 360, maxRuntimeSeconds: 1800, reserveCents: 200,
+    });
+    await jobs.setExecutionRef(job.id, { provider: "ec2", executionId: job.id, jobId: job.id, instanceId: "i-gone", launchedAt: "2026-01-01T00:00:00Z" });
+    assert((await balance()) === start - 200, "reserved at creation");
+
+    const sync = createJobSync({
+      jobsRepository: jobs,
+      getExecutionStatus: async () => { throw Object.assign(new Error("instance not found"), { status: 404 }); },
+      getExecutionOutputFiles: async () => [],
+      now: () => Date.parse("2026-01-01T00:10:00Z"),
+    });
+    // Earlier tests leave unfinished ec2 jobs behind; only look at this one.
+    const onlyThisJob = { ...jobs, async listUnfinished(provider) { return (await jobs.listUnfinished(provider)).filter((j) => j.id === job.id); } };
+    const reconciler = createEc2Reconciler({
+      jobsRepository: onlyThisJob,
+      adapter: { async listJobInstances() { return []; }, async terminateInstance() {} },
+      sync: sync.synchronizeJobFromExecution,
+      markLost: sync.markJobAsExecutionLost,
+      log: { log() {}, error() {} },
+    });
+    await reconciler.tick();
+    await reconciler.tick();
+
+    const after = await jobs.findById(job.id);
+    assert(after.status === "failed" && String(after.resultSyncKey).startsWith("lost:"), `job ${after.status} ${after.resultSyncKey}`);
+    // Launched 10 minutes before it was found missing: 600 s at 360 c/h = 60 c.
+    assert(after.costCents === 60 && after.duration, `lost job is billed its runtime, got ${after.costCents} ${after.duration}`);
+    assert((await balance()) === start - 60, `reservation minus runtime comes back, balance moved ${start - (await balance())}`);
+    assert(Number(await scalar("SELECT count(*) FROM results WHERE job_id = $1", [job.id])) === 1, "one result row");
+    assert(Number(await scalar("SELECT count(*) FROM budget_ledger WHERE job_id = $1 AND kind = 'refund'", [job.id])) === 1, "one refund");
+
+    // Found missing days later: billed no more than the time limit plus the boot allowance (all that was reserved).
+    const stale = await jobs.createWithReservation({
+      ownerUserId: userId, name: "vanished-days", repo: "x/y", executionProvider: "ec2",
+      hourlyRateCents: 360, maxRuntimeSeconds: 1800, reserveCents: 200,
+    });
+    await jobs.setExecutionRef(stale.id, { provider: "ec2", executionId: stale.id, launchedAt: "2025-12-01T00:00:00Z" });
+    const lostStale = await sync.markJobAsExecutionLost(await jobs.findById(stale.id));
+    assert(lostStale.costCents === 200, `capped cost ${lostStale.costCents}`);
+    assert((await pool.query("SELECT duration_seconds FROM jobs WHERE id = $1", [stale.id])).rows[0].duration_seconds === 2100, "duration capped at limit + allowance");
+
+    // Never launched (no launch time recorded): nothing to bill, everything comes back.
+    const unlaunched = await jobs.createWithReservation({
+      ownerUserId: userId, name: "vanished-unlaunched", repo: "x/y", executionProvider: "ec2",
+      hourlyRateCents: 360, maxRuntimeSeconds: 1800, reserveCents: 200,
+    });
+    await jobs.setExecutionRef(unlaunched.id, { provider: "ec2", executionId: unlaunched.id });
+    const lostUnlaunched = await sync.markJobAsExecutionLost(await jobs.findById(unlaunched.id));
+    assert(lostUnlaunched.costCents === 0, `unlaunched cost ${lostUnlaunched.costCents}`);
+    assert((await balance()) === start - 60 - 200, `balance after all three ${start - (await balance())}`);
+    assert((await onlyThisJob.listUnfinished("ec2")).length === 0, "no longer unfinished");
+  }],
+
+  ["jobSync: progress, completion, failure messages, and repeat syncs do not finalize twice", async () => {
+    const jobs = createJobsPostgresRepository({ pool });
+    const owner = await scalar("SELECT id FROM users WHERE username = 'admin'");
+    const mk = async (name) => {
+      const job = await jobs.create({ ownerUserId: owner, name, repo: "x/y" });
+      await jobs.setExecutionRef(job.id, { provider: "local", executionId: `exec-${name}` });
+      return jobs.findById(job.id);
+    };
+    let execution = {};
+    let fileCalls = 0;
+    let filesError = false;
+    const sync = createJobSync({
+      jobsRepository: jobs,
+      getExecutionStatus: async () => execution,
+      getExecutionOutputFiles: async () => {
+        fileCalls += 1;
+        if (filesError) throw new Error("s3 down");
+        return [{ name: "model.bin", size: "1 KB", source: "output_dir" }, { size: 5 }];
+      },
+    });
+    const resultRow = async (jobId) => (await pool.query("SELECT * FROM results WHERE job_id = $1", [jobId])).rows[0];
+
+    // No execution ref: nothing to look at.
+    const bare = await jobs.create({ ownerUserId: owner, name: "sync-bare", repo: "x/y" });
+    const untouched = await sync.synchronizeJobFromExecution(await jobs.findById(bare.id));
+    assert(untouched.job.id === bare.id && untouched.execution === undefined, "job without a ref comes back as is");
+
+    // Progress while running; the same state again changes nothing.
+    const running = await mk("sync-running");
+    execution = { state: "running", startedAt: "2026-01-01T00:00:00Z", endedAt: "2026-01-01T00:01:30Z" };
+    let out = await sync.synchronizeJobFromExecution(running);
+    assert(out.job.status === "running" && out.job.duration && !out.job.resultSyncKey, `running ${JSON.stringify(out.job)}`);
+    assert(!(await resultRow(running.id)), "no result row while running");
+
+    // Completion stores the result with normalized files; a repeat is a no-op.
+    const done = await mk("sync-done");
+    execution = { state: "completed", startedAt: "2026-01-01T00:00:00Z", endedAt: "2026-01-01T00:02:00Z" };
+    out = await sync.synchronizeJobFromExecution(done);
+    assert(out.job.status === "completed" && out.job.resultSyncKey === "2026-01-01T00:02:00Z", `done ${JSON.stringify(out.job)}`);
+    const row = await resultRow(done.id);
+    assert(row.status === "completed" && row.error === null && row.duration_seconds === 120, `result ${JSON.stringify(row)}`);
+    assert(row.files.length === 2 && row.files[0].name === "model.bin" && row.files[1].name === "unnamed" && row.files[1].size === "5", `files ${JSON.stringify(row.files)}`);
+    const callsBefore = fileCalls;
+    out = await sync.synchronizeJobFromExecution(out.job);
+    assert(fileCalls === callsBefore, "an already-synced job must not be finalized again");
+    assert(Number(await scalar("SELECT count(*) FROM results WHERE job_id = $1", [done.id])) === 1, "one result row");
+
+    // Failure messages.
+    const failureError = async (name, state) => {
+      const job = await mk(name);
+      execution = { endedAt: "2026-01-01T00:03:00Z", ...state };
+      const result = await sync.synchronizeJobFromExecution(job);
+      assert(result.job.status === "failed", `${name} status ${result.job.status}`);
+      return (await resultRow(job.id)).error;
+    };
+    assert((await failureError("sync-cancel", { state: "cancelled" })) === "Job cancelled", "cancelled message");
+    assert((await failureError("sync-msg", { state: "failed", message: "Time limit reached" })) === "Time limit reached", "execution message wins");
+    assert((await failureError("sync-oom", { state: "failed", exitCode: 137 })).includes("out of memory"), "exit 137 explains memory");
+    assert((await failureError("sync-exit", { state: "failed", exitCode: 2 })) === "Execution failed (exit code 2)", "exit code is shown");
+    assert((await failureError("sync-plain", { state: "failed" })) === "Execution failed", "plain failure");
+
+    // A file listing error must not stop the job from being finalized.
+    filesError = true;
+    const noFiles = await mk("sync-nofiles");
+    execution = { state: "completed", endedAt: "2026-01-01T00:04:00Z" };
+    out = await sync.synchronizeJobFromExecution(noFiles);
+    assert(out.job.status === "completed" && (await resultRow(noFiles.id)).files.length === 0, "finalized without files");
+    filesError = false;
+
+    // The sync key from the execution wins over the end time.
+    const keyed = await mk("sync-keyed");
+    execution = { state: "completed", syncKey: "custom-key", endedAt: "2026-01-01T00:05:00Z" };
+    out = await sync.synchronizeJobFromExecution(keyed);
+    assert(out.job.resultSyncKey === "custom-key", `key ${out.job.resultSyncKey}`);
+  }],
+
+  ["jobSync: markJobAsExecutionLost fails the job once, and only fixes the status of one already finalized", async () => {
+    const jobs = createJobsPostgresRepository({ pool });
+    const owner = await scalar("SELECT id FROM users WHERE username = 'admin'");
+    const sync = createJobSync({ jobsRepository: jobs, getExecutionStatus: async () => ({}), getExecutionOutputFiles: async () => [] });
+    const mk = async (name) => {
+      const job = await jobs.create({ ownerUserId: owner, name, repo: "x/y" });
+      await jobs.setExecutionRef(job.id, { provider: "local", executionId: `exec-${name}` });
+      return jobs.findById(job.id);
+    };
+
+    const job = await mk("lost-once");
+    const lost = await sync.markJobAsExecutionLost(job);
+    assert(lost.status === "failed" && lost.resultSyncKey === "lost:exec-lost-once", `lost ${JSON.stringify(lost)}`);
+    const row = (await pool.query("SELECT * FROM results WHERE job_id = $1", [job.id])).rows[0];
+    assert(row.status === "failed" && row.error.startsWith("Execution record missing"), `result ${JSON.stringify(row)}`);
+
+    // Finalized as completed earlier, but the status was left at running: only the status changes.
+    const finished = await mk("lost-finalized");
+    await jobs.finalize(finished.id, { syncKey: "done", status: "completed", durationSeconds: 5 });
+    await pool.query("UPDATE jobs SET status = 'running' WHERE id = $1", [finished.id]);
+    const fixed = await sync.markJobAsExecutionLost(await jobs.findById(finished.id));
+    assert(fixed.status === "failed" && fixed.resultSyncKey === "done", `fixed ${JSON.stringify(fixed)}`);
+    const kept = (await pool.query("SELECT status, error FROM results WHERE job_id = $1", [finished.id])).rows[0];
+    assert(kept.status === "completed" && kept.error === null, "stored result is left alone");
+
+    // No execution ref at all falls back to "unknown".
+    const bare = await jobs.create({ ownerUserId: owner, name: "lost-bare", repo: "x/y" });
+    const bareLost = await sync.markJobAsExecutionLost(await jobs.findById(bare.id));
+    assert(bareLost.resultSyncKey === "lost:unknown", `bare ${bareLost.resultSyncKey}`);
   }],
 
   ["ec2 adapter: launch uploads input, tags the instance, falls back to another subnet", async () => {

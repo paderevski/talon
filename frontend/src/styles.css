@@ -397,12 +397,31 @@ body {
   border-bottom: 1px solid var(--border);
   background: var(--bg-card);
 }
-.debug-inline-stats {
+.job-log-panel {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+}
+.job-log-head {
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  color: var(--text-secondary);
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
   font-size: 12px;
+  color: var(--text-secondary);
+}
+.job-log-body {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 320px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .filter-chip {
   border: 1px solid var(--border);
@@ -528,6 +547,11 @@ td:last-child, th:last-child { border-right: none; }
   color: var(--text-secondary);
   margin-bottom: 5px;
   font-size: 12px;
+}
+.result-error {
+  color: var(--accent-red);
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 .result-meta-label { color: var(--text-muted); font-size: 11px; }
 .result-files {
@@ -711,6 +735,14 @@ td:last-child, th:last-child { border-right: none; }
   padding: 3px 8px;
   border-radius: 6px;
   user-select: all;
+}
+.feedback-slot {
+  min-height: 36px;
+  margin-bottom: 10px;
+}
+.feedback-slot > .notice-ok,
+.feedback-slot > .repo-error {
+  margin-bottom: 0;
 }
 .notice-ok {
   margin-bottom: 10px;

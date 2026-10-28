@@ -1,13 +1,12 @@
 import { mapExecutionStateToJobStatus } from "talon-shared/status";
 import { getExecutionOutputFiles, getExecutionStatus } from "./jobExecutionService.js";
 import { getJobsRepository } from "../repositories/jobsRepository.js";
+import { bootAllowanceSeconds } from "../execution/ec2Rates.js";
 import { durationSecondsBetween, formatDuration } from "../utils/jobFormat.js";
 
 // Brings a job row in line with what its execution reports: progress while it
 // runs, and on the first look after it ends, the stored result and the charge.
 // Used when someone loads a job and by the EC2 reconciler.
-
-const jobsRepository = await getJobsRepository();
 
 function isTerminalExecutionState(executionState) {
   return ["completed", "failed", "cancelled"].includes(executionState);
@@ -25,70 +24,93 @@ function normalizeResultFiles(items) {
   }));
 }
 
-export async function markJobAsExecutionLost(job) {
-  // Already finalized once (result stored): just make sure it shows as failed.
-  if (job.resultSyncKey) {
-    return jobsRepository.recordProgress(job.id, { status: "failed" });
-  }
-
-  return jobsRepository.finalize(job.id, {
-    syncKey: `lost:${job.executionRef?.executionId || "unknown"}`,
-    status: "failed",
-    executionId: job.executionRef?.executionId || "",
-    error: "Execution record missing (backend restart or lost worker state)",
-    finalizedAt: new Date().toISOString(),
-  });
-}
-
-export async function synchronizeJobFromExecution(job) {
-  if (!job?.executionRef) {
-    return { job };
-  }
-
-  const execution = await getExecutionStatus(job.executionRef);
-  const mappedStatus = mapExecutionStateToJobStatus(execution.state);
-  const durationSeconds = durationSecondsBetween(execution.startedAt, execution.endedAt);
-
-  if (isTerminalExecutionState(execution.state)) {
-    const syncKey = execution.syncKey || execution.endedAt || execution.state;
-    if (job.resultSyncKey === syncKey) {
-      return { job, execution };
+export function createJobSync({ jobsRepository, getExecutionStatus, getExecutionOutputFiles, now = () => Date.now() }) {
+  async function markJobAsExecutionLost(job) {
+    // Already finalized once (result stored): just make sure it shows as failed.
+    if (job.resultSyncKey) {
+      return jobsRepository.recordProgress(job.id, { status: "failed" });
     }
 
-    let files = [];
-    try {
-      files = await getExecutionOutputFiles(job.executionRef);
-    } catch {
-      files = [];
+    // An instance that launched was billed by AWS until it vanished, so the
+    // student pays for the time since launch (never more than the time limit
+    // plus the boot allowance, which is also all that was reserved).
+    const launchedMs = Date.parse(job.executionRef?.launchedAt || "");
+    let durationSeconds;
+    if (Number.isFinite(launchedMs)) {
+      durationSeconds = Math.max(0, Math.round((now() - launchedMs) / 1000));
+      if (job.maxRuntimeSeconds) {
+        durationSeconds = Math.min(durationSeconds, job.maxRuntimeSeconds + bootAllowanceSeconds());
+      }
     }
 
-    const status = execution.state === "completed" ? "completed" : "failed";
-    const finalized = await jobsRepository.finalize(job.id, {
-      syncKey,
-      status,
+    return jobsRepository.finalize(job.id, {
+      syncKey: `lost:${job.executionRef?.executionId || "unknown"}`,
+      status: "failed",
       durationSeconds,
-      executionId: job.executionRef.executionId || "",
-      files: normalizeResultFiles(files),
-      error:
-        status === "failed"
-          ? execution.state === "cancelled"
-            ? "Job cancelled"
-            : execution.message ||
-              (execution.exitCode === 137
-                ? "The script was killed (exit code 137), usually because it ran out of memory. Try a larger instance."
-                : `Execution failed${Number.isFinite(execution.exitCode) ? ` (exit code ${execution.exitCode})` : ""}`)
-          : null,
-      finalizedAt: execution.endedAt || null,
+      executionId: job.executionRef?.executionId || "",
+      error: "Execution record missing (backend restart or lost worker state)",
+      finalizedAt: new Date().toISOString(),
     });
-    return { job: finalized, execution };
   }
 
-  if (mappedStatus !== job.status || (durationSeconds !== null && formatDuration(durationSeconds) !== job.duration)) {
-    return {
-      job: await jobsRepository.recordProgress(job.id, { status: mappedStatus, durationSeconds }),
-      execution,
-    };
+  async function synchronizeJobFromExecution(job) {
+    if (!job?.executionRef) {
+      return { job };
+    }
+
+    const execution = await getExecutionStatus(job.executionRef);
+    const mappedStatus = mapExecutionStateToJobStatus(execution.state);
+    const durationSeconds = durationSecondsBetween(execution.startedAt, execution.endedAt);
+
+    if (isTerminalExecutionState(execution.state)) {
+      const syncKey = execution.syncKey || execution.endedAt || execution.state;
+      if (job.resultSyncKey === syncKey) {
+        return { job, execution };
+      }
+
+      let files = [];
+      try {
+        files = await getExecutionOutputFiles(job.executionRef);
+      } catch {
+        files = [];
+      }
+
+      const status = execution.state === "completed" ? "completed" : "failed";
+      const finalized = await jobsRepository.finalize(job.id, {
+        syncKey,
+        status,
+        durationSeconds,
+        executionId: job.executionRef.executionId || "",
+        files: normalizeResultFiles(files),
+        error:
+          status === "failed"
+            ? execution.state === "cancelled"
+              ? "Job cancelled"
+              : execution.message ||
+                (execution.exitCode === 137
+                  ? "The script was killed (exit code 137), usually because it ran out of memory. Try a larger instance."
+                  : `Execution failed${Number.isFinite(execution.exitCode) ? ` (exit code ${execution.exitCode})` : ""}`)
+            : null,
+        finalizedAt: execution.endedAt || null,
+      });
+      return { job: finalized, execution };
+    }
+
+    if (mappedStatus !== job.status || (durationSeconds !== null && formatDuration(durationSeconds) !== job.duration)) {
+      return {
+        job: await jobsRepository.recordProgress(job.id, { status: mappedStatus, durationSeconds }),
+        execution,
+      };
+    }
+
+    return { job, execution };
   }
 
-  return { job, execution };
+  return { markJobAsExecutionLost, synchronizeJobFromExecution };
 }
+
+export const { markJobAsExecutionLost, synchronizeJobFromExecution } = createJobSync({
+  jobsRepository: await getJobsRepository(),
+  getExecutionStatus,
+  getExecutionOutputFiles,
+});

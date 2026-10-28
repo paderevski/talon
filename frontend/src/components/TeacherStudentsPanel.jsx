@@ -187,8 +187,11 @@ export default function TeacherStudentsPanel({ authUser, onOpenStudentView }) {
         </div>
       ) : null}
 
-      {actionMessage ? <div className="notice-ok">{actionMessage}</div> : null}
-      {actionError ? <div className="repo-error">{actionError}</div> : null}
+      {/* Reserved height so a message appearing does not push the tables down. */}
+      <div className="feedback-slot" aria-live="polite">
+        {actionMessage ? <div className="notice-ok">{actionMessage}</div> : null}
+        {actionError ? <div className="repo-error">{actionError}</div> : null}
+      </div>
 
       {isLoading ? <div className="form-hint">Loading student roster...</div> : null}
 

@@ -5,7 +5,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   cancelExecution,
-  getExecutionDebugSnapshot,
   getExecutionLogs,
   getExecutionOutputFiles,
   getExecutionProvider,
@@ -250,15 +249,6 @@ router.post("/", async (req, res) => {
     message: "Job queued",
     job: savedJob,
   });
-});
-
-router.get("/debug/executions", async (req, res) => {
-  if (!hasRole(req.user, "admin")) {
-    return res.status(403).json({ message: "Requires role: admin" });
-  }
-
-  const snapshot = await getExecutionDebugSnapshot();
-  return res.json(snapshot);
 });
 
 router.get("/:id", async (req, res) => {

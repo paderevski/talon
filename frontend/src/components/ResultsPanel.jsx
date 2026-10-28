@@ -64,10 +64,17 @@ export default function ResultsPanel({ results, jobs, filesByJobId }) {
                 <span className="result-meta-label">Duration</span>
                 <span className="result-meta-value">{result.duration}</span>
               </div>
-              <div className="result-meta-row">
-                <span className="result-meta-label">Output</span>
-                <span className="result-meta-value">{result.output || result.error || "—"}</span>
-              </div>
+              {result.error ? (
+                <div className="result-meta-row">
+                  <span className="result-meta-label">Error</span>
+                  <span className="result-meta-value result-error">{result.error}</span>
+                </div>
+              ) : (
+                <div className="result-meta-row">
+                  <span className="result-meta-label">Output</span>
+                  <span className="result-meta-value">{result.output || "—"}</span>
+                </div>
+              )}
             </div>
             <div className="result-files">
               {(result.files || []).length ? (result.files || []).map((file, index) => {

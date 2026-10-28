@@ -2,12 +2,9 @@ import { useEffect, useState } from "react";
 import { fetchGithubPublicRepos, fetchRepoTree } from "../api/client";
 import { normalizeRepoInput } from "../utils/repo";
 import { formatDollars } from "../utils/format";
+import { formatRuntime, planJob } from "../utils/jobPlan";
 
 const jobNameCountersStorageKey = "talon.jobNameCounters";
-
-function formatRuntime(seconds) {
-  return seconds < 3600 ? `${seconds / 60} minutes` : `${seconds / 3600} ${seconds === 3600 ? "hour" : "hours"}`;
-}
 
 function toRepoKey(repo) {
   return normalizeRepoInput(repo) || "job";
@@ -93,16 +90,13 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
   const [scriptError, setScriptError] = useState("");
   const canUseRepoDropdown = githubUsername && !repoError && repoOptions.length > 0;
 
-  // Machines come from the server. Without EC2 the job runs on the web server
-  // itself (development, or admins), and there is no machine to choose.
-  const ec2 = compute?.ec2?.enabled ? compute.ec2 : null;
-  const localAllowed = compute ? compute.localAllowed !== false : true;
-  const runOn = form.runOn || (ec2 ? ec2.options.find((o) => o.instanceType === "m7g.large")?.instanceType || ec2.options[0]?.instanceType : "local");
-  const selectedMachine = ec2?.options.find((option) => option.instanceType === runOn) || null;
-  const estimateCents = selectedMachine ? selectedMachine.reserveCentsByRuntime?.[form.maxRuntimeSeconds] ?? null : null;
-  const estimateDollars = estimateCents === null ? null : estimateCents / 100;
-  const overBudget = estimateDollars !== null && budgetDollars !== null && estimateDollars > budgetDollars;
-  const nowhereToRun = !ec2 && !localAllowed;
+  // Machines come from the server; see utils/jobPlan.js.
+  const { ec2, localAllowed, runOn, selectedMachine, estimateDollars, overBudget, nowhereToRun } = planJob({
+    compute,
+    runOn: form.runOn,
+    maxRuntimeSeconds: form.maxRuntimeSeconds,
+    budgetDollars,
+  });
 
   useEffect(() => {
     setForm((prev) => ({
@@ -408,7 +402,6 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
           <button className="btn btn-primary" type="submit" disabled={submitting || overBudget || nowhereToRun}>
             {submitting ? "Submitting..." : "Submit Job"}
           </button>
-          <button className="btn btn-secondary" type="button">Save as Template</button>
         </div>
         {message ? <div className="form-group full"><span className="form-hint">{message}</span></div> : null}
       </form>

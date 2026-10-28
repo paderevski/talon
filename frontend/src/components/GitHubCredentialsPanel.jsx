@@ -33,23 +33,16 @@ export default function GitHubCredentialsPanel({ settings, onSave, authUsername 
     let cancelled = false;
 
     if (!authUsername) {
-      console.info("[github-credentials][frontend] no auth user yet; skipping token status request");
       setTokenStatus({ hasToken: false, tokenLast4: "", updatedAt: null });
       return undefined;
     }
 
-    console.info(
-      `[github-credentials][frontend] loading token status for auth user='${authUsername}'`,
-    );
 
     getGithubTokenStatus(authUsername)
       .then((status) => {
         if (cancelled) {
           return;
         }
-        console.info(
-          `[github-credentials][frontend] token status received in panel (hasToken=${Boolean(status?.hasToken)})`,
-        );
         const backendGithubUsername = String(status?.githubUsername ?? "").trim();
         setGithubUsername(backendGithubUsername);
         onSave({ githubUsername: backendGithubUsername });
@@ -129,9 +122,6 @@ export default function GitHubCredentialsPanel({ settings, onSave, authUsername 
 
     setIsSavingToken(true);
     try {
-      console.info(
-        `[github-credentials][frontend] saving token from panel for auth user='${authUsername || "(missing)"}'`,
-      );
       const response = await saveGithubToken(token, authUsername, githubUsername);
       const savedGithubUsername = String(response?.status?.githubUsername ?? githubUsername).trim();
       setGithubUsername(savedGithubUsername);
@@ -157,9 +147,6 @@ export default function GitHubCredentialsPanel({ settings, onSave, authUsername 
     setTokenMessage("");
     setIsDeletingToken(true);
     try {
-      console.info(
-        `[github-credentials][frontend] deleting token from panel for auth user='${authUsername || "(missing)"}'`,
-      );
       await deleteGithubToken(authUsername);
       setTokenStatus({ hasToken: false, tokenLast4: "", updatedAt: null });
       setTokenInput("");

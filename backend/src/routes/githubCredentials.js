@@ -27,14 +27,8 @@ function getGithubHeaders(token) {
 
 router.get("/", async (req, res) => {
   const talonUser = getTalonUserFromRequest(req);
-  console.info(
-    `[github-credentials] GET /api/github-credentials received (talonUser='${talonUser || "(missing)"}')`,
-  );
 
   if (!talonUser) {
-    console.info(
-      "[github-credentials] responding with hasToken=false because no user is signed in",
-    );
     return res.json({
       hasToken: false,
       tokenLast4: "",
@@ -44,9 +38,6 @@ router.get("/", async (req, res) => {
   }
 
   const status = await getGithubTokenStatusForUser(talonUser);
-  console.info(
-    `[github-credentials] sending status response (hasToken=${Boolean(status?.hasToken)}) for talonUser='${talonUser}'`,
-  );
   return res.json(status);
 });
 
@@ -54,9 +45,6 @@ router.put("/", async (req, res) => {
   const talonUser = getTalonUserFromRequest(req);
   const token = String(req.body?.token ?? "").trim();
   const githubUsername = String(req.body?.githubUsername ?? "").trim();
-  console.info(
-    `[github-credentials] PUT /api/github-credentials received (talonUser='${talonUser || "(missing)"}', tokenProvided=${Boolean(token)}, githubUsernameProvided=${Boolean(githubUsername)})`,
-  );
 
   if (!talonUser) {
     return res.status(401).json({ message: "Sign in required" });
@@ -70,9 +58,6 @@ router.put("/", async (req, res) => {
     headers: getGithubHeaders(token),
   });
 
-  console.info(
-    `[github-credentials] GitHub token validation response status=${testResponse.status}`,
-  );
 
   if (!testResponse.ok) {
     return res.status(400).json({ message: "Invalid GitHub token" });
@@ -80,18 +65,12 @@ router.put("/", async (req, res) => {
 
   await saveGithubTokenForUser(talonUser, token, githubUsername);
   const status = await getGithubTokenStatusForUser(talonUser);
-  console.info(
-    `[github-credentials] token saved and status returned (hasToken=${Boolean(status?.hasToken)}) for talonUser='${talonUser}'`,
-  );
   return res.json({ ok: true, status });
 });
 
 router.patch("/", async (req, res) => {
   const talonUser = getTalonUserFromRequest(req);
   const githubUsername = String(req.body?.githubUsername ?? "").trim();
-  console.info(
-    `[github-credentials] PATCH /api/github-credentials received (talonUser='${talonUser || "(missing)"}', githubUsernameProvided=${Boolean(githubUsername)})`,
-  );
 
   if (!talonUser) {
     return res.status(401).json({ message: "Sign in required" });
@@ -99,35 +78,23 @@ router.patch("/", async (req, res) => {
 
   await saveGithubUsernameForUser(talonUser, githubUsername);
   const status = await getGithubTokenStatusForUser(talonUser);
-  console.info(
-    `[github-credentials] github username saved and status returned (hasToken=${Boolean(status?.hasToken)}, githubUsername='${String(status?.githubUsername ?? "")}') for talonUser='${talonUser}'`,
-  );
   return res.json({ ok: true, status });
 });
 
 router.delete("/", async (req, res) => {
   const talonUser = getTalonUserFromRequest(req);
-  console.info(
-    `[github-credentials] DELETE /api/github-credentials received (talonUser='${talonUser || "(missing)"}')`,
-  );
 
   if (!talonUser) {
     return res.status(401).json({ message: "Sign in required" });
   }
 
   await deleteGithubTokenForUser(talonUser);
-  console.info(
-    `[github-credentials] token deleted for talonUser='${talonUser}'`,
-  );
   return res.json({ ok: true });
 });
 
 router.get("/repos/:username", async (req, res) => {
   const githubUsername = String(req.params.username ?? "").trim();
   const talonUser = getTalonUserFromRequest(req);
-  console.info(
-    `[github-credentials] GET /api/github-credentials/repos/:username received (talonUser='${talonUser || "(missing)"}', githubUsername='${githubUsername || "(missing)"}')`,
-  );
 
   if (!githubUsername) {
     return res.status(400).json({ message: "GitHub username is required" });
@@ -139,9 +106,6 @@ router.get("/repos/:username", async (req, res) => {
     { headers: getGithubHeaders(token) },
   );
 
-  console.info(
-    `[github-credentials] GitHub repos response status=${response.status} (authHeaderUsed=${Boolean(token)})`,
-  );
 
   if (!response.ok) {
     return res
@@ -154,9 +118,6 @@ router.get("/repos/:username", async (req, res) => {
     ? items.map((item) => String(item?.full_name ?? "").trim()).filter(Boolean)
     : [];
 
-  console.info(
-    `[github-credentials] sending repos response count=${repos.length} for githubUsername='${githubUsername}'`,
-  );
 
   return res.json({ items: repos });
 });

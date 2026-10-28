@@ -26,7 +26,8 @@ const githubRepoCache = new Map();
 async function getJson(path) {
   const response = await apiFetch(path);
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.message || `Request failed: ${response.status}`);
   }
   return response.json();
 }
@@ -97,12 +98,8 @@ export function fetchResults({ owner = "" } = {}) {
   return getJson(owner ? `/api/results?owner=${encodeURIComponent(owner)}` : "/api/results");
 }
 
-export function fetchExecutionDebugSnapshot() {
-  return getJson("/api/jobs/debug/executions");
-}
-
-export function fetchJobDetails(jobId) {
-  return getJson(`/api/jobs/${encodeURIComponent(jobId)}`);
+export function fetchJobLogs(jobId, cursor = 0) {
+  return getJson(`/api/jobs/${encodeURIComponent(jobId)}/logs?cursor=${encodeURIComponent(cursor)}`);
 }
 
 export function fetchJobFiles(jobId) {
@@ -331,34 +328,20 @@ export async function fetchGithubPublicRepos(username) {
 }
 
 export async function getGithubTokenStatus(usernameOverride = "") {
-  const effectiveUser = String(usernameOverride ?? "").trim() || "(session user)"; // log label only; the server uses the session
-  console.info(
-    `[github-credentials][frontend] requesting token status (user='${effectiveUser || "(missing)"}')`,
-  );
   const response = await apiFetch("/api/github-credentials", {
     headers: getRequestHeaders(false),
   });
 
-  console.info(
-    `[github-credentials][frontend] token status response received (status=${response.status})`,
-  );
 
   if (!response.ok) {
     throw new Error(`Unable to load token status (${response.status})`);
   }
 
   const payload = await response.json();
-  console.info(
-    `[github-credentials][frontend] token status payload received (hasToken=${Boolean(payload?.hasToken)}, githubUsername='${String(payload?.githubUsername ?? "")}')`,
-  );
   return payload;
 }
 
 export async function saveGithubToken(token, usernameOverride = "", githubUsername = "") {
-  const effectiveUser = String(usernameOverride ?? "").trim() || "(session user)"; // log label only; the server uses the session
-  console.info(
-    `[github-credentials][frontend] sending token save request (user='${effectiveUser || "(missing)"}', tokenProvided=${Boolean(String(token ?? "").trim())})`,
-  );
   const response = await apiFetch("/api/github-credentials", {
     method: "PUT",
     headers: getRequestHeaders(true),
@@ -368,9 +351,6 @@ export async function saveGithubToken(token, usernameOverride = "", githubUserna
     }),
   });
 
-  console.info(
-    `[github-credentials][frontend] token save response received (status=${response.status})`,
-  );
 
   if (!response.ok) {
     let message = `Unable to save token (${response.status})`;
@@ -386,34 +366,21 @@ export async function saveGithubToken(token, usernameOverride = "", githubUserna
   }
 
   const payload = await response.json();
-  console.info(
-    `[github-credentials][frontend] token save payload received (ok=${Boolean(payload?.ok)})`,
-  );
   return payload;
 }
 
 export async function deleteGithubToken(usernameOverride = "") {
-  const effectiveUser = String(usernameOverride ?? "").trim() || "(session user)"; // log label only; the server uses the session
-  console.info(
-    `[github-credentials][frontend] sending token delete request (user='${effectiveUser || "(missing)"}')`,
-  );
   const response = await apiFetch("/api/github-credentials", {
     method: "DELETE",
     headers: getRequestHeaders(false),
   });
 
-  console.info(
-    `[github-credentials][frontend] token delete response received (status=${response.status})`,
-  );
 
   if (!response.ok) {
     throw new Error(`Unable to delete token (${response.status})`);
   }
 
   const payload = await response.json();
-  console.info(
-    `[github-credentials][frontend] token delete payload received (ok=${Boolean(payload?.ok)})`,
-  );
   return payload;
 }
 
@@ -421,11 +388,7 @@ export async function saveGithubCredentialSettings(
   githubUsername,
   usernameOverride = "",
 ) {
-  const effectiveUser = String(usernameOverride ?? "").trim() || "(session user)"; // log label only; the server uses the session
   const normalizedGithubUsername = String(githubUsername ?? "").trim();
-  console.info(
-    `[github-credentials][frontend] sending github settings save request (user='${effectiveUser || "(missing)"}', githubUsername='${normalizedGithubUsername}')`,
-  );
 
   const response = await apiFetch("/api/github-credentials", {
     method: "PATCH",
@@ -433,9 +396,6 @@ export async function saveGithubCredentialSettings(
     body: JSON.stringify({ githubUsername: normalizedGithubUsername }),
   });
 
-  console.info(
-    `[github-credentials][frontend] github settings save response received (status=${response.status})`,
-  );
 
   if (!response.ok) {
     let message = `Unable to save GitHub settings (${response.status})`;
@@ -451,9 +411,6 @@ export async function saveGithubCredentialSettings(
   }
 
   const payload = await response.json();
-  console.info(
-    `[github-credentials][frontend] github settings payload received (ok=${Boolean(payload?.ok)})`,
-  );
   return payload;
 }
 
