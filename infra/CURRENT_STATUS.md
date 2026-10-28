@@ -430,6 +430,16 @@ done (below); the adapter and everything after it are not built yet.
    `PassRole` limit. Note the
    reconciler terminates any `Project=talon, Component=job` instance without a
    job row, so debug instances must use another `Component` tag.
+   **Open problem: output files.** The EC2 path only returns files written
+   to `TALON_OUTPUT_DIR` (`/work/output`); a script that writes relative paths
+   (like `minimal-rnn`'s `script.py`, which writes `output.txt` in its working
+   directory) shows an empty Files list. The local runner also reports files
+   changed in the repo (`repo_changed`). Needs a complete solution, not a
+   patch: decide what counts as output (new or changed files in the repo
+   directory, excluding `venv`, caches and the input itself), size and count
+   limits, upload at job end and on cancel or timeout, and keep the Files
+   list and download route consistent with the local runner. Do this in or
+   before step 3.
 3. Submit form: real instance menu with rate and cost estimate (replaces the
    dead Machine Type dropdown), per-user concurrent job cap (doc: 10 total),
    log upload about every 30 s.
