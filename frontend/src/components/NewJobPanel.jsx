@@ -1,22 +1,13 @@
 import { useEffect, useState } from "react";
 import { fetchGithubPublicRepos, fetchRepoTree } from "../api/client";
 import { normalizeRepoInput } from "../utils/repo";
+import { formatDollars } from "../utils/format";
 
 const jobNameCountersStorageKey = "talon.jobNameCounters";
-const machineTypeOptions = [
-  { value: "cpu-small", label: "CPU Small" },
-  { value: "cpu-medium", label: "CPU Medium" },
-  { value: "cpu-large", label: "CPU Large" },
-  { value: "gpu-small", label: "GPU Small" },
-  { value: "gpu-large", label: "GPU Large" },
-];
-const machineImageOptions = [
-  { value: "python-ml-base", label: "Python ML Base" },
-  { value: "pytorch-2.4-cuda12", label: "PyTorch 2.4 / CUDA 12" },
-  { value: "tensorflow-2.17-cuda12", label: "TensorFlow 2.17 / CUDA 12" },
-  { value: "jax-cuda12", label: "JAX / CUDA 12" },
-  { value: "huggingface-transformers", label: "Hugging Face Transformers" },
-];
+
+function formatRuntime(seconds) {
+  return seconds < 3600 ? `${seconds / 60} minutes` : `${seconds / 3600} ${seconds === 3600 ? "hour" : "hours"}`;
+}
 
 function toRepoKey(repo) {
   return normalizeRepoInput(repo) || "job";
@@ -81,16 +72,15 @@ function makeInitialForm(defaultRepo, defaultBranch) {
     repo,
     branch: defaultBranch || "main",
     entryScript: "train.py",
-    runOn: "local",
-    machineType: "cpu-medium",
-    machineImage: "python-ml-base",
+    runOn: "",
+    maxRuntimeSeconds: 3600,
     s3DataSource: "",
     outputDestination: "Home Directory (~/$JOB_NAME/)",
     environmentVariables: ""
   };
 }
 
-export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, githubUsername, onRepoBranchChange, ec2Options = [] }) {
+export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, githubUsername, onRepoBranchChange, compute = null, budgetDollars = null }) {
   const [form, setForm] = useState(makeInitialForm(defaultRepo, defaultBranch));
   const [isAutoName, setIsAutoName] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -102,6 +92,17 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
   const [isLoadingScripts, setIsLoadingScripts] = useState(false);
   const [scriptError, setScriptError] = useState("");
   const canUseRepoDropdown = githubUsername && !repoError && repoOptions.length > 0;
+
+  // Machines come from the server. Without EC2 the job runs on the web server
+  // itself (development, or admins), and there is no machine to choose.
+  const ec2 = compute?.ec2?.enabled ? compute.ec2 : null;
+  const localAllowed = compute ? compute.localAllowed !== false : true;
+  const runOn = form.runOn || (ec2 ? ec2.options.find((o) => o.instanceType === "m7g.large")?.instanceType || ec2.options[0]?.instanceType : "local");
+  const selectedMachine = ec2?.options.find((option) => option.instanceType === runOn) || null;
+  const estimateCents = selectedMachine ? selectedMachine.reserveCentsByRuntime?.[form.maxRuntimeSeconds] ?? null : null;
+  const estimateDollars = estimateCents === null ? null : estimateCents / 100;
+  const overBudget = estimateDollars !== null && budgetDollars !== null && estimateDollars > budgetDollars;
+  const nowhereToRun = !ec2 && !localAllowed;
 
   useEffect(() => {
     setForm((prev) => ({
@@ -275,12 +276,12 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
     const nameForSubmit = shouldUseAutoName ? generatedName : trimmedName;
 
     try {
-      const { runOn, ...fields } = form;
+      const { runOn: _ignored, maxRuntimeSeconds, ...fields } = form;
       await onSubmit({
         ...fields,
         repo: normalizedRepo,
         name: nameForSubmit,
-        ...(runOn !== "local" ? { compute: "ec2", instanceType: runOn } : {}),
+        ...(selectedMachine ? { compute: "ec2", instanceType: runOn, maxRuntimeSeconds: Number(maxRuntimeSeconds) } : {}),
       });
 
       if (shouldUseAutoName) {
@@ -356,36 +357,44 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
                   : "No top-level .py files found on this branch. You can enter one manually."))}
           </span>
         </div>
-        {ec2Options.length ? (
+        {ec2 ? (
+          <>
+            <div className="form-group form-group-half">
+              <label className="form-label">Machine</label>
+              <select className="form-select" value={runOn} onChange={update("runOn")}>
+                {ec2.options.map((option) => (
+                  <option key={option.instanceType} value={option.instanceType}>
+                    {option.memoryGb} GB memory, {option.vcpus} CPUs ({option.instanceType}) - ${(option.hourlyRateCents / 100).toFixed(3)}/hour
+                  </option>
+                ))}
+                {localAllowed ? <option value="local">Web server (free, no isolation)</option> : null}
+              </select>
+            </div>
+            <div className="form-group form-group-half">
+              <label className="form-label">Time limit</label>
+              <select className="form-select" value={form.maxRuntimeSeconds} onChange={update("maxRuntimeSeconds")} disabled={!selectedMachine}>
+                {ec2.runtimeSeconds.map((seconds) => (
+                  <option key={seconds} value={seconds}>{formatRuntime(seconds)}</option>
+                ))}
+              </select>
+              <span className="form-hint">Includes installing requirements.txt. The job stops when it is reached.</span>
+            </div>
+            <div className="form-group full">
+              <span className="form-hint">
+                {selectedMachine
+                  ? `This job can cost up to ${formatDollars(estimateDollars)}. That is set aside when it starts; you are charged per second for the time it actually runs and the rest is returned. `
+                  : "Runs on the web server itself: free, but not isolated. "}
+                {ec2.maxJobsPerUser === 1 ? "One job at a time." : ""}
+                {overBudget ? ` That is more than your remaining budget (${formatDollars(budgetDollars)}): choose a smaller machine or a shorter time limit.` : ""}
+              </span>
+            </div>
+          </>
+        ) : null}
+        {nowhereToRun ? (
           <div className="form-group full">
-            <label className="form-label">Run on (admin)</label>
-            <select className="form-select" value={form.runOn} onChange={update("runOn")}>
-              <option value="local">Web server (free, no isolation)</option>
-              {ec2Options.map((option) => (
-                <option key={option.instanceType} value={option.instanceType}>
-                  EC2 {option.label} - {(option.hourlyRateCents / 100).toFixed(4)} dollars/hour
-                </option>
-              ))}
-            </select>
-            <span className="form-hint">EC2 jobs start their own instance, reserve their maximum cost, and are billed per second.</span>
+            <span className="form-hint">Jobs cannot be started on this server right now.</span>
           </div>
         ) : null}
-        <div className="form-group form-group-half">
-          <label className="form-label">Machine Type</label>
-          <select className="form-select" value={form.machineType} onChange={update("machineType")}>
-            {machineTypeOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </div>
-        <div className="form-group form-group-half">
-          <label className="form-label">Machine Image</label>
-          <select className="form-select" value={form.machineImage} onChange={update("machineImage")}>
-            {machineImageOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </div>
         <div className="form-group full">
           <label className="form-label">Environment Variables</label>
           <textarea
@@ -396,7 +405,7 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
           />
         </div>
         <div className="form-group full form-actions submit-actions-row">
-          <button className="btn btn-primary" type="submit" disabled={submitting}>
+          <button className="btn btn-primary" type="submit" disabled={submitting || overBudget || nowhereToRun}>
             {submitting ? "Submitting..." : "Submit Job"}
           </button>
           <button className="btn btn-secondary" type="button">Save as Template</button>

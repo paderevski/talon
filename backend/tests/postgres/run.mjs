@@ -15,9 +15,10 @@ import { createJobsPostgresRepository } from "../../src/repositories/postgres/jo
 import { computeCostCents } from "../../src/utils/jobFormat.js";
 import { createGithubCredentialsStore } from "../../src/utils/githubCredentialsStore.js";
 import { BudgetError, ensureAccount, grant, transfer } from "../../src/budget/ledger.js";
-import { hourlyRateCentsFor, reservationCentsFor } from "../../src/execution/ec2Rates.js";
+import { hourlyRateCentsFor, listInstanceOptions, reservationCentsFor } from "../../src/execution/ec2Rates.js";
 import createEc2ExecutionAdapter, { assertEntryScript, buildRunScript } from "../../src/execution/adapters/ec2ExecutionAdapter.js";
-import { launchEc2Job } from "../../src/services/ec2Jobs.js";
+import { JobLimitError } from "../../src/repositories/postgres/jobsPostgresRepository.js";
+import { launchEc2Job, parseEnvironmentVariables } from "../../src/services/ec2Jobs.js";
 import { createEc2Reconciler } from "../../src/services/ec2Reconciler.js";
 
 const databaseUrl = testDatabaseUrl;
@@ -50,7 +51,7 @@ function makeFakeAws({ instance = { state: "running" } } = {}) {
         if (name === "GetObjectCommand") {
           if (!objects.has(input.Key)) throw noSuchKey();
           const text = objects.get(input.Key);
-          return { Body: { transformToString: async () => text }, ContentLength: text.length };
+          return { Body: { transformToString: async () => text, text }, ContentLength: text.length };
         }
         if (name === "ListObjectsV2Command") {
           return { Contents: [...objects.keys()].filter((k) => k.startsWith(input.Prefix)).map((Key) => ({ Key, Size: objects.get(Key).length })), IsTruncated: false };
@@ -401,9 +402,14 @@ const tests = [
   }],
 
   ["ec2 rates: overhead is added and the reservation covers limit plus boot allowance", async () => {
-    assert(hourlyRateCentsFor("t4g.medium") === 4.36, `t4g.medium rate ${hourlyRateCentsFor("t4g.medium")}`);
-    // 4.36 c/h for (1800 + 300) s = 2.543 c -> 3 c
-    assert(reservationCentsFor(4.36, 1800) === 3, `reservation ${reservationCentsFor(4.36, 1800)}`);
+    assert(hourlyRateCentsFor("m7g.large") === 9.16, `m7g.large rate ${hourlyRateCentsFor("m7g.large")}`);
+    // 9.16 c/h for (1800 + 300) s = 5.343 c -> 6 c
+    assert(reservationCentsFor(9.16, 1800) === 6, `reservation ${reservationCentsFor(9.16, 1800)}`);
+    let burstable = false;
+    try { hourlyRateCentsFor("t4g.medium"); } catch { burstable = true; }
+    assert(burstable, "burstable t4g types must not be offered");
+    const option = listInstanceOptions().find((o) => o.instanceType === "m7g.large");
+    assert(option.memoryGb === 8 && option.reserveCentsByRuntime[1800] === 6 && option.reserveCentsByRuntime[86400] > 200, `option ${JSON.stringify(option)}`);
     let refused = false;
     try { hourlyRateCentsFor("p5.48xlarge"); } catch { refused = true; }
     assert(refused, "unknown instance types must be refused");
@@ -483,7 +489,7 @@ const tests = [
     try {
       await launchEc2Job({
         jobsRepository: jobs, user, isAdmin: false, maxRuntimeSeconds: 1800,
-        payload: { name: "fails", repo: "x/y", instanceType: "t4g.small" },
+        payload: { name: "fails", repo: "x/y", instanceType: "c7g.large" },
         adapter: { async start() { throw new Error("InsufficientInstanceCapacity"); } },
       });
     } catch (error) {
@@ -496,7 +502,7 @@ const tests = [
 
     const ok = await launchEc2Job({
       jobsRepository: jobs, user, isAdmin: false, maxRuntimeSeconds: 1800,
-      payload: { name: "works", repo: "x/y", instanceType: "t4g.small" },
+      payload: { name: "works", repo: "x/y", instanceType: "c7g.large" },
       adapter: { async start(spec) { return { provider: "ec2", executionId: spec.jobId, jobId: spec.jobId, instanceId: "i-1" }; } },
     });
     assert(ok.executionRef.instanceId === "i-1" && ok.reservedCents > 0 && ok.computeType === undefined, `launched job ${JSON.stringify(ok)}`);
@@ -551,14 +557,14 @@ const tests = [
       },
       now: () => Date.parse("2026-01-01T00:00:05Z"),
     });
-    const ref = await adapter.start({ jobId: "job-7", repo: "a/b", branch: "main", entryScript: "train.py", maxRuntimeSeconds: 600, instanceType: "t4g.small", ownerUsername: "admin" });
+    const ref = await adapter.start({ jobId: "job-7", repo: "a/b", branch: "main", entryScript: "train.py", maxRuntimeSeconds: 600, instanceType: "c7g.large", ownerUsername: "admin" });
     assert(ref.instanceId === "i-abc" && ref.subnetId === "subnet-ok" && ref.executionId === "job-7", `ref ${JSON.stringify(ref)}`);
     assert(aws.objects.get("jobs/job-7/input/repo.tgz") === "archive-bytes", "repo.tgz not uploaded");
     assert(/exec python3 -u 'train.py'/.test(aws.objects.get("jobs/job-7/input/run.sh")), "run.sh not uploaded");
     const run = aws.calls.filter((c) => c.name === "RunInstancesCommand").at(-1).input;
     const tags = Object.fromEntries(run.TagSpecifications[0].Tags.map((t) => [t.Key, t.Value]));
     assert(tags.Project === "talon" && tags.Component === "job" && tags["talon-job"] === "job-7" && tags["talon-max-seconds"] === "600", `tags ${JSON.stringify(tags)}`);
-    assert(run.InstanceType === "t4g.small" && run.ClientToken === "talon-job-7", "type or client token wrong");
+    assert(run.InstanceType === "c7g.large" && run.ClientToken === "talon-job-7", "type or client token wrong");
 
     let refused = "";
     try { await adapter.start({ jobId: "job-8", instanceType: "p5.48xlarge", maxRuntimeSeconds: 60 }); } catch (e) { refused = e.message; }
@@ -589,8 +595,12 @@ const tests = [
     aws.objects.set("jobs/job-9/output/model.txt", "weights");
     const logs = await adapter.getLogs(ref, 1);
     assert(logs.lines.join() === "line two" && logs.nextCursor === 2, `logs ${JSON.stringify(logs)}`);
+    aws.objects.set("jobs/job-9/changed/notes/result.csv", "a,b");
     const files = await adapter.listOutputFiles(ref);
-    assert(files.length === 1 && files[0].name === "model.txt" && files[0].source === "output_dir", `files ${JSON.stringify(files)}`);
+    assert(
+      files.length === 2 && files.some((f) => f.name === "model.txt" && f.source === "output_dir") && files.some((f) => f.name === "notes/result.csv" && f.source === "repo_changed"),
+      `files ${JSON.stringify(files)}`,
+    );
 
     aws.objects.set("jobs/job-9/status.json", JSON.stringify({ state: "succeeded", exit_code: 0, updated_at: "2026-01-01T00:05:00Z" }));
     const done = await adapter.getStatus(ref);
@@ -621,7 +631,99 @@ const tests = [
     assert(cancelled.state === "cancelled", `cancelled ${JSON.stringify(cancelled)}`);
   }],
 
-  ["jobs: seeded demo job costs match each student's ledger charges", async () => {
+  ["ec2 adapter: downloads honor the source and cannot escape the job prefix", async () => {
+    const aws = makeFakeAws();
+    const adapter = createEc2ExecutionAdapter({ ec2: aws.ec2, s3: aws.s3, config: { bucket: "b", launchTemplateId: "lt", subnetIds: ["s"] } });
+    const ref = { provider: "ec2", jobId: "job-9", instanceId: "i-abc" };
+    aws.objects.set("jobs/job-9/output/a.txt", "from output");
+    aws.objects.set("jobs/job-9/changed/a.txt", "from repo");
+    assert((await adapter.openOutputFile(ref, "a.txt", "output_dir")).stream.text === "from output", "output_dir source");
+    assert((await adapter.openOutputFile(ref, "a.txt", "repo_changed")).stream.text === "from repo", "repo_changed source");
+    let status = 0;
+    try { await adapter.openOutputFile(ref, "../job-8/output/a.txt"); } catch (e) { status = e.status; }
+    assert(status === 400, `path escape must be refused, got ${status}`);
+  }],
+
+  ["ec2 jobs: environment variables are validated and quoted into run.sh", async () => {
+    const vars = parseEnvironmentVariables("BATCH_SIZE=32\n# comment\nNAME=it's a test\n\nEPOCHS=5");
+    assert(vars.length === 3 && vars[1].value === "it's a test", `parsed ${JSON.stringify(vars)}`);
+    const script = buildRunScript("train.py", vars);
+    assert(script.includes("export BATCH_SIZE='32'") && script.includes("export NAME='it'\\''s a test'"), `script ${script}`);
+    for (const bad of ["no equals sign", "1BAD=x", "A B=x", "PATH=/tmp", "LD_PRELOAD=/x", "TALON_OUTPUT_DIR=/x"]) {
+      let refused = false;
+      try { parseEnvironmentVariables(bad); } catch { refused = true; }
+      assert(refused, `${JSON.stringify(bad)} must be refused`);
+    }
+    assert(buildRunScript("a.py", parseEnvironmentVariables("X=$(id)")).includes("export X='$(id)'"), "shell syntax in values must be inert");
+  }],
+
+  ["ec2 jobs: time limit must be one of the offered choices", async () => {
+    const jobs = createJobsPostgresRepository({ pool });
+    const userId = await scalar("SELECT id FROM users WHERE username = 'student_a1'");
+    const user = { id: userId, username: "student_a1" };
+    const adapter = { async start(spec) { return { provider: "ec2", executionId: spec.jobId, jobId: spec.jobId, instanceId: "i-1" }; } };
+    for (const bad of [0, 59, 5000, 999999, "abc"]) {
+      let status = 0;
+      try { await launchEc2Job({ jobsRepository: jobs, adapter, user, isAdmin: true, payload: { name: "x", repo: "x/y", maxRuntimeSeconds: bad } }); } catch (e) { status = e.status; }
+      assert(status === 400, `time limit ${bad} must be refused, got ${status}`);
+    }
+  }],
+
+  ["ec2 jobs: one unfinished job per user, ten in total, admins exempt from the per-user cap", async () => {
+    const jobs = createJobsPostgresRepository({ pool });
+    const adapter = { async start(spec) { return { provider: "ec2", executionId: spec.jobId, jobId: spec.jobId, instanceId: `i-${spec.jobId}` }; } };
+    const grantBudget = async (username) => {
+      const id = await scalar("SELECT id FROM users WHERE username = $1", [username]);
+      const accountId = await withTransaction((client) => ensureAccount(client, id, "personal"), { pool });
+      await pool.query("UPDATE budget_accounts SET balance_cents = balance_cents + 5000 WHERE id = $1", [accountId]);
+      await pool.query("INSERT INTO budget_ledger (account_id, amount_cents, kind, note) VALUES ($1, 5000, 'grant', 'test top-up')", [accountId]);
+      return { id, username };
+    };
+    const finishAll = async () => {
+      const open = await pool.query("SELECT id FROM jobs WHERE execution_provider = 'ec2' AND status IN ('queued', 'running')");
+      for (const row of open.rows) {
+        await jobs.finalize(row.id, { syncKey: "test-done", status: "failed", neverRan: true, error: "test cleanup" });
+      }
+    };
+    await finishAll();
+    const launch = (user, isAdmin = false) => launchEc2Job({ jobsRepository: jobs, adapter, user, isAdmin, payload: { name: "cap", repo: "x/y", instanceType: "c7g.large", maxRuntimeSeconds: 1800 } });
+
+    // Parallel submits by one user: exactly one wins.
+    const a1 = await grantBudget("student_a1");
+    const results = await Promise.allSettled([launch(a1), launch(a1), launch(a1)]);
+    assert(results.filter((r) => r.status === "fulfilled").length === 1, `parallel results ${results.map((r) => r.status)}`);
+    const rejection = results.find((r) => r.status === "rejected").reason;
+    assert(rejection instanceof JobLimitError && rejection.code === "user_limit", `rejection ${rejection}`);
+    assert(Number(await scalar("SELECT count(*) FROM jobs WHERE owner_user_id = $1 AND status IN ('queued','running') AND execution_provider = 'ec2'", [a1.id])) === 1, "one unfinished job");
+
+    // A refused submit costs nothing.
+    const accountId = await withTransaction((client) => ensureAccount(client, a1.id, "personal"), { pool });
+    const ledgerBefore = Number(await scalar("SELECT count(*) FROM budget_ledger WHERE account_id = $1", [accountId]));
+    try { await launch(a1); } catch { /* expected */ }
+    assert(Number(await scalar("SELECT count(*) FROM budget_ledger WHERE account_id = $1", [accountId])) === ledgerBefore, "a refused submit must not touch the ledger");
+
+    // Finishing frees the slot.
+    await finishAll();
+    await launch(a1);
+
+    // System-wide cap: fill to 10 with different users, the 11th is refused.
+    const students = [];
+    for (const name of ["student_a2", "student_a3", "student_b1", "student_b2", "student_b3", "student_c1", "student_c2", "student_c3"]) {
+      const row = await pool.query("SELECT 1 FROM users WHERE username = $1", [name]);
+      if (row.rows.length) students.push(await grantBudget(name));
+    }
+    for (const student of students) { try { await launch(student); } catch { break; } }
+    const admin = { id: await scalar("SELECT id FROM users WHERE username = 'admin'"), username: "admin" };
+    while (Number(await scalar("SELECT count(*) FROM jobs WHERE execution_provider = 'ec2' AND status IN ('queued','running')")) < 10) {
+      await launch(admin, true);
+    }
+    let code = "";
+    try { await launch(admin, true); } catch (e) { code = e.code; }
+    assert(code === "system_limit", `Expected system_limit at 10 unfinished jobs, got ${code}`);
+    await finishAll();
+  }],
+
+  ["jobs: seeded demo job costs match each student's ledger charges net of refunds", async () => {
     const mismatches = await pool.query(
       `SELECT u.username, COALESCE(j.cost, 0) AS jobs_cost, COALESCE(l.charged, 0) AS ledger_charged
        FROM users u
@@ -629,7 +731,7 @@ const tests = [
        LEFT JOIN (SELECT owner_user_id, SUM(cost_cents) AS cost FROM jobs GROUP BY owner_user_id) j ON j.owner_user_id = u.id
        LEFT JOIN (SELECT a.owner_user_id, -SUM(l.amount_cents) AS charged
                   FROM budget_ledger l JOIN budget_accounts a ON a.id = l.account_id
-                  WHERE l.kind = 'charge' AND a.kind = 'personal' GROUP BY a.owner_user_id) l ON l.owner_user_id = u.id
+                  WHERE l.kind IN ('charge', 'refund') AND a.kind = 'personal' GROUP BY a.owner_user_id) l ON l.owner_user_id = u.id
        WHERE u.username <> 'student_a1' AND COALESCE(j.cost, 0) <> COALESCE(l.charged, 0)`,
     );
     assert(mismatches.rows.length === 0, `Cost/ledger mismatch: ${JSON.stringify(mismatches.rows.slice(0, 3))}`);

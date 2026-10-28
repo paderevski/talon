@@ -434,30 +434,40 @@ done (below); the adapter and everything after it are not built yet.
    job row, so debug instances must use another `Component` tag.
    Heavy-job findings (2026-10-28, `minimal-rnn` with 4000x4000 SVDs):
    the time limit works (`timeout`, exit 124, "Time limit reached", cost
-   capped, instance terminated) and stdout is now unbuffered for every job
+   capped, instance terminated) and stdout is unbuffered for every job
    (`python3 -u`, `PYTHONUNBUFFERED=1`), so output survives a kill. On
    `t4g.small` (2 GB) it was OOM-killed on the second iteration (exit 137,
-   shown to the user as "killed, usually out of memory"); on `t4g.medium`
-   (4 GB) it ran about 45-60 s per iteration without trouble. **Cost
-   caveat:** `t4g` is burstable and runs in unlimited-credit mode, so
-   sustained 100% CPU is billed as surplus CPU credits on top of the
-   per-second rate (my recollection is about 5 cents per vCPU-hour; verify).
-   Our rate and overhead do not cover that. Decide before step 3 shows prices:
-   price t4g higher, or use a non-burstable family (c7g/m7g) for compute
-   jobs. Also worth showing memory per instance type in the menu.
-   **Open problem: output files.** The EC2 path only returns files written
-   to `TALON_OUTPUT_DIR` (`/work/output`); a script that writes relative paths
-   (like `minimal-rnn`'s `script.py`, which writes `output.txt` in its working
-   directory) shows an empty Files list. The local runner also reports files
-   changed in the repo (`repo_changed`). Needs a complete solution, not a
-   patch: decide what counts as output (new or changed files in the repo
-   directory, excluding `venv`, caches and the input itself), size and count
-   limits, upload at job end and on cancel or timeout, and keep the Files
-   list and download route consistent with the local runner. Do this in or
-   before step 3.
-3. Submit form: real instance menu with rate and cost estimate (replaces the
-   dead Machine Type dropdown), per-user concurrent job cap (doc: 10 total),
-   log upload about every 30 s.
+   shown as "killed, usually out of memory"); on `t4g.medium` (4 GB) it ran
+   about 45-60 s per iteration. `t4g` is burstable (unlimited-credit mode
+   bills surplus CPU credits our rate does not cover), so step 3 dropped it.
+   Timers, in order: the script's `timeout` at the limit, the instance's
+   failsafe shutdown at limit + 15 min, and the reconciler at limit + 20 min
+   (the last sweep).
+3. **Built and tested locally (2026-10-28); needs `terraform apply`, a
+   deploy and a run on AWS.** Open to all students (kill switch
+   `EC2_JOBS_ADMIN_ONLY=true`). Submit form: dead Machine Type / Image selects
+   removed; "Machine" menu from the server (c7g.large, c7g.xlarge, m7g.large,
+   m7g.xlarge, r7g.large; memory, CPUs and hourly rate shown; prices checked
+   against the Price List API 2026-10-28; non-burstable only), "Time limit"
+   (30 min to 24 h), a cost line ("up to $X", reserved at start, rest
+   refunded), submit disabled when the reserve exceeds the student's budget,
+   environment variables now passed to the script (strict names, quoted
+   values). Limits: one unfinished EC2 job per user (admins exempt) and 10 in
+   total (`EC2_MAX_JOBS_PER_USER`, `EC2_MAX_JOBS_TOTAL`), enforced in the
+   reservation transaction under an advisory lock (parallel submits cannot
+   slip past). Local runs on the web server are refused for non-admins when
+   `NODE_ENV=production` unless `TALON_ALLOW_LOCAL_JOBS=true`. Live logs:
+   `job_boot.sh` uploads the job log every 30 s. **Output files, complete
+   solution:** two sources as in the local runner, `output/`
+   (`TALON_OUTPUT_DIR`, source `output_dir`) and `changed/` (files created or
+   changed in the repo directory since the job started, source
+   `repo_changed`, excluding `.git`, `venv`, `__pycache__`, `node_modules`,
+   `*.pyc`); symlinks are never uploaded; limits 500 files, 200 MB per file,
+   500 MB total, skipped files are noted in the job log; uploaded every 30 s
+   and at the end (so a cancel or crash keeps what was already saved); list
+   and download honor the source. Still to verify on AWS: live logs, both
+   output sources, downloads, the per-user cap with a real job, and a
+   student run in the browser on the box.
 4. GPU: Deep Learning AMI, Docker, ECR image, `g4dn` first.
 5. Spot, overnight queue, interruption handling, checkpoint docs.
 

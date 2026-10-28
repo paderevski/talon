@@ -76,6 +76,15 @@ function scopeParam(scope) {
   return scope?.all ? null : [...(scope?.usernames ?? [])];
 }
 
+// Too many unfinished jobs for this user, or for the whole system.
+export class JobLimitError extends Error {
+  constructor(message, code) {
+    super(message);
+    this.name = "JobLimitError";
+    this.code = code;
+  }
+}
+
 export function createJobsPostgresRepository({ pool } = {}) {
   const db = () => pool ?? getPool();
 
@@ -140,9 +149,35 @@ export function createJobsPostgresRepository({ pool } = {}) {
     maxRuntimeSeconds,
     reserveCents,
     enforceBalance = true,
+    maxUnfinishedPerUser = null, // null: no limit
+    maxUnfinishedTotal = null,
   }) {
     const jobId = await withTransaction(
       async (client) => {
+        // One launch at a time past this point, so two submits cannot both
+        // slip under a limit.
+        await client.query("SELECT pg_advisory_xact_lock(727001)");
+
+        const unfinished = `execution_provider = $1 AND status IN ('queued', 'running')`;
+        if (maxUnfinishedPerUser !== null) {
+          const mine = await client.query(
+            `SELECT count(*)::int AS n FROM jobs WHERE ${unfinished} AND owner_user_id = $2`,
+            [executionProvider, ownerUserId],
+          );
+          if (mine.rows[0].n >= maxUnfinishedPerUser) {
+            throw new JobLimitError(
+              `You already have ${maxUnfinishedPerUser === 1 ? "a job" : `${maxUnfinishedPerUser} jobs`} running. Wait for it to finish or cancel it.`,
+              "user_limit",
+            );
+          }
+        }
+        if (maxUnfinishedTotal !== null) {
+          const all = await client.query(`SELECT count(*)::int AS n FROM jobs WHERE ${unfinished}`, [executionProvider]);
+          if (all.rows[0].n >= maxUnfinishedTotal) {
+            throw new JobLimitError("Talon is running as many jobs as it can right now. Try again in a few minutes.", "system_limit");
+          }
+        }
+
         const accountId = await ensureAccount(client, ownerUserId, "personal");
 
         if (enforceBalance) {

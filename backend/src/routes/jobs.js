@@ -15,8 +15,8 @@ import {
   openExecutionOutputFile,
   submitExecution,
 } from "../services/jobExecutionService.js";
-import { budgetErrorStatus, launchEc2Job } from "../services/ec2Jobs.js";
-import { listInstanceOptions } from "../execution/ec2Rates.js";
+import { ec2JobLimits, launchEc2Job, launchErrorStatus } from "../services/ec2Jobs.js";
+import { defaultMaxRuntimeSeconds, listInstanceOptions, runtimeOptions } from "../execution/ec2Rates.js";
 import { markJobAsExecutionLost, synchronizeJobFromExecution } from "../services/jobSync.js";
 import { getJobsRepository } from "../repositories/jobsRepository.js";
 import { attachAccessScope, canModify, hasRole, narrowScopeToOwner, scopeAllows } from "../auth/access.js";
@@ -158,21 +158,40 @@ router.get("/", async (req, res) => {
   });
 });
 
-// What the submit form may offer. EC2 jobs are admin-only for now.
+// EC2 jobs can be limited to admins with EC2_JOBS_ADMIN_ONLY=true (kill switch).
+const ec2AllowedFor = (user) =>
+  ec2JobsEnabled() && (hasRole(user, "admin") || process.env.EC2_JOBS_ADMIN_ONLY !== "true");
+
+// Jobs on the web server itself have no isolation: in production only admins
+// may use them unless TALON_ALLOW_LOCAL_JOBS=true.
+const localJobsAllowedFor = (user) =>
+  process.env.NODE_ENV !== "production" ||
+  process.env.TALON_ALLOW_LOCAL_JOBS === "true" ||
+  hasRole(user, "admin");
+
+// What the submit form may offer.
 router.get("/compute-options", (req, res) => {
-  const enabled = ec2JobsEnabled() && hasRole(req.user, "admin");
-  res.json({ ec2: { enabled, options: enabled ? listInstanceOptions() : [] } });
+  const ec2Enabled = ec2AllowedFor(req.user);
+  res.json({
+    ec2: {
+      enabled: ec2Enabled,
+      options: ec2Enabled ? listInstanceOptions() : [],
+      runtimeSeconds: ec2Enabled ? runtimeOptions() : [],
+      defaultRuntimeSeconds: defaultMaxRuntimeSeconds,
+      maxJobsPerUser: ec2JobLimits().perUser,
+    },
+    localAllowed: localJobsAllowedFor(req.user),
+  });
 });
 
 router.post("/", async (req, res) => {
   const payload = req.body ?? {};
 
   if (String(payload.compute ?? "").toLowerCase() === "ec2") {
-    if (!hasRole(req.user, "admin")) {
-      return res.status(403).json({ message: "Running jobs on EC2 is limited to admins for now" });
-    }
-    if (!ec2JobsEnabled()) {
-      return res.status(503).json({ message: "EC2 jobs are not enabled on this server" });
+    if (!ec2AllowedFor(req.user)) {
+      return res.status(ec2JobsEnabled() ? 403 : 503).json({
+        message: ec2JobsEnabled() ? "Running jobs on EC2 is limited to admins right now" : "EC2 jobs are not enabled on this server",
+      });
     }
 
     try {
@@ -180,18 +199,22 @@ router.post("/", async (req, res) => {
         jobsRepository,
         adapter: getEc2Adapter(),
         user: req.user,
-        isAdmin: true,
+        isAdmin: hasRole(req.user, "admin"),
         payload,
-        maxRuntimeSeconds: jobMaxRuntimeSeconds(),
       });
       return res.status(201).json({ message: "Job started on EC2", job });
     } catch (error) {
-      const status = budgetErrorStatus(error) || error?.status || 500;
+      const status = launchErrorStatus(error) || error?.status || 500;
       return res.status(status).json({
-        message: status === 402 ? "No budget remaining for this job." : error?.message || "Unable to start the job",
+        message: status === 402 ? "Not enough budget left for this job." : error?.message || "Unable to start the job",
       });
     }
   }
+
+  if (!localJobsAllowedFor(req.user)) {
+    return res.status(403).json({ message: "Choose a machine to run this job on." });
+  }
+
   // Always the signed-in user; any owner in the body is ignored.
   const hourlyRateCents = jobRateCentsPerHour();
 
@@ -380,7 +403,7 @@ router.get("/:id/files/download", async (req, res) => {
 
   if (job.executionRef.provider === "ec2") {
     try {
-      const file = await openExecutionOutputFile(job.executionRef, req.query.name);
+      const file = await openExecutionOutputFile(job.executionRef, req.query.name, req.query.source);
       res.attachment(file.downloadName);
       if (Number.isFinite(file.size)) {
         res.setHeader("Content-Length", file.size);

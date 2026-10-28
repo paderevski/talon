@@ -87,17 +87,65 @@ echo hello > output/hello.txt
 EOF
 fi
 chown -R student:student /work
+touch /work/.talon-start # files newer than this were created or changed by the job
+
+# Output has two sources, as with the local runner: /work/output (the script
+# writes there via TALON_OUTPUT_DIR) and files created or changed in the
+# repository directory. Both are uploaded every 30 seconds while the job runs
+# (so a cancel or a crash keeps what was already saved) and once more at the
+# end. Limits protect the bucket; anything over them is skipped and noted in
+# the job log.
+MAX_FILES=500
+MAX_FILE_BYTES=$((200 * 1024 * 1024))
+MAX_TOTAL_BYTES=$((500 * 1024 * 1024))
+STATE=/tmp/uploaded.state; : > "$STATE"
+SKIPPED=0
+
+# upload_tree DIR DEST [find tests...]: upload regular files (never symlinks)
+# not already uploaded in their current size and mtime.
+upload_tree() {
+  local dir=$1 dest=$2 f size mtime rel key n total
+  shift 2
+  n=$(wc -l < "$STATE"); total=$(awk -F'|' '{s += $2} END {print s + 0}' "$STATE")
+  while IFS= read -r -d '' f; do
+    size=$(stat -c %s "$f" 2>/dev/null) || continue
+    mtime=$(stat -c %Y "$f" 2>/dev/null) || continue
+    rel=${f#"$dir"/}; key="$dest/$rel|$size|$mtime"
+    grep -qxF -- "$key" "$STATE" && continue
+    if [ "$size" -gt "$MAX_FILE_BYTES" ] || [ "$n" -ge "$MAX_FILES" ] || [ $((total + size)) -gt "$MAX_TOTAL_BYTES" ]; then
+      SKIPPED=$((SKIPPED + 1)); continue
+    fi
+    if aws s3 cp "$f" "$dest/$rel" --only-show-errors; then
+      echo "$key" >> "$STATE"; n=$((n + 1)); total=$((total + size))
+    fi
+  done < <(find "$dir" -type f "$@" -print0 2>/dev/null)
+}
+
+sync_all() {
+  aws s3 cp /tmp/job.log "$PREFIX/logs/job.log" --only-show-errors 2>/dev/null
+  upload_tree /work/output "$PREFIX/output"
+  upload_tree /work/repo "$PREFIX/changed" -newer /work/.talon-start \
+    ! -path '*/.git/*' ! -path '*/__pycache__/*' ! -name '*.pyc' ! -path '*/node_modules/*' \
+    ! -path '*/.venv/*' ! -path '*/venv/*' ! -path '*/.ipynb_checkpoints/*'
+}
 
 status running
-runuser -u student -- bash -c 'cd /work && exec timeout --kill-after=30 "$0" bash run.sh' "$MAX" > /tmp/job.log 2>&1
+: > /tmp/job.log
+( while sleep 30; do sync_all; done ) &
+LOOP=$!
+runuser -u student -- bash -c 'cd /work && exec timeout --kill-after=30 "$0" bash run.sh' "$MAX" >> /tmp/job.log 2>&1
 CODE=$?
+kill "$LOOP" 2>/dev/null; wait "$LOOP" 2>/dev/null
 
 case $CODE in
-  0)   STATE=succeeded ;;
-  124) STATE=timeout ;;
-  *)   STATE=failed ;;
+  0)   STATE_NAME=succeeded ;;
+  124) STATE_NAME=timeout ;;
+  *)   STATE_NAME=failed ;;
 esac
-aws s3 cp /tmp/job.log "$PREFIX/logs/job.log" --only-show-errors
+sync_all
+if [ "$SKIPPED" -gt 0 ]; then
+  echo "[talon] $SKIPPED file(s) were not saved (limits: $MAX_FILES files, 200 MB per file, 500 MB total)." >> /tmp/job.log
+  aws s3 cp /tmp/job.log "$PREFIX/logs/job.log" --only-show-errors
+fi
 aws s3 cp /var/log/talon-job.log "$PREFIX/logs/boot.log" --only-show-errors
-aws s3 cp --recursive /work/output "$PREFIX/output/" --only-show-errors
-status "$STATE" "$CODE"
+status "$STATE_NAME" "$CODE"

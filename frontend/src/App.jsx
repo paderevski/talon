@@ -614,16 +614,17 @@ export default function App() {
     [authUser],
   );
   const isAdmin = normalizeUserRole(authUser?.role) === "admin";
-  const [ec2Options, setEc2Options] = useState([]);
+  const [computeOptions, setComputeOptions] = useState(null);
+  const signedInUsername = authUser?.username || "";
   useEffect(() => {
-    if (!isAdmin) {
-      setEc2Options([]);
+    if (!signedInUsername) {
+      setComputeOptions(null);
       return;
     }
     fetchComputeOptions()
-      .then((data) => setEc2Options(data?.ec2?.enabled ? data.ec2.options : []))
-      .catch(() => setEc2Options([]));
-  }, [isAdmin]);
+      .then((data) => setComputeOptions(data))
+      .catch(() => setComputeOptions(null));
+  }, [signedInUsername]);
   const isTeacher = normalizeUserRole(authUser?.role) === "teacher";
   const hasTeacherStudentView = Boolean(selectedStudentView);
   const navSections = useMemo(
@@ -907,7 +908,8 @@ export default function App() {
             defaultBranch={repoBranch}
             githubUsername={githubSettings.githubUsername}
             onRepoBranchChange={onRepoBranchChange}
-            ec2Options={ec2Options}
+            compute={computeOptions}
+            budgetDollars={normalizeUserRole(authUser?.role) === "student" ? budgetBalance : null}
           />
           <RepoBrowserPanel
             repoData={repoData}

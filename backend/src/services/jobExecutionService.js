@@ -48,9 +48,9 @@ export async function cancelExecution(executionRef) {
 
 // EC2 output files are read from S3; local ones are served from disk by the
 // route. Returns null for providers that don't stream.
-export async function openExecutionOutputFile(executionRef, name) {
+export async function openExecutionOutputFile(executionRef, name, source) {
   const adapter = adapterFor(executionRef);
-  return typeof adapter.openOutputFile === "function" ? adapter.openOutputFile(executionRef, name) : null;
+  return typeof adapter.openOutputFile === "function" ? adapter.openOutputFile(executionRef, name, source) : null;
 }
 
 export function getExecutionProvider() {

@@ -21,15 +21,15 @@ variable "ec2_jobs_enabled" {
 }
 
 variable "job_instance_type" {
-  description = "Default instance type in the job launch template (Graviton, matching the AMI)."
+  description = "Default instance type in the job launch template (Graviton, matching the AMI; non-burstable, since t4g bills surplus CPU credits the job rate does not cover)."
   type        = string
-  default     = "t4g.medium"
+  default     = "m7g.large"
 }
 
 variable "allowed_job_instance_types" {
   description = "Instance types the web server may launch. The vCPU quotas are far too high to act as a cap, so this is the cap."
   type        = list(string)
-  default     = ["t4g.small", "t4g.medium", "t4g.large"]
+  default     = ["c7g.large", "c7g.xlarge", "m7g.large", "m7g.xlarge", "r7g.large"]
 }
 
 variable "job_root_volume_gb" {
