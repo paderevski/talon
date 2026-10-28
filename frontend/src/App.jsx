@@ -5,7 +5,6 @@ import RepoBrowserPanel from "./components/RepoBrowserPanel";
 import JobStatusPanel from "./components/JobStatusPanel";
 import ResultsPanel from "./components/ResultsPanel";
 import GitHubCredentialsPanel from "./components/GitHubCredentialsPanel";
-import ExecutionDebugPanel from "./components/ExecutionDebugPanel";
 import AdminConsole from "./components/AdminConsole";
 import ChangePasswordDialog from "./components/ChangePasswordDialog";
 import TeacherStudentsPanel from "./components/TeacherStudentsPanel";
@@ -192,7 +191,6 @@ function getStoredGithubSettings() {
 }
 
 export default function App() {
-  const showDebugPanel = new URLSearchParams(window.location.search).get("debug") === "1";
   const [authUser, setAuthUser] = useState(getStoredAuthUser);
   const [activePage, setActivePage] = useState("landing");
   const [githubSettings, setGithubSettings] = useState(getStoredGithubSettings);
@@ -924,7 +922,6 @@ export default function App() {
             onSave={onSaveGithubSettings}
             authUsername={authUser?.username || ""}
           />
-          {showDebugPanel ? <ExecutionDebugPanel /> : null}
             </>
           ) : null}
             </>

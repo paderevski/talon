@@ -474,10 +474,5 @@ export default function createEc2ExecutionAdapter({
       } while (token);
       return found;
     },
-
-    async getDebugSnapshot() {
-      const instances = await this.listJobInstances();
-      return { provider: "ec2", instances };
-    },
   };
 }

@@ -97,10 +97,9 @@ the adapter that started it.
   terminates stray or overrun instances. Limits: one unfinished job per user
   (admins exempt) and ten in total. Design notes and verification are in
   [`infra/CURRENT_STATUS.md`](infra/CURRENT_STATUS.md).
-- **Local** (`EXECUTION_PROVIDER=local`, the default). Runs the job as a
+- **Local** (the default for admins, tests and development). Runs the job as a
   process on the web server. For development, tests and admins only: there is
   no isolation, and in production it is refused for non-admins.
-- `kubernetes` is an old placeholder that does nothing.
 
 Settings (environment variables):
 

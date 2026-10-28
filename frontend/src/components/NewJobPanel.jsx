@@ -408,7 +408,6 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
           <button className="btn btn-primary" type="submit" disabled={submitting || overBudget || nowhereToRun}>
             {submitting ? "Submitting..." : "Submit Job"}
           </button>
-          <button className="btn btn-secondary" type="button">Save as Template</button>
         </div>
         {message ? <div className="form-group full"><span className="form-hint">{message}</span></div> : null}
       </form>

@@ -1,7 +1,7 @@
 import createExecutionAdapter from "../execution/createExecutionAdapter.js";
 import createEc2ExecutionAdapter from "../execution/adapters/ec2ExecutionAdapter.js";
 
-// The default adapter runs jobs on the web server (EXECUTION_PROVIDER). The
+// The default adapter runs jobs on the web server. The
 // EC2 adapter is created on first use and only when EC2_JOBS_ENABLED=true.
 // A job's execution ref names its provider, so status, logs, files and cancel
 // go to the adapter that started it.
@@ -55,19 +55,4 @@ export async function openExecutionOutputFile(executionRef, name, source) {
 
 export function getExecutionProvider() {
   return defaultAdapter.provider;
-}
-
-export async function getExecutionDebugSnapshot() {
-  const local =
-    typeof defaultAdapter.getDebugSnapshot === "function"
-      ? await defaultAdapter.getDebugSnapshot()
-      : { provider: defaultAdapter.provider, message: "Debug snapshot is not implemented for this provider" };
-  if (!ec2JobsEnabled()) {
-    return local;
-  }
-  try {
-    return { ...local, ec2: await getEc2Adapter().getDebugSnapshot() };
-  } catch (error) {
-    return { ...local, ec2: { error: error.message } };
-  }
 }

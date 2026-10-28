@@ -252,7 +252,7 @@ know about AWS and the decisions behind the design.
 - Built: `ec2ExecutionAdapter.js` behind the same adapter interface
   (`start / getStatus / getLogs / listOutputFiles / cancel`), reserve-then-
   settle billing, and the reconciler (see "Decided approach"). The Kubernetes
-  adapter file is an old stub, not a guide.
+  adapter stub has been removed.
 
 ### Verified against AWS docs (2026-10-25)
 
@@ -625,7 +625,7 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   quotas. We are in LCPS's shared "Academies" account; decide if that is
   acceptable.
 - Student documentation (budgets, checkpointing examples, how to use Talon).
-- Remove the debug panel and the Kubernetes adapter stub.
+- ~~Remove the debug panel and the Kubernetes adapter stub~~ _(done on branch `cleanup-before-gpu`, with the "Save as Template" button; `EXECUTION_PROVIDER` is gone.)_
 
 ## Later: two web servers or auto-replacement
 

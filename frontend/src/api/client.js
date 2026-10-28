@@ -97,10 +97,6 @@ export function fetchResults({ owner = "" } = {}) {
   return getJson(owner ? `/api/results?owner=${encodeURIComponent(owner)}` : "/api/results");
 }
 
-export function fetchExecutionDebugSnapshot() {
-  return getJson("/api/jobs/debug/executions");
-}
-
 export function fetchJobDetails(jobId) {
   return getJson(`/api/jobs/${encodeURIComponent(jobId)}`);
 }
