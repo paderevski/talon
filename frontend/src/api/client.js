@@ -26,7 +26,8 @@ const githubRepoCache = new Map();
 async function getJson(path) {
   const response = await apiFetch(path);
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.message || `Request failed: ${response.status}`);
   }
   return response.json();
 }

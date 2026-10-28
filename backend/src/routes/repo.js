@@ -231,16 +231,23 @@ router.get("/:owner/:repo/tree", async (req, res) => {
 
     const repoInfo = await getJsonWithHeadersOrThrow(
       `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
-      "Repository lookup failed",
+      `Repository ${owner}/${repo} was not found. Check the name; a private repo needs a GitHub token saved in GitHub Credentials.`,
       githubHeaders,
     );
     const branch = requestedBranch || repoInfo.default_branch || "main";
 
+    // GitHub answers 422 (sometimes 404) for a branch that does not exist.
     const headCommit = await getJsonWithHeadersOrThrow(
       `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/commits/${encodeURIComponent(branch)}`,
       "Unable to fetch branch head",
       githubHeaders,
-    );
+    ).catch((error) => {
+      if (error?.status === 404 || error?.status === 422) {
+        error.status = 404;
+        error.message = `Branch '${branch}' was not found in ${owner}/${repo}. The default branch is '${repoInfo.default_branch || "main"}'.`;
+      }
+      throw error;
+    });
 
     const headSha = headCommit?.sha || "";
     const cacheKey = `${owner}/${repo}@${branch}:${requestedPath}`;
