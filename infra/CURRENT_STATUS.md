@@ -669,4 +669,10 @@ migrations take an advisory lock (concurrent deploys are safe).
   limits, per-user and system caps, live logs, output files from both
   sources. Fixes found by testing: apt over HTTPS on arm64, unbuffered
   Python output, the `changed/` S3 permission. Merged to `main`.
+- 2026-10-28: Cleanup pass on branch `cleanup-before-gpu` (dead code removed,
+  jobSync/reconciler/form tests, lost jobs billed for runtime). Walking the app
+  as each role found: failed jobs showed no reason, the repo browser said only
+  "Request failed: 422", and the live-log endpoint had no UI. Fixed: the result
+  card shows the error, repo and branch errors say what is wrong, and a "Logs"
+  button on each job row opens a log panel (polls while the job runs).
 - `infra_2/` is the older EKS design, kept for reference only.
