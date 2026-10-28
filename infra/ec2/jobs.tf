@@ -231,6 +231,7 @@ data "aws_iam_policy_document" "job_access" {
       "${aws_s3_bucket.jobs.arn}/jobs/*/status.json",
       "${aws_s3_bucket.jobs.arn}/jobs/*/logs/*",
       "${aws_s3_bucket.jobs.arn}/jobs/*/output/*",
+      "${aws_s3_bucket.jobs.arn}/jobs/*/changed/*",
     ]
   }
 }
