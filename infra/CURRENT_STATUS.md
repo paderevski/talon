@@ -443,8 +443,7 @@ done (below); the adapter and everything after it are not built yet.
    Timers, in order: the script's `timeout` at the limit, the instance's
    failsafe shutdown at limit + 15 min, and the reconciler at limit + 20 min
    (the last sweep).
-3. **Built and tested locally (2026-10-28); needs `terraform apply`, a
-   deploy and a run on AWS.** Open to all students (kill switch
+3. **Built, deployed and verified on the demo box (2026-10-28).** Open to all students (kill switch
    `EC2_JOBS_ADMIN_ONLY=true`). Submit form: dead Machine Type / Image selects
    removed; "Machine" menu from the server (c7g.large, c7g.xlarge, m7g.large,
    m7g.xlarge, r7g.large; memory, CPUs and hourly rate shown; prices checked
@@ -465,9 +464,18 @@ done (below); the adapter and everything after it are not built yet.
    `*.pyc`); symlinks are never uploaded; limits 500 files, 200 MB per file,
    500 MB total, skipped files are noted in the job log; uploaded every 30 s
    and at the end (so a cancel or crash keeps what was already saved); list
-   and download honor the source. Still to verify on AWS: live logs, both
-   output sources, downloads, the per-user cap with a real job, and a
-   student run in the browser on the box.
+   and download honor the source. Verified on the box: a hand-built job
+   (both sources, mid-run sync, `__pycache__`/`*.pyc`/`venv`/symlinks left out,
+   a 250 MB file skipped with a note in the log), and a real run as
+   `student_a1` with `minimal-rnn`: options listed and local runs refused for
+   students in production, a second submit rejected with 429 "You already
+   have a job running", logs appeared live while the job ran, cancel ended it
+   as failed at 1 cent (ledger: 5-cent charge, 4-cent refund), and the
+   partial `output.txt` showed in Files (source `repo_changed`) and
+   downloaded. Python buffers file writes, so a script killed mid-run loses
+   data it has not flushed: tell students to `flush()` or close files
+   (student documentation). A missing S3 permission for `changed/` was
+   found and fixed during testing.
 4. GPU: Deep Learning AMI, Docker, ECR image, `g4dn` first.
 5. Spot, overnight queue, interruption handling, checkpoint docs.
 
