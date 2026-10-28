@@ -554,7 +554,7 @@ const tests = [
     const ref = await adapter.start({ jobId: "job-7", repo: "a/b", branch: "main", entryScript: "train.py", maxRuntimeSeconds: 600, instanceType: "t4g.small", ownerUsername: "admin" });
     assert(ref.instanceId === "i-abc" && ref.subnetId === "subnet-ok" && ref.executionId === "job-7", `ref ${JSON.stringify(ref)}`);
     assert(aws.objects.get("jobs/job-7/input/repo.tgz") === "archive-bytes", "repo.tgz not uploaded");
-    assert(/exec python3 'train.py'/.test(aws.objects.get("jobs/job-7/input/run.sh")), "run.sh not uploaded");
+    assert(/exec python3 -u 'train.py'/.test(aws.objects.get("jobs/job-7/input/run.sh")), "run.sh not uploaded");
     const run = aws.calls.filter((c) => c.name === "RunInstancesCommand").at(-1).input;
     const tags = Object.fromEntries(run.TagSpecifications[0].Tags.map((t) => [t.Key, t.Value]));
     assert(tags.Project === "talon" && tags.Component === "job" && tags["talon-job"] === "job-7" && tags["talon-max-seconds"] === "600", `tags ${JSON.stringify(tags)}`);
@@ -571,7 +571,8 @@ const tests = [
       try { assertEntryScript(bad); } catch { refused = true; }
       assert(refused, `entry script ${JSON.stringify(bad)} must be refused`);
     }
-    assert(buildRunScript("src/train_1.py").includes("python3 'src/train_1.py'"), "plain paths must pass");
+    assert(buildRunScript("a.py").includes("PYTHONUNBUFFERED=1"), "output must not be buffered");
+    assert(buildRunScript("src/train_1.py").includes("python3 -u 'src/train_1.py'"), "plain paths must pass");
   }],
 
   ["ec2 adapter: status, logs, files and cancel come from S3 and the instance", async () => {
