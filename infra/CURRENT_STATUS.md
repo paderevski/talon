@@ -1,6 +1,6 @@
 # Talon infra - current status
 
-_Last updated: 2026-10-28. The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
+_Last updated: 2026-10-28 (cleanup pass merged; the box runs it only after a redeploy, see History). The Talon app and job instances were last checked on the live box that day, before the cleanup pass; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
 Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 (gitignored). Architecture doc: `docs/talon-architecture-summary-v7.docx`
 (see "Gaps to production" for where it and reality differ).
@@ -626,7 +626,7 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   quotas. We are in LCPS's shared "Academies" account; decide if that is
   acceptable.
 - Student documentation (budgets, checkpointing examples, how to use Talon).
-- ~~Remove the debug panel and the Kubernetes adapter stub~~ _(done on branch `cleanup-before-gpu`, with the "Save as Template" button; `EXECUTION_PROVIDER` is gone.)_
+- ~~Remove the debug panel and the Kubernetes adapter stub~~ _(done 2026-10-28 with the "Save as Template" button; `EXECUTION_PROVIDER` is gone.)_
 
 ## Later: two web servers or auto-replacement
 
@@ -669,10 +669,19 @@ migrations take an advisory lock (concurrent deploys are safe).
   limits, per-user and system caps, live logs, output files from both
   sources. Fixes found by testing: apt over HTTPS on arm64, unbuffered
   Python output, the `changed/` S3 permission. Merged to `main`.
-- 2026-10-28: Cleanup pass on branch `cleanup-before-gpu` (dead code removed,
+- 2026-10-28: Cleanup pass, merged to `main` (dead code removed,
   jobSync/reconciler/form tests, lost jobs billed for runtime). Walking the app
   as each role found: failed jobs showed no reason, the repo browser said only
   "Request failed: 422", and the live-log endpoint had no UI. Fixed: the result
   card shows the error, repo and branch errors say what is wrong, and a "Logs"
   button on each job row opens a log panel (polls while the job runs).
+  Follow-ups: job lists no longer request every job's details and files on
+  each refresh, the `[github-credentials]` debug logging is gone, logout
+  clears the typed username, an over-pool allocation says so, and the roster
+  message no longer shifts the table. Tests: `npm run test:frontend` is new
+  (form estimate/budget logic in `frontend/src/utils/jobPlan.js`), and
+  `jobSync` and the reconciler's lost-job path are covered in
+  `backend/tests/postgres/run.mjs`. Not exercised on a real instance: the
+  lost-job billing change, the log panel on EC2 jobs, and the new error
+  messages; check them after the next deploy.
 - `infra_2/` is the older EKS design, kept for reference only.
