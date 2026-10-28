@@ -110,9 +110,8 @@ Ordered so each item makes the next one easier. Items 1-8 and 12 are done;
    Still to do: restoring onto a replacement instance is only tested in a
    scratch DB, not end to end.
 5. ~~**Terraform state to S3**~~ _(done 2026-10-25: bucket from
-   `infra/state`; `infra/ec2` uses it with `use_lockfile`; lock tested. Old
-   local files kept as `*.migrated-to-s3` in `infra/ec2`: delete after a week
-   if nothing broke.)_
+   `infra/state`; `infra/ec2` uses it with `use_lockfile`; lock tested. The
+   old local state files were deleted 2026-10-28.)_
 
 **Data into Postgres** (nothing resets on deploy after these; first step
 toward two servers)
@@ -162,10 +161,9 @@ toward two servers)
 
 **Housekeeping**
 
-- **~2026-11-01:** delete the deactivated IAM access keys on the personal
-  account and `~/.aws/credentials-bk` if nothing broke.
-- **~2026-11-01:** delete the old local Terraform state copies
-  (`infra/ec2/*.migrated-to-s3`) if nothing broke.
+- ~~Delete the deactivated personal IAM access keys, `~/.aws/credentials-bk`
+  and the old local Terraform state copies~~ _(done 2026-10-28; the personal
+  user has no access keys, it signs in with `aws login`.)_
 - Term end: return leftover teacher pool money to the admin (needs a
   small admin action; see "Gaps to production").
 
@@ -653,7 +651,7 @@ migrations take an advisory lock (concurrent deploys are safe).
 
 - 2026-10-25: Torn down old EKS test stacks (`app`, `platform`, `bootstrap`)
   and stray EC2s in the personal account. Old IAM access keys for user
-  `patrick` deactivated (delete after a week if nothing breaks).
+  `patrick` deactivated (deleted 2026-10-28).
 - 2026-10-25: Created `infra/ec2` and launched this instance.
 - 2026-10-25: Instance replaced to move app secrets into SSM (item 3); demo
   data reset.
