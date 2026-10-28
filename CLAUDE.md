@@ -38,9 +38,10 @@ found in a breach" dialog; it blocks clicks until dismissed.
 - `npm run test:backend` (HTTP regression tests; resets and seeds `talon_test`)
 - `npm run test:postgres --workspace backend` (repository, budget, session tests)
 - Run them one after the other, never in parallel (shared `talon_test`).
-- The frontend has no automated tests. **Check UI changes by running the app**
-  (or at least `npm run build --workspace frontend`); do not hand off
-  frontend changes untested.
+- `npm run test:frontend` covers the pure form logic (`frontend/src/utils/jobPlan.js`:
+  machine, estimate, budget check). There are no component tests. **Check UI
+  changes by running the app** (or at least `npm run build --workspace
+  frontend`); do not hand off frontend changes untested.
 
 ## Working conventions
 
