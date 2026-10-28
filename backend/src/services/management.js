@@ -488,13 +488,20 @@ export async function allocateToStudent({ teacher, studentUsername, amount, note
 
     const poolAccountId = await ensureAccount(client, teacher.id, "teacher_pool");
     const studentAccountId = await ensureAccount(client, student.rows[0].id, "personal");
-    await transfer(client, {
-      fromAccountId: poolAccountId,
-      toAccountId: studentAccountId,
-      amountCents,
-      note: cleanText(note, 200) || "Teacher allocation",
-      createdBy: teacher.id,
-    });
+    try {
+      await transfer(client, {
+        fromAccountId: poolAccountId,
+        toAccountId: studentAccountId,
+        amountCents,
+        note: cleanText(note, 200) || "Teacher allocation",
+        createdBy: teacher.id,
+      });
+    } catch (error) {
+      if (error instanceof BudgetError && error.code === "insufficient_funds") {
+        throw new ManagementError("Your budget pool does not have that much left", 409);
+      }
+      throw error;
+    }
   });
 }
 
