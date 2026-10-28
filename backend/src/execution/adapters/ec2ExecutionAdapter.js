@@ -31,9 +31,11 @@ const gitBin = process.env.TALON_GIT_BIN || "git";
 const cloneTimeoutMs = Number(process.env.EC2_GIT_CLONE_TIMEOUT_MS || 90 * 1000);
 const maxRepoBytes = Number(process.env.EC2_MAX_REPO_BYTES || 100 * 1024 * 1024);
 
-// Beyond the time limit before a job counts as failed and its instance is
-// terminated. The instance's own failsafe fires later (limit + 15 minutes).
-export const overrunGraceSeconds = 600;
+// Beyond the time limit before a job counts as failed and the reconciler
+// terminates its instance. Deliberately the last line of defence: the script's
+// own `timeout` fires at the limit and the instance's failsafe shutdown at
+// limit + 15 minutes (job_boot.sh), so this is failsafe + 5 minutes.
+export const overrunGraceSeconds = 1200;
 
 const ssmPrefix = () => process.env.TALON_SSM_PREFIX || "/talon/demo";
 // The SDK does not look the region up from the instance, so say it.

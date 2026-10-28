@@ -603,7 +603,7 @@ const tests = [
     aws.objects.delete("jobs/job-9/status.json");
     clock = Date.parse("2026-01-01T02:00:00Z");
     const overrun = await adapter.getStatus(ref);
-    assert(overrun.state === "failed" && overrun.endedAt === "2026-01-01T00:20:00.000Z" && overrun.syncKey === "overrun", `overrun ${JSON.stringify(overrun)}`);
+    assert(overrun.state === "failed" && overrun.endedAt === "2026-01-01T00:30:00.000Z" && overrun.syncKey === "overrun", `overrun ${JSON.stringify(overrun)}`);
 
     // Instance vanished with no result, long after launch.
     aws.setInstance(null);
