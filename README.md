@@ -1,59 +1,42 @@
-# Talon Portal Skeleton
+# Talon
 
-This workspace now contains a minimal full-stack skeleton based on `launchpad-v2.html`.
+Talon is an educational GPU/CPU job portal for the Academy of Loudoun (LCPS).
+Students submit training jobs from a GitHub repository and run them on their
+own EC2 machine, teachers manage classes and budgets, and admins oversee
+everything.
 
-## Review of the mockup
+- **Students** pick a machine (memory, CPUs, price per hour) and a time limit,
+  see what the job can cost, and watch logs while it runs. Jobs are charged to
+  a personal compute budget per second of use; the maximum is set aside when a
+  job starts and the unused part is returned. Output files and results are
+  kept for 30 days.
+- **Teachers** see their classes, hand out budget from a pool, and view their
+  students' jobs read-only.
+- **Admins** manage users, roles, classes and budgets (including CSV roster
+  import) and can run jobs themselves.
 
-The mockup already defines a clean first version of the product in four feature slices:
-
-1. **New Job** – form submission workflow
-2. **Repo Browser** – repository preview pane
-3. **Job Status** – filterable queue/status table
-4. **Results** – output artifact cards
-
-These sections are mapped directly into frontend components and backend routes.
+A user can hold several roles. Identity comes only from the session cookie.
 
 ## Project structure
 
-- `frontend/` – React + Vite UI shell
-- `backend/` – Express API with in-memory mock data
-- `launchpad-v2.html` – original static mockup for design reference
+- `backend/` Express API: `src/routes`, `src/auth` (sessions, roles, access
+  scope), `src/services`, `src/execution` (job adapters), `src/budget/ledger.js`,
+  `src/repositories/postgres`, `migrations/` (numbered SQL), `tests/`
+- `frontend/` React (Vite) app: `src/App.jsx`, `components/`, `api/client.js`
+- `shared/` status and repo helpers used by both
+- `infra/` Terraform, scripts and notes for the AWS demo box (start with
+  [`infra/README.md`](infra/README.md) and
+  [`infra/CURRENT_STATUS.md`](infra/CURRENT_STATUS.md), which is the map of
+  what is running, what is done and what is next)
+- `infra_2/` an older EKS design, kept for reference only
 
-## API skeleton
-
-- `GET /api/health`
-- `GET /api/repos/:owner/:repo/tree`
-- `GET /api/jobs?status=all|running|queued|completed|failed`
-- `POST /api/jobs`
-- `GET /api/jobs/:id`
-- `GET /api/jobs/:id/logs?cursor=0`
-- `GET /api/jobs/:id/files`
-- `POST /api/jobs/:id/cancel`
-- `GET /api/jobs/debug/executions`
-- `GET /api/results`
-
-### Execution provider scaffold
-
-Backend job submission now routes through an execution adapter seam so local process execution can be swapped with Kubernetes later.
-
-- Default provider: `local`
-- Future provider: `kubernetes` (placeholder adapter)
-
-Set provider with environment variable:
-
-```bash
-EXECUTION_PROVIDER=local
-```
-
-or
-
-```bash
-EXECUTION_PROVIDER=kubernetes
-```
+Money is integer cents in the ledger and dollars in API responses. Jobs and
+results are scoped by the signed-in user on the server.
 
 ## Run locally
 
-Talon needs a local Postgres 16 (e.g. `brew install postgresql@16`). One-time setup:
+Talon needs a local Postgres 16 (e.g. `brew install postgresql@16`). One-time
+setup:
 
 ```bash
 createdb talon_dev
@@ -70,227 +53,155 @@ npm run dev                          # applies pending migrations, then starts b
 ```
 
 The backend reads `DATABASE_URL` (default `postgres://localhost/talon_dev`).
+This starts the frontend on `http://localhost:5173` and the backend on
+`http://localhost:5174`.
 
-This starts:
-- frontend on `http://localhost:5173`
-- backend on `http://localhost:5174`
+### Demo logins
 
-### Demo login (local)
+These passwords are public on purpose (they are in this repo), so never expose
+a server that has them.
 
-The login screen authenticates against the `users` table in Postgres, filled by `db:seed:demo`.
+| Role | Username | Password |
+|---|---|---|
+| admin | `admin` | `admin123` |
+| teacher | `teacher_ada` | `teach123` |
+| student | `student_a1` | `student123` |
+| student | `jane_smith` | `talon123` |
 
-Example demo credentials:
-- username: `jane_smith`
-- password: `talon123`
+Chrome may show a "password found in a breach" dialog on login; dismiss it.
 
-## GitHub PAT setup (current MVP)
+### Tests
 
-Talon now supports saving a GitHub PAT in the backend and using it for GitHub API calls.
+```bash
+npm run test:backend                       # HTTP regression tests (resets and seeds talon_test)
+npm run test:postgres --workspace backend  # repository, budget, EC2 adapter and session tests
+```
 
-### How it works
+Run them one after the other, never in parallel: they share `talon_test`. The
+frontend has no automated tests; check UI changes by running the app (or at
+least `npm run build --workspace frontend`).
 
-- User pastes PAT in the **GitHub Credentials** panel.
-- The backend knows who you are from your login session.
-- Backend validates token (`GET https://api.github.com/user`).
-- Backend stores the token encrypted (AES-256-GCM) in the Postgres table `github_credentials`, one row per user.
-- Token can be replaced or deleted from the same UI.
+## How jobs run
 
-### Encryption key (important)
+Job submission goes through an execution adapter
+(`start / getStatus / getLogs / listOutputFiles / cancel`). A job's execution
+reference names its provider, so status, logs, files and cancel always go to
+the adapter that started it.
 
-Set `TALON_CREDENTIALS_KEY` for the backend in every non-dev environment. In
-production (`NODE_ENV=production`) the backend refuses to start without it.
-In dev, a built-in key is used. On the AWS demo it comes from SSM Parameter
-Store (see `infra/CURRENT_STATUS.md`).
+- **EC2** (students and admins; `EC2_JOBS_ENABLED=true`). Each job gets its own
+  EC2 instance. The web server clones the repo, ships it to S3 and launches an
+  instance from a launch template; the instance runs the entry script as an
+  unprivileged user under a time limit and writes `status.json`, logs and
+  output files back to S3, then terminates itself. The web server only reads S3.
+  A reconciler on the web server finalizes finished jobs, charges them, and
+  terminates stray or overrun instances. Limits: one unfinished job per user
+  (admins exempt) and ten in total. Design notes and verification are in
+  [`infra/CURRENT_STATUS.md`](infra/CURRENT_STATUS.md).
+- **Local** (`EXECUTION_PROVIDER=local`, the default). Runs the job as a
+  process on the web server. For development, tests and admins only: there is
+  no isolation, and in production it is refused for non-admins.
+- `kubernetes` is an old placeholder that does nothing.
+
+Settings (environment variables):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `EC2_JOBS_ENABLED` | off | Turn on EC2 jobs and the reconciler |
+| `EC2_JOBS_ADMIN_ONLY` | off | Kill switch: limit EC2 jobs to admins |
+| `EC2_MAX_JOBS_PER_USER` / `EC2_MAX_JOBS_TOTAL` | 1 / 10 | Unfinished EC2 jobs allowed |
+| `EC2_MAX_RUNTIME_CEILING_SECONDS` | 86400 | Longest time limit offered |
+| `JOB_RATE_OVERHEAD_CENTS_PER_HOUR` | 1 | Added to the instance rate (IPv4, disk) |
+| `JOB_BOOT_ALLOWANCE_SECONDS` | 300 | Boot and upload time added when reserving |
+| `TALON_ALLOW_LOCAL_JOBS` | off | Allow local runs for non-admins in production |
+| `JOB_MAX_RUNTIME_SECONDS` | 1800 | Time limit for local runs |
+| `JOB_RATE_CENTS_PER_HOUR` | 0 | Rate for local runs (0 = free) |
+
+On AWS the bucket, launch template and subnets come from SSM parameters under
+`/talon/<env>/` (created by Terraform), not from environment variables.
+
+## API
+
+All routes except `/api/health` and `/api/auth/*` need a signed-in session.
+
+- Auth: `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`,
+  `POST /api/auth/password`
+- Jobs: `GET /api/jobs`, `POST /api/jobs`, `GET /api/jobs/compute-options`,
+  `GET /api/jobs/:id`, `GET /api/jobs/:id/logs?cursor=0`,
+  `GET /api/jobs/:id/files`, `GET /api/jobs/:id/files/download`,
+  `POST /api/jobs/:id/cancel`, `DELETE /api/jobs/:id` (hide),
+  `POST /api/jobs/:id/unhide`
+- Results and repos: `GET /api/results`, `GET /api/repos/:owner/:repo/tree`
+- GitHub credentials: `GET|PUT|DELETE /api/github-credentials`,
+  `GET /api/github-credentials/repos/:username`
+- Teacher: `/api/teacher/*` (roster and budget allocations)
+- Admin: `/api/admin/*` (users, classes, budget adjustments, CSV roster import)
+
+## GitHub PAT setup
+
+Users can save a GitHub personal access token for Talon to use with GitHub
+API calls.
+
+- The user pastes the PAT in the **GitHub Credentials** panel. The backend
+  validates it (`GET https://api.github.com/user`) and stores it encrypted
+  (AES-256-GCM) in the Postgres table `github_credentials`, one row per user.
+  It can be replaced or deleted from the same panel. These endpoints are scoped
+  to the signed-in user.
+
+### Encryption key
+
+Set `TALON_CREDENTIALS_KEY` in every non-dev environment. In production
+(`NODE_ENV=production`) the backend refuses to start without it; in dev a
+built-in key is used. On the AWS demo it comes from SSM Parameter Store.
 
 Each stored token records the id of the key that encrypted it
-(`TALON_CREDENTIALS_KEY_ID`, default `k1`), and is bound to its owner, so a row
+(`TALON_CREDENTIALS_KEY_ID`, default `k1`) and is bound to its owner, so a row
 copied to another user will not decrypt. To rotate the key: set the new secret
 and a new `TALON_CREDENTIALS_KEY_ID`, list the old one in
 `TALON_CREDENTIALS_OLD_KEYS="k1:old-secret"`, restart, run
 `npm run db:rotate-credentials-key --workspace backend`, then remove the old
-key. Tokens from the old `githubCredentials.json` file can be loaded once with
+key. Changing the key without following these steps makes stored tokens
+unreadable; they must be saved again. Tokens from the old
+`githubCredentials.json` file can be loaded once with
 `npm run db:import-github-credentials --workspace backend`.
-
-### API endpoints
-
-- `GET /api/github-credentials` → token status (`hasToken`, `tokenLast4`, `updatedAt`)
-- `PUT /api/github-credentials` with `{ "token": "..." }` → validate + save/replace token
-- `DELETE /api/github-credentials` → delete saved token
-- `GET /api/github-credentials/repos/:username` → public repos list (uses saved PAT if present)
-
-These endpoints require a signed-in session; credentials are scoped to the signed-in user.
 
 ### Security notes
 
-- Do not log PAT values in backend logs.
-- Use a strong, unique `TALON_CREDENTIALS_KEY` per environment.
-- Rotate PATs regularly and delete unused tokens.
-- If you change `TALON_CREDENTIALS_KEY` without following the rotation steps above, stored tokens become unreadable and must be re-saved.
+- Never log PAT values. Use a strong, unique `TALON_CREDENTIALS_KEY` per
+  environment. Rotate PATs regularly and delete unused ones.
 
-### End-user guide: Create a GitHub PAT
+### For users: create a PAT and add it to Talon
 
-This section is for Talon users who just need to connect GitHub.
+1. In GitHub open **Settings**, then **Developer settings**, then **Personal
+   access tokens**, and choose **Fine-grained tokens** (recommended).
+2. Click **Generate new token**, pick your account or organization, set an
+   expiration date and a name (for example `talon-access`).
+3. Grant **Contents: Read-only** and **Metadata: Read-only**, then generate the
+   token and copy it immediately (GitHub shows it once).
+4. In Talon open **GitHub Credentials**, paste the token and click **Save
+   Token**. A masked suffix like `...abcd` confirms it. Use **Replace Token** or
+   **Delete Token** to change it later.
 
-1. Sign in to GitHub.
-2. Open **Settings**.
-3. In the left menu, open **Developer settings**.
-4. Open **Personal access tokens**.
-5. Choose **Fine-grained tokens** (recommended) and click **Generate new token**.
-6. Select your account/organization, set an expiration date, and add a name (for example, `talon-access`).
-7. Grant minimum permissions for Talon read access:
-	- **Repository permissions** → **Contents: Read-only**
-	- **Repository permissions** → **Metadata: Read-only**
-8. Click **Generate token**.
-9. Copy the token immediately (GitHub only shows it once).
+## Tips for writing jobs
 
-### End-user guide: Add PAT in Talon
+- The entry script runs from the repository root as an unprivileged user; a
+  `requirements.txt` there is installed first (that time counts against the
+  time limit).
+- Print progress: output is unbuffered and appears in the job log while the
+  job runs.
+- Files written to the directory in the `TALON_OUTPUT_DIR` environment
+  variable, and files you create or change in the repository directory, are
+  saved (up to 500 files, 200 MB per file and 500 MB in total). Python buffers
+  file writes, so call `flush()` or close files as you go: a job stopped by its
+  time limit, a cancel or running out of memory loses what was not flushed.
+- Exit code 137 usually means the script ran out of memory; choose a machine
+  with more memory.
 
-1. Log in to Talon.
-2. Open **GitHub Credentials** from the left nav (or user menu).
-3. Paste your token into **GitHub Personal Access Token (PAT)**.
-4. Click **Save Token**.
-5. You should see token status updated (masked suffix like `...abcd`).
+## Deploy
 
-If your token expires or you rotate it, paste the new token and click **Replace Token**.
-If you no longer want Talon to use it, click **Delete Token**.
-
-## Deploy (AWS, single EC2 instance)
-
-**Automated version (Terraform + SSM, no open ports): see [`infra/README.md`](infra/README.md).** The manual steps below are kept for reference. Use Node 24 LTS; the backend also needs Postgres 16.
-
-If it has been a while, this is the simplest production setup for this repo:
-- build the React app once
-- run the Node backend as a service
-- let Nginx serve frontend static files and proxy `/api/*` to Node
-
-This works well with the current frontend API client because it calls relative paths like `/api/jobs`.
-
-### 1) Launch and prepare an EC2 instance
-
-Use Ubuntu 22.04/24.04, open ports `22`, `80`, `443`, and point your domain DNS to the instance.
-
-Install runtime packages:
-
-```bash
-sudo apt update
-sudo apt install -y nginx
-curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
-sudo apt install -y nodejs
-```
-
-### 2) Copy project and install deps
-
-```bash
-git clone <your-repo-url> talon
-cd talon
-npm ci
-```
-
-### 3) Build frontend assets
-
-```bash
-npm run build
-```
-
-This creates `frontend/dist`.
-
-### 4) Run backend as a system service
-
-Create `/etc/systemd/system/talon-backend.service`:
-
-```ini
-[Unit]
-Description=Talon Backend
-After=network.target
-
-[Service]
-Type=simple
-User=ubuntu
-WorkingDirectory=/home/ubuntu/talon
-Environment=NODE_ENV=production
-Environment=PORT=5174
-ExecStart=/usr/bin/npm run start --workspace backend
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Then enable it:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now talon-backend
-sudo systemctl status talon-backend
-```
-
-### 5) Configure Nginx
-
-Create `/etc/nginx/sites-available/talon`:
-
-```nginx
-server {
-	listen 80;
-	server_name your-domain.com;
-
-	root /home/ubuntu/talon/frontend/dist;
-	index index.html;
-
-	location / {
-		try_files $uri /index.html;
-	}
-
-	location /api/ {
-		proxy_pass http://127.0.0.1:5174/api/;
-		proxy_http_version 1.1;
-		proxy_set_header Host $host;
-		proxy_set_header X-Real-IP $remote_addr;
-		proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-		proxy_set_header X-Forwarded-Proto $scheme;
-	}
-}
-```
-
-Enable site and reload:
-
-```bash
-sudo ln -s /etc/nginx/sites-available/talon /etc/nginx/sites-enabled/talon
-sudo nginx -t
-sudo systemctl reload nginx
-```
-
-### 6) Add HTTPS (recommended)
-
-```bash
-sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d your-domain.com
-```
-
-### 7) Deploy updates
-
-For each new deploy:
-
-```bash
-cd /home/ubuntu/talon
-git pull
-npm ci
-npm run build
-sudo systemctl restart talon-backend
-sudo systemctl reload nginx
-```
-
-### Notes
-
-- Users, budgets, jobs, results and GitHub credentials are stored in Postgres, so they survive restarts and deploys.
-- Job output files and the runner's live state are still on the server's disk (`backend/data/runs`), so they do not survive replacing the server.
-- Job settings: `JOB_MAX_RUNTIME_SECONDS` (default 1800; kills a local run that takes longer) and `JOB_RATE_CENTS_PER_HOUR` (default 0 = free; when above 0, a job is charged `seconds x rate` to its owner's budget when it finishes, and users with no budget cannot submit).
-- If you later split frontend/backend into separate hosts, update frontend API calls or add a dedicated API base URL.
-
-## Next build steps
-
-- Replace in-memory data with a database (`jobs`, `artifacts`, `repositories`)
-- Add auth/session middleware
-- Connect real Git provider APIs
-- Add job orchestration worker + queue integration
-- Add artifact storage integration (S3/local)
+The demo runs on one EC2 instance reachable only through an SSM tunnel. Creating
+it, deploying a branch, and the Terraform workflow are documented in
+[`infra/README.md`](infra/README.md) (for example
+`infra/scripts/deploy.sh <branch>` builds, migrates and restarts), and
+[`infra/CURRENT_STATUS.md`](infra/CURRENT_STATUS.md) lists what is blocked and
+what the gaps to production are (Entra ID sign-in, the ALB and WAF, student
+data compliance, and more).

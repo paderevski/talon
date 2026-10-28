@@ -12,6 +12,10 @@ internet: you reach the app through an SSM Session Manager port forward.
 - Security group with **no inbound rules**
 - IAM role with `AmazonSSMManagedInstanceCore` (shell + port forwarding)
 - Elastic IP (reserved for pointing `talon.aet-cs.org` here later)
+- Backups bucket and alarms (`backups.tf`, `alarms.tf`), app secrets in SSM (`secrets.tf`)
+- Everything student jobs need (`jobs.tf`): the jobs bucket, a launch template and role for
+  job instances, the web server's limited permission to launch and stop them, and budget
+  alerts. See `CURRENT_STATUS.md`, "EC2-launched jobs".
 
 First boot (`user_data.sh.tftpl`) installs Node 24, nginx, git, python3 and
 Postgres 16, creates a `talon` service user and a `talon` database it reaches
@@ -72,9 +76,11 @@ sudo -u talon psql talon                  # database shell
   **survive deploys** (`deploy.sh` runs migrations). They do not survive
   instance replacement, but nightly backups of them go to S3 (see
   `infra/CURRENT_STATUS.md`).
-- Jobs and results are in Postgres (survive deploys). Their output files
-  are still on the instance disk (`backend/data/runs`) and are lost if it is
-  replaced; such jobs show as "output no longer available".
+- Jobs and results are in Postgres (survive deploys). Output files of
+  student jobs (run on their own EC2 instances) are in the jobs bucket in S3
+  and expire after 30 days; output of jobs run by the local runner (admins,
+  development) is on the instance disk (`backend/data/runs`) and is lost if
+  the instance is replaced; such jobs show as "output no longer available".
 - Demo users are seeded once on first boot (`TALON_ALLOW_DEMO_SEED=true` in
   the env file). Their passwords are public: see "Going public".
 - Changing `user_data.sh.tftpl` replaces the instance on the next `apply`.

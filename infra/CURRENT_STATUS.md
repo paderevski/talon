@@ -1,6 +1,6 @@
 # Talon infra - current status
 
-_Last updated: 2026-10-25, reviewed against the live account that day._
+_Last updated: 2026-10-28. The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
 Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 (gitignored). Architecture doc: `docs/talon-architecture-summary-v7.docx`
 (see "Gaps to production" for where it and reality differ).
@@ -14,9 +14,9 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 | Instance | `talon-demo-app`, t4g.small, Ubuntu 24.04 arm64 |
 | Elastic IP | Yes (no ports open; reserved for future DNS) - `terraform output public_ip` |
 | Inbound access | None. SSM Session Manager only |
-| Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`, Postgres 16 (local socket, peer auth) |
-| Deployed | `origin/main` |
-| Approx cost | ~$20/month (instance ~$12, EBS ~$1.60, public IPv4 ~$3.65, 2 KMS keys ~$2, alarms/S3/SNS pennies). Estimate, not read from the bill |
+| Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`, Postgres 16 (local socket, peer auth). `EC2_JOBS_ENABLED=true` in `/etc/talon/talon.env` (written by Terraform at first boot) turns on EC2 jobs and the reconciler |
+| Deployed | `origin/main` (EC2 jobs merged 2026-10-28) |
+| Approx cost | ~$20/month (instance ~$12, EBS ~$1.60, public IPv4 ~$3.65, 2 KMS keys ~$2, alarms/S3/SNS pennies). Estimate, not read from the bill. Plus job instances (c7g/m7g/r7g, roughly 8-17 cents per hour each), billed per second while they run and charged to students' budgets |
 | Other AWS resources | S3 backups bucket (`backups.tf`), SSM parameters under `/talon/demo/`, KMS keys `alias/talon-demo-secrets` and `alias/talon-demo-backups`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), 2 CloudWatch alarms (`alarms.tf`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and launch template (`jobs.tf`), 2 AWS Budgets alerts |
 | Root volume | 20 GB gp3, encrypted with the default AWS-managed EBS key (the architecture doc asks for a KMS key; not changed) |
 | OS patching | `unattended-upgrades` enabled on the box (checked) |
@@ -49,9 +49,16 @@ Key paths: app `/opt/talon`, config `/etc/talon/talon.env`, secrets
 ## Known limitations (demo mode)
 
 - Users, sessions, budgets, GitHub credentials, jobs and results are in
-  Postgres and survive deploys. Job output files and the runner's live state
-  are still on the instance disk, and jobs run on the web server itself
-  (30 minute limit per run, `JOB_MAX_RUNTIME_SECONDS`).
+  Postgres and survive deploys. Student jobs run on their own EC2 instance
+  each (see "EC2-launched jobs"); their logs and output files are in the jobs
+  bucket and expire after 30 days (`jobs_retention_days`), and they are not in
+  the database backups. The local runner (on the web server, no isolation,
+  `JOB_MAX_RUNTIME_SECONDS` default 30 minutes) is refused for non-admins in
+  production and remains for development, tests and admins.
+- Job instances can reach the internet on 443 (students download datasets
+  and models), so jobs are not network-isolated; the instance metadata
+  service is blocked for the student user and no secrets are on the box.
+  GuardDuty is not enabled.
 - Nightly database backups exist, but restoring onto a new instance is manual
   and has only been tested into a scratch database.
 - Demo accounts have public passwords (they are in this repo). Fine only
@@ -65,8 +72,8 @@ Key paths: app `/opt/talon`, config `/etc/talon/talon.env`, secrets
 
 ## To-do (in order)
 
-Ordered so each item makes the next one easier. Items 1-8 are done; 9-11
-need other people.
+Ordered so each item makes the next one easier. Items 1-8 and 12 are done;
+9-11 need other people.
 
 **Foundation**
 
@@ -137,6 +144,12 @@ toward two servers)
    hide, repo or GitHub panels); the fake "g4dn.xlarge" header pill and the
    "GPU" column ("Compute" now, "Local" for web-server runs) are fixed.
    Checked in a real browser (local dev) as student, teacher and admin.)_
+
+**Jobs on EC2**
+
+12. ~~**Student jobs on their own EC2 instances**~~ _(done 2026-10-28, build
+    order steps 1-3 in "EC2-launched jobs"; GPU, Spot and the overnight queue
+    are steps 4-5, not started.)_
 
 **Blocked on others**
 
@@ -221,11 +234,13 @@ Verify CloudFront VPC origin support for EC2 before choosing it.
   (random password, printed once).
 - ~~Nightly `pg_dump` to S3~~ (done, item 4).
 
-## Building EC2-launched jobs (notes for when we get there)
+## EC2-launched jobs: design notes and build status
 
-Today every job runs on the web server itself (`localExecutionAdapter`), with
-a 30 minute limit. Moving to one EC2 instance per job fixes isolation and
-makes cost real. What we know, and what to decide.
+Student jobs now run on one EC2 instance each (build order steps 1-3 are
+done and verified; see "Decided approach" below for the details and what is
+left). The local runner (`localExecutionAdapter`, on the web server) remains
+for development, the test suite and admins. The notes below record what we
+know about AWS and the decisions behind the design.
 
 ### What is already in place
 
@@ -236,10 +251,10 @@ makes cost real. What we know, and what to decide.
   in one transaction, once per job (ledger has a unique charge per job).
   Cost = `max(seconds, 60) x rate / 3600`, rounded up to a cent.
 - Submits are refused (402) when the rate is above 0 and the budget is 0.
-- To add: an execution adapter that launches/terminates instances (the
-  adapter interface is `start / getStatus / getLogs / listOutputFiles /
-  cancel`), plus the pieces below. The Kubernetes adapter file is an old
-  stub, not a guide.
+- Built: `ec2ExecutionAdapter.js` behind the same adapter interface
+  (`start / getStatus / getLogs / listOutputFiles / cancel`), reserve-then-
+  settle billing, and the reconciler (see "Decided approach"). The Kubernetes
+  adapter file is an old stub, not a guide.
 
 ### Verified against AWS docs (2026-10-25)
 
@@ -542,25 +557,33 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   classes exists), remove graduated students; per-user storage quota
   overrides. No audit screen yet (grants record who did them, nothing reads
   them). New users have no forced password change on first sign-in.
-- Submit form: the design has compute tier, on-demand / Spot / overnight
-  queue, max runtime, environment choice, and a cost estimate before
-  submitting. The Machine Type and Image dropdowns do nothing today.
+- Submit form: done for on-demand CPU jobs (machine menu, time limit, cost
+  estimate, environment variables). Still to do from the design: Spot,
+  overnight queue, GPU tiers, and an environment/image choice (the Machine
+  Image select was removed because it did nothing).
 - Job-finished notification (students run overnight jobs).
 
 ### 2. Compute pieces beyond the launch itself
 
-- SQS queue + dead-letter queue + dispatcher process; launch templates;
-  custom GPU AMI (Ubuntu, NVIDIA drivers, Docker); ECR images (general GPU,
-  AlphaFold, R, CPU-only).
-- **Authenticated completion callback** (`POST /api/jobs/{id}/complete`
-  from compute instances): needs a per-job token, otherwise anyone on the
-  network could mark a job done.
+- Queue and dispatcher: launches are synchronous today (a capacity failure
+  fails the job and refunds it). The decided design is a Postgres queue
+  (`FOR UPDATE SKIP LOCKED`, `not_before` for overnight, retry with backoff),
+  with SQS only if it becomes painful. Custom GPU AMI (Ubuntu, NVIDIA
+  drivers, Docker) and ECR images (general GPU, AlphaFold, R, CPU-only), plus
+  a baked CPU AMI so boot stops installing the AWS CLI and pip each time.
+- ~~Authenticated completion callback~~ (not needed: the instance writes
+  `status.json` to S3 and the web server only reads it; there is no inbound
+  path to the web server).
 - Spot interruption handling, checkpoint/resume docs and helpers, resubmit.
 - S3 per-user storage (`users/{id}/`): quota enforcement (the columns exist
   but nothing updates `storage_used_bytes`), presigned downloads,
   lifecycle to Infrequent Access.
-- Isolation of student code (egress limits, instance metadata blocked inside
-  the container), and turning the local runner off in production.
+- Isolation of student code: done for the first slice (own instance, student
+  user, instance metadata blocked for it, no secrets on the box, HTTPS/DNS
+  only outbound, local runner refused for non-admins in production). Still
+  open: per-job scoped credentials (the job role is shared across jobs),
+  optional hardening (`timeout` run as root, cgroup memory/task limits), a
+  dedicated VPC with private subnets, and GuardDuty.
 
 ### 3. Security and privacy before real students
 
@@ -604,8 +627,7 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   quotas. We are in LCPS's shared "Academies" account; decide if that is
   acceptable.
 - Student documentation (budgets, checkpointing examples, how to use Talon).
-- Remove the debug panel, the Kubernetes adapter stub, and the placeholder
-  dropdowns (or build the instance menu behind them).
+- Remove the debug panel and the Kubernetes adapter stub.
 
 ## Later: two web servers or auto-replacement
 
@@ -639,4 +661,13 @@ migrations take an advisory lock (concurrent deploys are safe).
   first-boot installs the timers (SSM secrets survived the rebuild). Terraform
   state moved to S3. GitHub credentials, jobs and results moved to Postgres.
   Frontend polish merged. All to-do items 1-8 done and deployed from `main`.
+- 2026-10-27: EC2-launched jobs built and applied (steps 1-2): jobs bucket,
+  job role and launch template, web-server launch permissions, budget
+  alerts, the EC2 adapter with reserve-then-settle billing, and the
+  reconciler. Web instance replaced so `EC2_JOBS_ENABLED` comes from
+  Terraform. Verified on the box (see build order).
+- 2026-10-28: Step 3 built and verified: student-facing machine menu, time
+  limits, per-user and system caps, live logs, output files from both
+  sources. Fixes found by testing: apt over HTTPS on arm64, unbuffered
+  Python output, the `changed/` S3 permission. Merged to `main`.
 - `infra_2/` is the older EKS design, kept for reference only.
