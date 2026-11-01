@@ -70,8 +70,9 @@ found in a breach" dialog; it blocks clicks until dismissed.
 - Never read secret values into the conversation (no `secretsmanager
   get-secret-value`). App secrets live in SSM under `/talon/demo/` and must
   not be deleted (stored GitHub tokens and backups depend on them).
-- The ALB + WAF go-public work is on hold until hostname, exposure and subnet
-  decisions are made (see CURRENT_STATUS.md).
+- The ALB + WAF go-public work is on hold until the exposure and subnet
+  decisions are made and LCPS IT adds the DNS records for the planned
+  hostname `talon.lcps.org` (see CURRENT_STATUS.md).
 
 ## Gotchas
 

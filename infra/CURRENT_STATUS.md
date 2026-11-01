@@ -154,7 +154,8 @@ toward two servers)
 
 9. **Entra ID sign-in** - waiting on the LCPS App Registration (ask early;
    IT lead time).
-10. **ALB + WAF go-public** - waiting on hostname, exposure, and subnet
+10. **ALB + WAF go-public** - hostname chosen (`talon.lcps.org`, needs
+    LCPS IT to add DNS records); still waiting on the exposure and subnet
     decisions (see "Going public" below). Includes the X-Forwarded-Proto
     fix, removing demo users, creating the real admin.
 11. **Read-only AWS role** (`lcps-ro`) - ask the LCPS AWS admins.
@@ -183,11 +184,15 @@ Verify CloudFront VPC origin support for EC2 before choosing it.
 
 ### Decisions needed
 
-1. **Hostname.** `talon.aet-cs.org` (DNS in personal Lightsail, can be done
-   today; that record currently points to Lightsail Nginx-1, so repoint or
-   use a new name like `talon-demo.aet-cs.org`) or
-   `talon.academyofloudoun.org` (needs LCPS IT for the ACM validation CNAME
-   and the ALIAS/CNAME to the ALB).
+1. ~~**Hostname.**~~ _(decided 2026-11-01: **`talon.lcps.org`**. Replaces the
+   earlier candidates `talon.aet-cs.org` and `talon.academyofloudoun.org`.)_
+   The `lcps.org` zone is on GoDaddy DNS (`domaincontrol.com` nameservers),
+   so LCPS IT must add two records: the ACM validation CNAME, then a
+   CNAME to the ALB (the apex cannot be a CNAME, but this is a subdomain).
+   On 2026-11-01 neither the name nor any record for it existed (NXDOMAIN
+   from both authoritative servers). Ask early, like the Entra app
+   registration: IT lead time. The personal Lightsail `Nginx-1` is not
+   involved.
 2. **Exposure for the demo.** Open internet, or allow-list LCPS / known IP
    ranges at the ALB security group or a WAF IP set ("limited exposure").
    Allow-listing is the strongest single control while auth is new.

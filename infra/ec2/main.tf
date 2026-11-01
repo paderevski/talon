@@ -103,7 +103,7 @@ resource "aws_instance" "app" {
   }
 }
 
-# Stable public IP for when talon.aet-cs.org is pointed here. Nothing listens
+# Stable public IP reserved for the planned hostname (talon.lcps.org). Nothing listens
 # publicly yet (no ingress rules).
 resource "aws_eip" "app" {
   domain   = "vpc"
