@@ -183,7 +183,13 @@ toward two servers)
     private repo ran start to finish with live logs and a result download.
     The sign-in link asks GitHub for its account picker
     (`prompt=select_account`) so a student with two GitHub accounts, or on a
-    borrowed computer, chooses deliberately; check that GitHub honors it.
+    borrowed computer, chooses deliberately; verified on the box (GitHub
+    offers "sign in as <login>" or another account). The redesigned panel
+    (one Connect button, repo list) and the one-GitHub-account-per-user
+    check ("already connected to another Talon user") verified there too.
+    Still to do: an admin "Unlink GitHub" action on the user edit screen
+    (today a student who forgets which Talon account holds their link needs
+    a database fix).
 
 **Blocked on others**
 
