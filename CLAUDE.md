@@ -63,7 +63,8 @@ found in a breach" dialog; it blocks clicks until dismissed.
   Personal = `patrick`/`default`. Confirm the account before any AWS action.
   The personal Lightsail instance `Nginx-1` must be kept.
 - Terraform cannot read `aws login`/SSO credentials directly. Before running
-  it: `eval "$(aws configure export-credentials --profile lcps --format env)"`,
+  it: `source infra/scripts/aws-env.sh` (clears stale vars, logs in if needed,
+  exports; `... aws-env.sh clear` afterwards),
   then `terraform init -backend-config=backend.hcl` in `infra/ec2`.
 - Prefer Terraform (IaC) over console/CLI changes. No em dashes in AWS
   resource names or descriptions.

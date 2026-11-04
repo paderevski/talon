@@ -36,10 +36,12 @@ aws sso login --profile lcps
 ## Create / destroy
 
 Terraform cannot read `aws login` / SSO profile credentials directly, so
-export them first (valid for the current session):
+export them first. `aws-env.sh` clears stale ones, runs `aws sso login` if the
+session has expired, checks the account, and exports. Source it again when
+Terraform reports `ExpiredToken`; `source infra/scripts/aws-env.sh clear` when done.
 
 ```bash
-eval "$(aws configure export-credentials --profile lcps --format env)"
+source infra/scripts/aws-env.sh
 cd infra/ec2
 cp terraform.tfvars.example terraform.tfvars   # first time: fill in account_id, owner
 cp backend.hcl.example backend.hcl             # first time: put your account id in the bucket name
