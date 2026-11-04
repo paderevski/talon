@@ -1,8 +1,8 @@
 # Saved CloudWatch Logs Insights queries (console: CloudWatch > Logs Insights >
 # Queries, folder "Talon"). Edit the placeholder value (job id, user id,
 # request id) after opening a query. Field names come from the backend's JSON
-# lines (backend/src/utils/log.js, requestLog.js) and the nginx talon_json
-# format (infra/server/configure.sh).
+# lines (backend/src/utils/log.js, requestLog.js), the nginx talon_json format
+# (infra/server/configure.sh) and job_boot.sh's job.boot_summary line.
 
 locals {
   lg = { for k, g in aws_cloudwatch_log_group.server : k => g.name }
@@ -109,6 +109,46 @@ locals {
       groups = [local.lg["nginx-error"]]
       query  = <<-EOQ
         fields @timestamp, @message
+        | sort @timestamp desc
+        | limit 200
+      EOQ
+    }
+
+    "Job boot log (set jobId)" = {
+      groups = [aws_cloudwatch_log_group.jobs.name]
+      query  = <<-EOQ
+        fields @timestamp, @message
+        | filter @logStream like "job-REPLACE/"
+        | sort @timestamp asc
+        | limit 2000
+      EOQ
+    }
+
+    "Job boot summaries" = {
+      groups = [aws_cloudwatch_log_group.jobs.name]
+      query  = <<-EOQ
+        fields @timestamp, jobId, instanceType, image, result, exitCode, message, bootSeconds, setupSeconds, runSeconds, totalSeconds, skippedFiles
+        | filter event = "job.boot_summary"
+        | sort @timestamp desc
+        | limit 200
+      EOQ
+    }
+
+    "Job setup time by instance type" = {
+      groups = [aws_cloudwatch_log_group.jobs.name]
+      query  = <<-EOQ
+        filter event = "job.boot_summary" and ispresent(setupSeconds)
+        | stats count(*) as jobs, avg(bootSeconds) as avgBoot, avg(setupSeconds) as avgSetup, max(setupSeconds) as maxSetup by instanceType, image
+        | sort avgSetup desc
+      EOQ
+    }
+
+    "Job boot problems" = {
+      groups = [aws_cloudwatch_log_group.jobs.name]
+      query  = <<-EOQ
+        fields @timestamp, @logStream, @message
+        | filter @message like /(?i)(error|fail|could not|denied|SECURITY PROBLEM|no aws cli|talon-cwlog)/
+          or (event = "job.boot_summary" and result != "succeeded")
         | sort @timestamp desc
         | limit 200
       EOQ

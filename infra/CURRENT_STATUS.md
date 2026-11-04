@@ -32,7 +32,7 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 | Elastic IP | Yes (no ports open; reserved for future DNS) - `terraform output public_ip` |
 | Inbound access | None. SSM Session Manager only |
 | Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`, Postgres 16 (local socket, peer auth). `EC2_JOBS_ENABLED=true` in `/etc/talon/talon.env` (written by Terraform at first boot) turns on EC2 jobs and the reconciler |
-| Deployed | `harden-ec2-cloudwatch` branch (2026-11-04; same code as `main` once merged) |
+| Deployed | `logging-structured` branch (2026-11-04) |
 | Approx cost | ~$20/month (instance ~$12, EBS ~$1.60, public IPv4 ~$3.65, 2 KMS keys ~$2, alarms/S3/SNS pennies). Estimate, not read from the bill. Plus job instances (c7g/m7g/r7g, roughly 8-17 cents per hour each), billed per second while they run and charged to students' budgets |
 | Other AWS resources | S3 backups bucket (`backups.tf`), SSM parameters under `/talon/demo/`, KMS keys `alias/talon-demo-secrets` and `alias/talon-demo-backups`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), CloudWatch alarms (`alarms.tf`: 2 backup; `monitoring.tf`: disk, backend errors, unknown job instance, failed logins, GPU and standard vCPUs), CloudWatch agent on the web server (SSM State Manager; logs in `/talon/demo/{backend,syslog,nginx-access,nginx-error,bootstrap}`, 30 days; metrics in `Talon/Server`), saved Logs Insights queries `Talon/*` (`log_queries.tf`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and launch template (`jobs.tf`), 2 AWS Budgets alerts |
 | Root volume | 20 GB gp3, encrypted with the default AWS-managed EBS key (the architecture doc asks for a KMS key; not changed) |
@@ -76,6 +76,7 @@ Everything is in CloudWatch Logs (us-east-1), 30 days:
 | `/talon/demo/nginx-error` | nginx error log (text) |
 | `/talon/demo/syslog` | Everything else: backups, deploys, systemd, kernel |
 | `/talon/demo/bootstrap` | First-boot user_data log |
+| `/talon/demo/jobs` | Job instances' boot logs (`job_boot.sh`, root's output, not the student's), stream `<job id>/<instance id>`, sent every 15 s and at exit. Last line: JSON `job.boot_summary` (result, exit code, boot/setup/run seconds, instance type). The same log is `jobs/<id>/logs/boot.log` in S3, uploaded on every exit path; the student's `job.log` is in S3 only |
 
 nginx passes its `$request_id` to the backend (`X-Request-Id`, also returned
 to the browser), so one `requestId` finds both sides of a request.
@@ -85,7 +86,8 @@ to the browser), so one `requestId` finds both sides of a request.
 - Search: CloudWatch > Logs Insights > Queries > folder `Talon`: backend
   errors, trace one request, job history, user activity, job lifecycle,
   failed logins, slow requests, traffic by status, nginx 4xx/5xx, syslog
-  problems. Set the placeholder (job id, user id, request id) and run.
+  problems, job boot log, job boot summaries, setup time by instance type,
+  job boot problems. Set the placeholder (job id, user id, request id) and run.
 - Event names (`event` field) are stable; alarms match them:
   `level = "error"` (backend errors), `ec2.instance_terminated` with reason
   `no job row` (unknown job instance), `auth.login_failed`/`auth.login_locked`
@@ -884,8 +886,8 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   (`monitoring.tf`).
 - Application logs are in CloudWatch Logs (CloudWatch agent: backend JSON,
   nginx JSON access, nginx error, syslog, bootstrap; see "Logs"). Job
-  instance boot logs stay in S3 (next: stream them to CloudWatch too). SSM
-  session logging and a CloudTrail trail are not set up.
+  instance boot logs also go to `/talon/demo/jobs` (shipped with the AWS
+  CLI, no agent). SSM session logging and a CloudTrail trail are not set up.
 - CI/CD: nothing runs the test suites automatically; deploys are manual SSM
   runs. Add tests on every push and automated deploys.
 - End-to-end restore drill onto a brand-new instance; a staging environment
@@ -928,6 +930,13 @@ migrations take an advisory lock (concurrent deploys are safe).
 
 ## History
 
+- 2026-11-04: Logging (`logging-structured`). Backend JSON logs with stable
+  event names and request ids in `/talon/demo/backend`; nginx JSON access log
+  sharing the request id; job instance boot logs in `/talon/demo/jobs` with
+  a timing summary; 16 saved Logs Insights queries; failed-logins alarm; the
+  backend-errors and unknown-instance alarms moved to JSON events. Checked on
+  the box: request tracing across nginx and backend, no query strings
+  logged, job-69 submitted -> finished (1 cent) -> instance terminated.
 - 2026-11-04: Hardening (`harden-ec2-cloudwatch`), applied, deployed and
   checked on the box. Local runs refused in production for everyone and
   given only PATH/HOME/locale. Web role may launch only the job templates'
