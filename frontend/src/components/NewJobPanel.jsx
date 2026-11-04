@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { fetchGithubRepos, fetchRepoTree } from "../api/client";
+import { fetchGithubRepos, fetchRepoBranches, fetchRepoTree } from "../api/client";
 import { normalizeFolder, normalizeRepoInput, parseGithubUrl } from "../utils/repo";
 import { formatDollars } from "../utils/format";
 import { formatRuntime, planJob } from "../utils/jobPlan";
@@ -78,6 +78,7 @@ function makeInitialForm(defaultRepo, defaultBranch) {
     branch: defaultBranch || "main",
     entryScript: "train.py",
     folder: "",
+    scriptArgs: "",
     runOn: "",
     maxRuntimeSeconds: 3600,
     s3DataSource: "",
@@ -241,6 +242,38 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
   const folder = normalizeFolder(form.folder);
   const folderInvalid = folder === null;
 
+  // Branch menu: the repo's branches, default branch first. When the repo
+  // changes and the current branch is not one of them (main vs master), the
+  // default branch is chosen. Free text if the list cannot be loaded.
+  const [branchOptions, setBranchOptions] = useState([]);
+  const [isLoadingBranches, setIsLoadingBranches] = useState(false);
+  const branchRepo = normalizeRepoInput(activeRepo);
+  useEffect(() => {
+    setBranchOptions([]);
+    if (!branchRepo) {
+      setIsLoadingBranches(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setIsLoadingBranches(true);
+    const timeoutId = window.setTimeout(() => {
+      fetchRepoBranches(branchRepo)
+        .then(({ defaultBranch, branches }) => {
+          if (cancelled) {
+            return;
+          }
+          setBranchOptions(branches || []);
+          setForm((prev) => (branches?.includes(prev.branch) ? prev : { ...prev, branch: defaultBranch || prev.branch }));
+        })
+        .catch(() => !cancelled && setBranchOptions([]))
+        .finally(() => !cancelled && setIsLoadingBranches(false));
+    }, 300);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [branchRepo]);
+
   useEffect(() => {
     const normalizedRepo = normalizeRepoInput(activeRepo);
     const branch = String(form.branch ?? "").trim() || "main";
@@ -355,6 +388,7 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
         branch: prev.branch,
         folder: prev.folder,
         entryScript: prev.entryScript,
+        scriptArgs: prev.scriptArgs,
       }));
       setIsAutoName(true);
     } catch (error) {
@@ -440,7 +474,16 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
         ) : (
           <div className="form-group form-group-inline">
             <label className="form-label">Branch</label>
-            <input className="form-input" value={form.branch} onChange={update("branch")} />
+            {branchOptions.length ? (
+              <select className="form-select" value={form.branch} onChange={update("branch")}>
+                {!branchOptions.includes(form.branch) && form.branch ? <option value={form.branch}>{form.branch}</option> : null}
+                {branchOptions.map((name, index) => (
+                  <option key={name} value={name}>{name}{index === 0 ? " (default)" : ""}</option>
+                ))}
+              </select>
+            ) : (
+              <input className="form-input" value={form.branch} onChange={update("branch")} placeholder={isLoadingBranches ? "Loading..." : "main"} />
+            )}
           </div>
         )}
         <div className="form-group form-group-inline">
@@ -519,14 +562,33 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
             <span className="form-hint">Jobs cannot be started on this server right now.</span>
           </div>
         ) : null}
-        <div className="form-group full">
-          <label className="form-label">Environment Variables</label>
-          <textarea
-            className="form-input form-textarea"
-            value={form.environmentVariables}
-            onChange={update("environmentVariables")}
-            placeholder={"BATCH_SIZE=32\nLEARNING_RATE=0.001\nEPOCHS=50"}
-          />
+        <div className="form-group full job-extras">
+          <div className="form-group">
+            <label className="form-label" htmlFor="job-script-args">Arguments</label>
+            <input
+              id="job-script-args"
+              className="form-input mono-input"
+              value={form.scriptArgs}
+              onChange={update("scriptArgs")}
+              placeholder="--save-model --epochs 3"
+              disabled={isDrive}
+              spellCheck={false}
+            />
+            <span className="form-hint">
+              Passed to the entry script, like typing them after python {form.entryScript || "train.py"}. Quote values with spaces.
+            </span>
+          </div>
+          <div className="form-group">
+            <label className="form-label" htmlFor="job-env-vars">Environment Variables</label>
+            <textarea
+              id="job-env-vars"
+              className="form-input form-textarea"
+              value={form.environmentVariables}
+              onChange={update("environmentVariables")}
+              placeholder={"BATCH_SIZE=32\nLEARNING_RATE=0.001\nEPOCHS=50"}
+            />
+            <span className="form-hint">One NAME=value per line.</span>
+          </div>
         </div>
         <div className="form-group full form-actions submit-actions-row">
           <button className="btn btn-primary" type="submit" disabled={submitting || overBudget || nowhereToRun || isDrive || folderInvalid || !normalizeRepoInput(activeRepo)}>

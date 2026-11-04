@@ -33,6 +33,15 @@ function getRequestHeaders(includeJsonContentType = false) {
   return includeJsonContentType ? { ...headers } : {};
 }
 
+// { defaultBranch, branches } for a repository (owner/repo).
+export function fetchRepoBranches(repoPath) {
+  const parsed = splitRepoPath(repoPath);
+  if (!parsed) {
+    return Promise.reject(new Error("Invalid repository"));
+  }
+  return getJson(`/api/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}/branches`);
+}
+
 export function fetchRepoTree(
   repoPath = "jane_smith/bert-nlp",
   branch = "main",

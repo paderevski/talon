@@ -215,6 +215,60 @@ function buildRepoFallbackPayload(owner, repo, branch, warning, cachedPayload) {
   };
 }
 
+// Branches of a repository, for the submit form's branch menu:
+// { defaultBranch, branches: [names] } (up to 300). Uses the user's GitHub
+// token when linked (private repos), else anonymous; a revoked token is
+// forgotten and the call retried anonymously.
+const repoSegment = /^[A-Za-z0-9_.-]+$/;
+router.get("/:owner/:repo/branches", async (req, res) => {
+  const { owner, repo } = req.params;
+  if (!repoSegment.test(owner) || !repoSegment.test(repo)) {
+    return res.status(400).json({ message: "Invalid repository" });
+  }
+  const talonUser = getTalonUserFromRequest(req);
+  const base = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  const githubToken = talonUser ? (await getGithubApp().getUserAccessToken(talonUser)) || "" : "";
+  let headers = getGithubHeaders(githubToken);
+
+  const get = async (url) => {
+    let response = await fetch(url, { headers });
+    if (response.status === 401 && headers.Authorization) {
+      await getGithubApp().forgetRevokedLink(talonUser);
+      headers = {};
+      response = await fetch(url, { headers });
+    }
+    return response;
+  };
+
+  try {
+    const info = await get(base);
+    if (!info.ok) {
+      const status = info.status === 404 ? 404 : 502;
+      return res.status(status).json({ message: status === 404 ? `Repository ${owner}/${repo} was not found` : `GitHub answered ${info.status}` });
+    }
+    const { default_branch: defaultBranch = "main" } = await info.json();
+    const branches = [];
+    for (let page = 1; page <= 3; page += 1) {
+      const response = await get(`${base}/branches?per_page=100&page=${page}`);
+      if (!response.ok) {
+        break;
+      }
+      const items = await response.json();
+      branches.push(...items.map((b) => b.name).filter(Boolean));
+      if (items.length < 100) {
+        break;
+      }
+    }
+    if (!branches.includes(defaultBranch)) {
+      branches.unshift(defaultBranch);
+    }
+    branches.sort((a, b) => (a === defaultBranch ? -1 : b === defaultBranch ? 1 : a.localeCompare(b)));
+    return res.json({ defaultBranch, branches });
+  } catch (error) {
+    return res.status(502).json({ message: "Could not reach GitHub" });
+  }
+});
+
 router.get("/:owner/:repo/tree", async (req, res) => {
   const { owner, repo } = req.params;
   const requestedBranch = String(req.query.branch ?? "").trim();
