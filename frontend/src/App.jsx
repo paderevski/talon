@@ -560,7 +560,10 @@ export default function App() {
     await refreshJobs();
   };
 
-  const onRepoBranchChange = (nextRepo, nextBranch) => {
+  // From the submit form: repo, branch and the job's folder. The repo browser
+  // follows them (it opens the folder when the folder changes).
+  const lastFormFolder = useRef("");
+  const onRepoBranchChange = (nextRepo, nextBranch, nextFolder = "") => {
     const normalizedRepo = normalizeRepoInput(nextRepo);
     const nextRepoPath = normalizedRepo || "";
     const normalizedBranch = String(nextBranch ?? "").trim() || fallbackBranch;
@@ -568,9 +571,11 @@ export default function App() {
     setRepoPath((previous) => (previous === nextRepoPath ? previous : nextRepoPath));
     setRepoBranch((previous) => (previous === normalizedBranch ? previous : normalizedBranch));
 
-    if (nextRepoPath !== repoPath || normalizedBranch !== repoBranch) {
-      setRepoDirectoryPath("");
+    const folder = String(nextFolder ?? "").trim();
+    if (nextRepoPath !== repoPath || normalizedBranch !== repoBranch || folder !== lastFormFolder.current) {
+      setRepoDirectoryPath(folder);
     }
+    lastFormFolder.current = folder;
   };
 
   const onNavigateRepoPath = (nextPath) => {
@@ -890,6 +895,7 @@ export default function App() {
             defaultRepo={repoPath}
             defaultBranch={repoBranch}
             githubLinked={Boolean(githubStatus?.linked)}
+            githubLogin={githubStatus?.login || ""}
             onRepoBranchChange={onRepoBranchChange}
             compute={computeOptions}
             budgetDollars={normalizeUserRole(authUser?.role) === "student" ? budgetBalance : null}

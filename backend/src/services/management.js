@@ -112,6 +112,7 @@ export async function listUsers({ pool = getPool() } = {}) {
            ARRAY(SELECT r.role::text FROM user_roles r WHERE r.user_id = u.id ORDER BY r.role) AS roles,
            personal.balance_cents AS personal_cents,
            pool.balance_cents AS pool_cents,
+           (SELECT g.github_login FROM github_accounts g WHERE g.user_id = u.id) AS github_login,
            COALESCE((
              SELECT json_agg(json_build_object('id', c.id, 'name', c.name, 'memberRole', m.member_role)
                              ORDER BY c.name)
@@ -132,6 +133,7 @@ export async function listUsers({ pool = getPool() } = {}) {
     status: row.status,
     roles: row.roles,
     lastLoginAt: row.last_login_at,
+    githubLogin: row.github_login ?? "",
     personalBalance: centsToDollars(row.personal_cents ?? 0),
     poolBalance: row.pool_cents === null ? null : centsToDollars(row.pool_cents),
     classes: row.classes,

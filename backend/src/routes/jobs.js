@@ -19,6 +19,7 @@ import { defaultMaxRuntimeSeconds, listInstanceOptions, runtimeOptions } from ".
 import { markJobAsExecutionLost, synchronizeJobFromExecution } from "../services/jobSync.js";
 import { getJobsRepository } from "../repositories/jobsRepository.js";
 import { getGithubApp } from "../services/githubApp.js";
+import { normalizeFolder } from "talon-shared/repo";
 import { attachAccessScope, canModify, hasRole, narrowScopeToOwner, scopeAllows } from "../auth/access.js";
 
 const router = Router();
@@ -198,6 +199,10 @@ async function cloneTokenOr4xx(req, res, repo) {
 
 router.post("/", async (req, res) => {
   const payload = req.body ?? {};
+  const folder = normalizeFolder(payload.folder);
+  if (folder === null) {
+    return res.status(400).json({ message: "Folder must be a plain path inside the repository, like mnist or src/train" });
+  }
 
   if (String(payload.compute ?? "").toLowerCase() === "ec2") {
     if (!ec2AllowedFor(req.user)) {
@@ -217,7 +222,7 @@ router.post("/", async (req, res) => {
         adapter: getEc2Adapter(),
         user: req.user,
         isAdmin: hasRole(req.user, "admin"),
-        payload,
+        payload: { ...payload, folder },
         gitToken,
       });
       return res.status(201).json({ message: "Job started on EC2", job });
@@ -248,6 +253,7 @@ router.post("/", async (req, res) => {
     repo: payload.repo || "unknown/repo",
     branch: payload.branch || "main",
     entryScript: payload.entryScript || "train.py",
+    folder,
     maxRuntimeSeconds: jobMaxRuntimeSeconds(),
   };
 
@@ -263,6 +269,7 @@ router.post("/", async (req, res) => {
     repo: spec.repo,
     branch: spec.branch,
     entryScript: spec.entryScript,
+    folder: spec.folder,
     executionProvider: getExecutionProvider(),
     executionRef,
     hourlyRateCents,

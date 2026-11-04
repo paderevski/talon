@@ -499,6 +499,30 @@ const tests = [
     await store.deleteLink(userId);
   }],
 
+  ["github app: a token GitHub rejects (revoked) unlinks instead of failing", async () => {
+    const userId = await scalar("SELECT id FROM users WHERE username = 'student_a3'");
+    const store = createGithubAccountsStore({ pool });
+    const revoked = makeFakeGithub({
+      "GET /repos/pytorch/examples": { status: 401, data: { message: "Bad credentials" } },
+      "GET /user/installations?per_page=100": { status: 401, data: { message: "Bad credentials" } },
+    });
+    const app = createGithubApp({ config: fakeGithubConfig(), store, fetch: revoked.fetch });
+
+    await store.saveLink(userId, { githubUserId: 6001, githubLogin: "a3hub", tokens: { accessToken: "ghu_revoked" } });
+    assert((await app.resolveCloneToken(userId, "pytorch/examples")) === null, "revoked token should fall back to an anonymous clone");
+    assert((await store.getLink(userId)) === null, "revoked token should unlink (clone check)");
+
+    await store.saveLink(userId, { githubUserId: 6001, githubLogin: "a3hub", tokens: { accessToken: "ghu_revoked" } });
+    let error = null;
+    try {
+      await app.listRepos(userId);
+    } catch (e) {
+      error = e;
+    }
+    assert(error?.status === 409 && /Connect GitHub again/.test(error.message), `repo list: ${error?.status} ${error?.message}`);
+    assert((await store.getLink(userId)) === null, "revoked token should unlink (repo list)");
+  }],
+
   ["github app: slug may be given as the app's URL", async () => {
     assert(normalizeSlug("https://github.com/apps/talon-link") === "talon-link", "url form");
     assert(normalizeSlug("talon-link") === "talon-link", "plain form");
@@ -643,12 +667,14 @@ const tests = [
     assert(failed && failed.status === "failed" && failed.costCents === 0, `failed job ${JSON.stringify(failed)}`);
     assert(Number(await scalar("SELECT balance_cents FROM budget_accounts WHERE id = $1", [accountId])) === balanceBefore, "full refund expected");
 
+    let startedWith = null;
     const ok = await launchEc2Job({
       jobsRepository: jobs, user, isAdmin: false, maxRuntimeSeconds: 1800,
-      payload: { name: "works", repo: "x/y", instanceType: "c7g.large" },
-      adapter: { async start(spec) { return { provider: "ec2", executionId: spec.jobId, jobId: spec.jobId, instanceId: "i-1" }; } },
+      payload: { name: "works", repo: "x/y", instanceType: "c7g.large", folder: "mnist", entryScript: "main.py" },
+      adapter: { async start(spec) { startedWith = spec; return { provider: "ec2", executionId: spec.jobId, jobId: spec.jobId, instanceId: "i-1" }; } },
     });
     assert(ok.executionRef.instanceId === "i-1" && ok.reservedCents > 0 && ok.computeType === undefined, `launched job ${JSON.stringify(ok)}`);
+    assert(ok.folder === "mnist" && startedWith.folder === "mnist", `folder not stored or passed: ${ok.folder} / ${startedWith?.folder}`);
   }],
 
   ["ec2 reconciler: terminates orphan, finished and overrun instances, leaves live ones", async () => {
@@ -924,6 +950,20 @@ const tests = [
     }
     assert(buildRunScript("a.py").includes("PYTHONUNBUFFERED=1"), "output must not be buffered");
     assert(buildRunScript("src/train_1.py").includes("python3 -u 'src/train_1.py'"), "plain paths must pass");
+  }],
+
+  ["ec2 adapter: a job folder sets the working directory and requirements", async () => {
+    const root = buildRunScript("train.py");
+    assert(root.includes("cd '/work/repo' ||"), "no folder runs from the repo root");
+    const nested = buildRunScript("main.py", [], "mnist");
+    assert(nested.includes("cd '/work/repo/mnist' ||"), "folder must be the working directory");
+    assert(nested.includes("if [ -f requirements.txt ]; then REQS=requirements.txt; elif [ -f /work/repo/requirements.txt ]"), "folder requirements first, then the root's");
+    assert(nested.includes("exec python3 -u 'main.py'"), "entry script is relative to the folder");
+    for (const bad of ["../etc", "a/../../b", "x'; id; '", "a b", "/abs/../.."]) {
+      let refused = false;
+      try { buildRunScript("main.py", [], bad); } catch { refused = true; }
+      assert(refused, `folder ${JSON.stringify(bad)} must be refused`);
+    }
   }],
 
   ["ec2 adapter: status, logs, files and cancel come from S3 and the instance", async () => {
