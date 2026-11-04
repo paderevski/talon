@@ -44,7 +44,9 @@ export function createEc2Reconciler({ jobsRepository, adapter, sync, markLost, n
           await adapter.terminateInstance(instance.instanceId);
           terminated.push(instance.instanceId);
           // Alarm "unknown-job-instance" matches event + reason "no job row".
-          log.warn(`reconciler terminated ${instance.instanceId} (${reason})`, {
+          // A finished job's instance is routine cleanup; the others mean
+          // something went wrong.
+          (reason === "job finished" ? log.info : log.warn)(`reconciler terminated ${instance.instanceId} (${reason})`, {
             event: "ec2.instance_terminated",
             instanceId: instance.instanceId,
             jobId: instance.jobId || undefined,

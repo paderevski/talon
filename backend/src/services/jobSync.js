@@ -1,6 +1,7 @@
 import { mapExecutionStateToJobStatus } from "talon-shared/status";
 import { getExecutionOutputFiles, getExecutionStatus } from "./jobExecutionService.js";
 import { getJobsRepository } from "../repositories/jobsRepository.js";
+import { justFinalized } from "../repositories/postgres/jobsPostgresRepository.js";
 import { bootAllowanceSeconds } from "../execution/ec2Rates.js";
 import { durationSecondsBetween, formatDuration } from "../utils/jobFormat.js";
 import { log } from "../utils/log.js";
@@ -44,8 +45,7 @@ export function createJobSync({ jobsRepository, getExecutionStatus, getExecution
       }
     }
 
-    log.warn("job execution lost", { event: "job.lost", jobId: job.id, instanceId: job.executionRef?.instanceId, durationSeconds });
-    return jobsRepository.finalize(job.id, {
+    const lost = await jobsRepository.finalize(job.id, {
       syncKey: `lost:${job.executionRef?.executionId || "unknown"}`,
       status: "failed",
       durationSeconds,
@@ -53,6 +53,16 @@ export function createJobSync({ jobsRepository, getExecutionStatus, getExecution
       error: "Execution record missing (backend restart or lost worker state)",
       finalizedAt: new Date().toISOString(),
     });
+    if (lost?.[justFinalized]) {
+      log.warn("job execution lost", {
+        event: "job.lost",
+        jobId: job.id,
+        instanceId: job.executionRef?.instanceId,
+        durationSeconds,
+        costCents: lost.costCents,
+      });
+    }
+    return lost;
   }
 
   async function synchronizeJobFromExecution(job) {
@@ -95,15 +105,17 @@ export function createJobSync({ jobsRepository, getExecutionStatus, getExecution
             : null,
         finalizedAt: execution.endedAt || null,
       });
-      log.info("job finished", {
-        event: "job.finished",
-        jobId: job.id,
-        status,
-        executionState: execution.state,
-        exitCode: execution.exitCode,
-        durationSeconds,
-        costCents: finalized?.costCents,
-      });
+      if (finalized?.[justFinalized]) {
+        log.info("job finished", {
+          event: "job.finished",
+          jobId: job.id,
+          status,
+          executionState: execution.state,
+          exitCode: execution.exitCode,
+          durationSeconds,
+          costCents: finalized.costCents,
+        });
+      }
       return { job: finalized, execution };
     }
 
