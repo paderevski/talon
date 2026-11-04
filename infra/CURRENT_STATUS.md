@@ -173,8 +173,8 @@ toward two servers)
     by hand with `alias/talon-demo-secrets`; README "GitHub App"). The backend
     re-reads them every minute while missing, so no restart and no instance
     replacement (user_data unchanged). The app `talon-link` exists
-    (2026-11-03). Tested locally (dev server, :5173): install + connect and a
-    job submitted from a linked repo worked; GitHub does pass `state` back
+    (2026-11-03). Tested locally (dev server, :5173): install + connect, and a
+    job on a private repo cloned and ran; GitHub does pass `state` back
     after an install. Gotcha: after an install GitHub returns to the app's
     *first* callback URL, so the server's own URL must be listed first (or use
     a separate dev app). To do: `terraform apply` (SSM settings + one IAM
