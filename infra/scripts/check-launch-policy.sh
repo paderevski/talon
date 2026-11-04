@@ -38,7 +38,8 @@ check denied "another security group" --launch-template "LaunchTemplateId=\$LT,V
 check denied "instance type not on the list" --launch-template "LaunchTemplateId=\$LT,Version=\\\$Default" --instance-type c7g.4xlarge --tag-specifications "\$TAGS"
 check allowed "500 GB root volume (the cap)" --launch-template "LaunchTemplateId=\$LT,Version=\\\$Default" --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":500}}]' --tag-specifications "\$TAGS"
 check denied "1000 GB root volume" --launch-template "LaunchTemplateId=\$LT,Version=\\\$Default" --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":1000}}]' --tag-specifications "\$TAGS"
-check denied "no Talon tags" --launch-template "LaunchTemplateId=\$LT,Version=\\\$Default"
+check allowed "no tags in the call (the template adds Talon's)" --launch-template "LaunchTemplateId=\$LT,Version=\\\$Default"
+check denied "tags overridden (Project=other)" --launch-template "LaunchTemplateId=\$LT,Version=\\\$Default" --tag-specifications 'ResourceType=instance,Tags=[{Key=Project,Value=other},{Key=Component,Value=job}]'
 check denied "no launch template" --image-id $OTHER_AMI --instance-type c7g.large --tag-specifications "\$TAGS"
 echo "known gap (IAM cannot limit it):"
 check allowed "  user data override" --launch-template "LaunchTemplateId=\$LT,Version=\\\$Default" --user-data "#!/bin/bash" --tag-specifications "\$TAGS"
