@@ -164,12 +164,11 @@ router.get("/", async (req, res) => {
 const ec2AllowedFor = (user) =>
   ec2JobsEnabled() && (hasRole(user, "admin") || process.env.EC2_JOBS_ADMIN_ONLY !== "true");
 
-// Jobs on the web server itself have no isolation: in production only admins
-// may use them unless TALON_ALLOW_LOCAL_JOBS=true.
-const localJobsAllowedFor = (user) =>
-  process.env.NODE_ENV !== "production" ||
-  process.env.TALON_ALLOW_LOCAL_JOBS === "true" ||
-  hasRole(user, "admin");
+// Jobs on the web server itself have no isolation: the script runs as the
+// service user, next to the database and the instance role. In production
+// nobody may use them (admins included) unless TALON_ALLOW_LOCAL_JOBS=true.
+const localJobsAllowedFor = () =>
+  process.env.NODE_ENV !== "production" || process.env.TALON_ALLOW_LOCAL_JOBS === "true";
 
 // What the submit form may offer.
 router.get("/compute-options", (req, res) => {
@@ -183,7 +182,7 @@ router.get("/compute-options", (req, res) => {
       defaultRuntimeSeconds: defaultMaxRuntimeSeconds,
       maxJobsPerUser: ec2JobLimits().perUser,
     },
-    localAllowed: localJobsAllowedFor(req.user),
+    localAllowed: localJobsAllowedFor(),
   });
 });
 
@@ -243,7 +242,7 @@ router.post("/", async (req, res) => {
     }
   }
 
-  if (!localJobsAllowedFor(req.user)) {
+  if (!localJobsAllowedFor()) {
     return res.status(403).json({ message: "Choose a machine to run this job on." });
   }
 

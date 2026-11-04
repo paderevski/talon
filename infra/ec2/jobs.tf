@@ -55,6 +55,12 @@ variable "gpu_job_root_volume_gb" {
   default     = 60
 }
 
+variable "job_max_volume_gb" {
+  description = "Largest root volume the web server may request for a job (IAM cap). Above the templates' own sizes so a per-job disk size can be added in the app without a policy change; the templates' sizes are the defaults."
+  type        = number
+  default     = 500
+}
+
 variable "job_root_volume_gb" {
   type    = number
   default = 30
@@ -457,6 +463,14 @@ resource "aws_ssm_parameter" "jobs_gpu_launch_template" {
 locals {
   ec2_arn = "arn:aws:ec2:${var.aws_region}:${local.account_id}"
 
+  # The AMIs the job templates use (the only images the web server may launch).
+  # insecure_value: AMI ids are public and readable in the plan.
+  job_ami_ids = distinct(concat(
+    [data.aws_ssm_parameter.ubuntu_ami.insecure_value],
+    [for k, _ in local.gpu_templates : data.aws_ssm_parameter.gpu_job_ami[k].insecure_value],
+  ))
+  job_max_root_gb = max(var.job_max_volume_gb, var.job_root_volume_gb, [for t in local.gpu_templates : t.root_gb]...)
+
   # Each launch template with the only instance types it may be launched as.
   job_launch_rules = merge(
     { cpu = { arn = aws_launch_template.job.arn, types = var.allowed_job_instance_types } },
@@ -501,21 +515,37 @@ data "aws_iam_policy_document" "web_launch_jobs" {
     }
   }
 
-  # Everything else a launch touches.
+  # Everything else a launch touches. RunInstances parameters override the
+  # launch template, so each resource is pinned here too: only the templates'
+  # own AMIs (no swapping in another image) and the job security group. User
+  # data cannot be limited by IAM; the vCPU usage alarms (monitoring.tf) catch
+  # launches the app did not make.
   statement {
     sid     = "LaunchJobInstanceParts"
     actions = ["ec2:RunInstances"]
     resources = concat(
       [
-        "${local.ec2_arn}:volume/*",
         "${local.ec2_arn}:network-interface/*",
         "${local.ec2_arn}:security-group/${aws_security_group.job.id}",
         "${local.ec2_arn}:launch-template/${aws_launch_template.job.id}",
-        "arn:aws:ec2:${var.aws_region}::image/*",
       ],
+      [for id in local.job_ami_ids : "arn:aws:ec2:${var.aws_region}::image/${id}"],
       [for k, _ in local.gpu_templates : "${local.ec2_arn}:launch-template/${aws_launch_template.job_gpu[k].id}"],
       [for s in local.job_subnet_ids : "${local.ec2_arn}:subnet/${s}"],
     )
+  }
+
+  # Root volumes up to job_max_volume_gb (the templates' sizes are the
+  # defaults; this caps what a request may ask for).
+  statement {
+    sid       = "LaunchJobVolumes"
+    actions   = ["ec2:RunInstances"]
+    resources = ["${local.ec2_arn}:volume/*"]
+    condition {
+      test     = "NumericLessThanEquals"
+      variable = "ec2:VolumeSize"
+      values   = [tostring(local.job_max_root_gb)]
+    }
   }
 
   statement {

@@ -1066,6 +1066,7 @@ const tests = [
       assert(refused, `entry script ${JSON.stringify(bad)} must be refused`);
     }
     assert(buildRunScript("a.py").includes("PYTHONUNBUFFERED=1"), "output must not be buffered");
+    assert(buildRunScript("a.py").includes("export TALON_SCRATCH_DIR=/work/scratch"), "scripts get a scratch directory");
     assert(buildRunScript("src/train_1.py").includes("python3 -u 'src/train_1.py'"), "plain paths must pass");
   }],
 

@@ -97,9 +97,10 @@ the adapter that started it.
   terminates stray or overrun instances. Limits: one unfinished job per user
   (admins exempt) and ten in total. Design notes and verification are in
   [`infra/CURRENT_STATUS.md`](infra/CURRENT_STATUS.md).
-- **Local** (the default for admins, tests and development). Runs the job as a
-  process on the web server. For development, tests and admins only: there is
-  no isolation, and in production it is refused for non-admins.
+- **Local** (the default for tests and development). Runs the job as a
+  process on the web server, with only PATH, HOME and locale from the
+  server's environment. There is no isolation, so in production it is
+  refused for everyone, admins included, unless `TALON_ALLOW_LOCAL_JOBS=true`.
 
 Settings (environment variables):
 
@@ -111,7 +112,7 @@ Settings (environment variables):
 | `EC2_MAX_RUNTIME_CEILING_SECONDS` | 86400 | Longest time limit offered |
 | `JOB_RATE_OVERHEAD_CENTS_PER_HOUR` | 1 | Added to the instance rate (IPv4, disk) |
 | `JOB_BOOT_ALLOWANCE_SECONDS` | 300 | Boot and upload time added when reserving |
-| `TALON_ALLOW_LOCAL_JOBS` | off | Allow local runs for non-admins in production |
+| `TALON_ALLOW_LOCAL_JOBS` | off | Allow local runs (on the web server, no isolation) in production; off refuses them for everyone, admins included |
 | `JOB_MAX_RUNTIME_SECONDS` | 1800 | Time limit for local runs |
 | `JOB_RATE_CENTS_PER_HOUR` | 0 | Rate for local runs (0 = free) |
 
@@ -234,6 +235,12 @@ unreadable, and those users must connect GitHub again.
   saved (up to 500 files, 200 MB per file and 500 MB in total). Python buffers
   file writes, so call `flush()` or close files as you go: a job stopped by its
   time limit, a cancel or running out of memory loses what was not flushed.
+- Put large downloaded data (datasets, model weights) in the directory in
+  `TALON_SCRATCH_DIR`. It is not saved and is erased when the job ends. On GPU
+  machines it is the machine's local NVMe drive (about 125 GB on g4dn.xlarge,
+  225 GB on g4dn.2xlarge, 250 GB on g6.xlarge, 450 GB on g6e.2xlarge), at no
+  extra cost; on CPU machines it is on the job's 30 GB disk. The job log's
+  first line shows how much space it has.
 - Exit code 137 usually means the script ran out of memory; choose a machine
   with more memory.
 

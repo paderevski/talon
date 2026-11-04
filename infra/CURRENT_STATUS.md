@@ -28,9 +28,9 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 | Elastic IP | Yes (no ports open; reserved for future DNS) - `terraform output public_ip` |
 | Inbound access | None. SSM Session Manager only |
 | Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`, Postgres 16 (local socket, peer auth). `EC2_JOBS_ENABLED=true` in `/etc/talon/talon.env` (written by Terraform at first boot) turns on EC2 jobs and the reconciler |
-| Deployed | `gpu-jobs` branch, same code as `main` after the 2026-11-04 merge (GPU jobs) |
+| Deployed | `harden-ec2-cloudwatch` branch (2026-11-04; same code as `main` once merged) |
 | Approx cost | ~$20/month (instance ~$12, EBS ~$1.60, public IPv4 ~$3.65, 2 KMS keys ~$2, alarms/S3/SNS pennies). Estimate, not read from the bill. Plus job instances (c7g/m7g/r7g, roughly 8-17 cents per hour each), billed per second while they run and charged to students' budgets |
-| Other AWS resources | S3 backups bucket (`backups.tf`), SSM parameters under `/talon/demo/`, KMS keys `alias/talon-demo-secrets` and `alias/talon-demo-backups`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), 2 CloudWatch alarms (`alarms.tf`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and launch template (`jobs.tf`), 2 AWS Budgets alerts |
+| Other AWS resources | S3 backups bucket (`backups.tf`), SSM parameters under `/talon/demo/`, KMS keys `alias/talon-demo-secrets` and `alias/talon-demo-backups`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), CloudWatch alarms (`alarms.tf`: 2 backup; `monitoring.tf`: disk, backend errors, unknown job instance, GPU and standard vCPUs), CloudWatch agent on the web server (SSM State Manager; logs in `/talon/demo/{syslog,nginx-access,nginx-error,bootstrap}`, 30 days; metrics in `Talon/Server`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and launch template (`jobs.tf`), 2 AWS Budgets alerts |
 | Root volume | 20 GB gp3, encrypted with the default AWS-managed EBS key (the architecture doc asks for a KMS key; not changed) |
 | OS patching | `unattended-upgrades` enabled on the box (checked) |
 | Terraform state | S3 `talon-tfstate-<account id>` (versioned, locked); `infra/state` stack's own state is local and tiny |
@@ -66,12 +66,14 @@ Key paths: app `/opt/talon`, config `/etc/talon/talon.env`, secrets
   each (see "EC2-launched jobs"); their logs and output files are in the jobs
   bucket and expire after 30 days (`jobs_retention_days`), and they are not in
   the database backups. The local runner (on the web server, no isolation,
-  `JOB_MAX_RUNTIME_SECONDS` default 30 minutes) is refused for non-admins in
-  production and remains for development, tests and admins.
+  `JOB_MAX_RUNTIME_SECONDS` default 30 minutes) is refused for everyone in
+  production, admins included (`TALON_ALLOW_LOCAL_JOBS=true` overrides), and
+  remains for development and tests.
 - Job instances can reach the internet on 443 (students download datasets
   and models), so jobs are not network-isolated; the instance metadata
   service is blocked for the student user and no secrets are on the box.
-  GuardDuty is not enabled.
+  GuardDuty is not enabled (checked 2026-11-04: no detector; Terraform has it
+  behind `enable_guardduty`).
 - Nightly database backups exist, but restoring onto a new instance is manual
   and has only been tested into a scratch database.
 - Demo accounts have public passwords (they are in this repo). Fine only
@@ -81,7 +83,9 @@ Key paths: app `/opt/talon`, config `/etc/talon/talon.env`, secrets
 - Changing `user_data.sh.tftpl` replaces the instance (database is reset;
   restore from a backup by hand if it matters).
 - The local job runner executes `git clone` / `python3` directly on the host
-  as the `talon` user, so jobs are not isolated.
+  as the `talon` user, so jobs are not isolated. It passes only PATH, HOME and
+  locale (not the server's environment) and sets `AWS_EC2_METADATA_DISABLED`,
+  which stops AWS SDKs but not a raw request to the metadata service.
 
 ## To-do (in order)
 
@@ -527,8 +531,9 @@ done (below); the adapter and everything after it are not built yet.
    values). Limits: one unfinished EC2 job per user (admins exempt) and 10 in
    total (`EC2_MAX_JOBS_PER_USER`, `EC2_MAX_JOBS_TOTAL`), enforced in the
    reservation transaction under an advisory lock (parallel submits cannot
-   slip past). Local runs on the web server are refused for non-admins when
-   `NODE_ENV=production` unless `TALON_ALLOW_LOCAL_JOBS=true`. Live logs:
+   slip past). Local runs on the web server are refused for everyone (admins
+   too, since 2026-11-04) when `NODE_ENV=production` unless
+   `TALON_ALLOW_LOCAL_JOBS=true`. Live logs:
    `job_boot.sh` uploads the job log every 30 s. **Output files, complete
    solution:** two sources as in the local runner, `output/`
    (`TALON_OUTPUT_DIR`, source `output_dir`) and `changed/` (files created or
@@ -766,7 +771,7 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   lifecycle to Infrequent Access.
 - Isolation of student code: done for the first slice (own instance, student
   user, instance metadata blocked for it, no secrets on the box, HTTPS/DNS
-  only outbound, local runner refused for non-admins in production). Still
+  only outbound, local runner refused in production, admins too). Still
   open: per-job scoped credentials (the job role is shared across jobs),
   optional hardening (`timeout` run as root, cgroup memory/task limits), a
   dedicated VPC with private subnets, and GuardDuty.
@@ -785,16 +790,20 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   password hashes for the demo users and the first admin.
 - Audit log for admin actions (role and budget changes; grants record who,
   but nothing reads them yet).
-- Not verified (not checked this session): CloudTrail with 90-day retention,
-  GuardDuty, Inspector on the account; private subnet + NAT + VPC endpoints
+- Checked 2026-11-04: CloudTrail has a multi-region trail
+  (`management-events`, not an organization trail; its retention not
+  checked); GuardDuty has no detector. Not checked: Inspector; private subnet + NAT + VPC endpoints
   for the web server (it is in a public subnet today).
 
 ### 4. Operations
 
-- More alarms: ALB health, dead-letter queue depth, abnormal compute spend
-  (AWS Budgets). Only backup alarms exist.
-- Application logs to CloudWatch Logs (journald only today) and SSM
-  session logging.
+- More alarms: ALB health, dead-letter queue depth, a budget action that
+  stops launches (Budgets only email today). Backup alarms exist; disk,
+  backend errors, unknown job instances and vCPU usage alarms exist
+  (`monitoring.tf`).
+- Application logs are in CloudWatch Logs (CloudWatch agent,
+  syslog/nginx/bootstrap). Job instance boot logs stay in
+  S3. SSM session logging not set up.
 - CI/CD: nothing runs the test suites automatically; deploys are manual SSM
   runs. Add tests on every push and automated deploys.
 - End-to-end restore drill onto a brand-new instance; a staging environment
@@ -837,6 +846,18 @@ migrations take an advisory lock (concurrent deploys are safe).
 
 ## History
 
+- 2026-11-04: Hardening (`harden-ec2-cloudwatch`), applied, deployed and
+  checked on the box. Local runs refused in production for everyone and
+  given only PATH/HOME/locale. Web role may launch only the job templates'
+  AMIs, root volumes up to 500 GB (`job_max_volume_gb`; templates stay
+  30 / 60 GB, a per-job disk size in the app is later work), tags it cannot
+  override; `infra/scripts/check-launch-policy.sh` dry-runs all of this from
+  the box (all as expected; user data override still allowed, IAM cannot
+  limit it). Jobs get `TALON_SCRATCH_DIR` (GPU instance-store NVMe, verified
+  on g4dn). CloudWatch agent, server logs and the new alarms above.
+  GuardDuty in Terraform behind `enable_guardduty` (off; account-wide in a
+  shared account, agree with LCPS IT). Hard spending cap still missing: a
+  lower vCPU quota (support case) or a budget action.
 - 2026-10-25: Torn down old EKS test stacks (`app`, `platform`, `bootstrap`)
   and stray EC2s in the personal account. Old IAM access keys for user
   `patrick` deactivated (deleted 2026-10-28).
