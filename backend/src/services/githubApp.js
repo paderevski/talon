@@ -271,6 +271,14 @@ export function createGithubApp({
     return token;
   }
 
+  // GitHub answered 401 to the user's token: it was revoked (the student or
+  // another Talon server disconnected, or the app was uninstalled). Forget the
+  // link so the GitHub panel offers Connect again.
+  async function forgetRevokedLink(userId) {
+    console.warn(`[github] token for user ${userId} was rejected by GitHub; unlinking`);
+    await accounts().deleteLink(userId);
+  }
+
   // Repositories the user can pick: every repo on every installation the
   // user can see. [{ fullName, private }]
   async function listRepos(userId) {
@@ -280,6 +288,10 @@ export function createGithubApp({
       throw httpError("Connect GitHub first", 409, "not-linked");
     }
     const installations = await github("/user/installations?per_page=100", { token });
+    if (installations.status === 401) {
+      await forgetRevokedLink(userId);
+      throw httpError("GitHub access was revoked. Connect GitHub again.", 409, "not-linked");
+    }
     if (!installations.ok) {
       throw httpError(`Could not list GitHub installations (${installations.status})`, 502);
     }
@@ -314,6 +326,10 @@ export function createGithubApp({
     }
     const repoPath = `/repos/${encodeURIComponent(parts.owner)}/${encodeURIComponent(parts.repo)}`;
     const info = await github(repoPath, { token: userToken });
+    if (info.status === 401) {
+      await forgetRevokedLink(userId);
+      return null; // public repos still clone anonymously
+    }
     if (info.status === 404) {
       throw httpError(
         `Repository ${parts.path} was not found, or the Talon GitHub app has no access to it. Use "Choose repositories" in the GitHub panel to add it.`,
@@ -378,6 +394,7 @@ export function createGithubApp({
     listRepos,
     resolveCloneToken,
     unlink,
+    forgetRevokedLink,
     getLink: (userId) => accounts().getLink(userId),
   };
 }

@@ -499,6 +499,30 @@ const tests = [
     await store.deleteLink(userId);
   }],
 
+  ["github app: a token GitHub rejects (revoked) unlinks instead of failing", async () => {
+    const userId = await scalar("SELECT id FROM users WHERE username = 'student_a3'");
+    const store = createGithubAccountsStore({ pool });
+    const revoked = makeFakeGithub({
+      "GET /repos/pytorch/examples": { status: 401, data: { message: "Bad credentials" } },
+      "GET /user/installations?per_page=100": { status: 401, data: { message: "Bad credentials" } },
+    });
+    const app = createGithubApp({ config: fakeGithubConfig(), store, fetch: revoked.fetch });
+
+    await store.saveLink(userId, { githubUserId: 6001, githubLogin: "a3hub", tokens: { accessToken: "ghu_revoked" } });
+    assert((await app.resolveCloneToken(userId, "pytorch/examples")) === null, "revoked token should fall back to an anonymous clone");
+    assert((await store.getLink(userId)) === null, "revoked token should unlink (clone check)");
+
+    await store.saveLink(userId, { githubUserId: 6001, githubLogin: "a3hub", tokens: { accessToken: "ghu_revoked" } });
+    let error = null;
+    try {
+      await app.listRepos(userId);
+    } catch (e) {
+      error = e;
+    }
+    assert(error?.status === 409 && /Connect GitHub again/.test(error.message), `repo list: ${error?.status} ${error?.message}`);
+    assert((await store.getLink(userId)) === null, "revoked token should unlink (repo list)");
+  }],
+
   ["github app: slug may be given as the app's URL", async () => {
     assert(normalizeSlug("https://github.com/apps/talon-link") === "talon-link", "url form");
     assert(normalizeSlug("talon-link") === "talon-link", "plain form");

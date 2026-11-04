@@ -229,13 +229,22 @@ router.get("/:owner/:repo/tree", async (req, res) => {
     // The user's own GitHub App token: sees their public repos plus the private
     // ones the app is installed on. Not linked: anonymous (public repos only).
     const githubToken = talonUser ? (await getGithubApp().getUserAccessToken(talonUser)) || "" : "";
-    const githubHeaders = getGithubHeaders(githubToken);
+    let githubHeaders = getGithubHeaders(githubToken);
 
-    const repoInfo = await getJsonWithHeadersOrThrow(
-      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
-      `Repository ${owner}/${repo} was not found. Check the name; for a private repo, connect GitHub and give the Talon app access to it (GitHub panel).`,
-      githubHeaders,
-    );
+    const repoInfoUrl = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const notFound = `Repository ${owner}/${repo} was not found. Check the name; for a private repo, connect GitHub and give the Talon app access to it (GitHub panel).`;
+    let repoInfo;
+    try {
+      repoInfo = await getJsonWithHeadersOrThrow(repoInfoUrl, notFound, githubHeaders);
+    } catch (error) {
+      // A revoked token: forget the link and carry on anonymously.
+      if (error?.status !== 401 || !githubToken) {
+        throw error;
+      }
+      await getGithubApp().forgetRevokedLink(talonUser);
+      githubHeaders = {};
+      repoInfo = await getJsonWithHeadersOrThrow(repoInfoUrl, notFound, githubHeaders);
+    }
     const branch = requestedBranch || repoInfo.default_branch || "main";
 
     // GitHub answers 422 (sometimes 404) for a branch that does not exist.
@@ -277,7 +286,8 @@ router.get("/:owner/:repo/tree", async (req, res) => {
     );
 
     if (!contentsResponse.ok) {
-      return res.status(contentsResponse.status).json({
+      // Never pass GitHub's 401 through: to the browser it means "signed out".
+      return res.status(contentsResponse.status === 401 ? 502 : contentsResponse.status).json({
         message: `Unable to read repository contents for branch '${branch}'`,
       });
     }
@@ -339,7 +349,7 @@ router.get("/:owner/:repo/tree", async (req, res) => {
 
     if (error?.status) {
       return res
-        .status(error.status)
+        .status(error.status === 401 ? 502 : error.status)
         .json({ message: error.message || "Repository lookup failed" });
     }
 
