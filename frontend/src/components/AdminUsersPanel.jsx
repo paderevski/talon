@@ -3,6 +3,7 @@ import {
   createAdminUser,
   resetAdminUserPassword,
   unlockAdminUser,
+  unlinkAdminUserGithub,
   updateAdminUser,
 } from "../api/client";
 import CredentialsNotice from "./CredentialsNotice";
@@ -206,7 +207,24 @@ export default function AdminUsersPanel({ users, classes, authUser, onChanged })
               >
                 Clear lockout
               </button>
-            ) : (
+            ) : null}
+            {editing?.githubLogin ? (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={isBusy}
+                title="Forget this user's GitHub link so they can connect again (for example with the right account)"
+                onClick={async () => {
+                  const done = await run(() => unlinkAdminUserGithub(editing.id), `Unlinked GitHub account ${editing.githubLogin} from ${editing.username}`);
+                  if (done) {
+                    setEditing({ ...editing, githubLogin: "" });
+                  }
+                }}
+              >
+                Unlink GitHub ({editing.githubLogin})
+              </button>
+            ) : null}
+            {editing ? null : (
               <span className="form-hint">A random password is generated and shown once.</span>
             )}
           </div>

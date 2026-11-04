@@ -345,6 +345,9 @@ export const resetAdminUserPassword = (id) =>
 export const unlockAdminUser = (id) =>
   requestJson("POST", `/api/admin/users/${encodeURIComponent(id)}/unlock`);
 
+export const unlinkAdminUserGithub = (id) =>
+  requestJson("DELETE", `/api/admin/users/${encodeURIComponent(id)}/github`);
+
 export const fetchAdminClasses = () => requestJson("GET", "/api/admin/classes");
 export const createAdminClass = (classInfo) => requestJson("POST", "/api/admin/classes", classInfo);
 export const updateAdminClass = (id, changes) =>

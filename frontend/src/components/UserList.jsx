@@ -57,7 +57,7 @@ export default function UserList({
       .filter(
         (user) =>
           !needle ||
-          [user.fullName, user.username, user.email || ""].some((value) => value.toLowerCase().includes(needle)),
+          [user.fullName, user.username, user.email || "", user.githubLogin || ""].some((value) => value.toLowerCase().includes(needle)),
       )
       .sort((a, b) => sort.dir * compare(a, b) || sorters.name(a, b));
   }, [users, search, status, classId, sort, kind]);
@@ -94,7 +94,7 @@ export default function UserList({
       <div className="list-controls">
         <input
           className="form-input"
-          placeholder="Search name, username or email"
+          placeholder="Search name, username, email or GitHub"
           aria-label={`Search ${title.toLowerCase()}`}
           value={search}
           onChange={(event) => setSearch(event.target.value)}

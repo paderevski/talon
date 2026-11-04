@@ -15,6 +15,7 @@ import {
   updateUser,
 } from "../services/management.js";
 import { importRoster } from "../services/rosterImport.js";
+import { getGithubApp } from "../services/githubApp.js";
 
 // Mounted behind requireRole("admin") in server.js.
 const router = Router();
@@ -72,6 +73,20 @@ router.post("/users/:userId/reset-password", handle(async (req, res) => {
 router.post("/users/:userId/unlock", handle(async (req, res) => {
   await unlockUser(req.params.userId);
   return res.json({ ok: true });
+}));
+
+// Unlinks the user's GitHub account (same as their own Disconnect: Talon's
+// grant is revoked on GitHub too), e.g. when a student linked it to the
+// wrong Talon account. They can connect again afterwards.
+router.delete("/users/:userId/github", handle(async (req, res) => {
+  const github = getGithubApp();
+  const link = await github.getLink(req.params.userId);
+  if (!link) {
+    return res.status(404).json({ message: "This user has no GitHub account linked" });
+  }
+  await github.unlink(req.params.userId);
+  console.log(`[admin] ${req.user.username} unlinked GitHub account ${link.githubLogin} from user ${req.params.userId}`);
+  return res.json({ ok: true, githubLogin: link.githubLogin });
 }));
 
 // CSV roster import. { csv, defaultRole, dryRun }; dryRun defaults to true so

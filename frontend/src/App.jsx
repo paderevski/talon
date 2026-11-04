@@ -890,6 +890,7 @@ export default function App() {
             defaultRepo={repoPath}
             defaultBranch={repoBranch}
             githubLinked={Boolean(githubStatus?.linked)}
+            githubLogin={githubStatus?.login || ""}
             onRepoBranchChange={onRepoBranchChange}
             compute={computeOptions}
             budgetDollars={normalizeUserRole(authUser?.role) === "student" ? budgetBalance : null}

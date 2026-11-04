@@ -186,9 +186,8 @@ toward two servers)
     offers "sign in as <login>" or another account). The redesigned panel
     (one Connect button, repo list) and the one-GitHub-account-per-user
     check ("already connected to another Talon user") verified there too.
-    Still to do: an admin "Unlink GitHub" action on the user edit screen
-    (today a student who forgets which Talon account holds their link needs
-    a database fix).
+    Admin "Unlink GitHub (<login>)" on the user edit screen, and the admin
+    user search matches GitHub logins: branch `code-source-ui`.
 
 **Blocked on others**
 
@@ -606,11 +605,12 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   overnight queue, GPU tiers, and an environment/image choice (the Machine
   Image select was removed because it did nothing).
 - Job-finished notification (students run overnight jobs).
-- Submit form, code source: today the repository field is a list of the
-  GitHub app's repos with a "Type another repo" toggle for public URLs.
-  Planned: a source choice one level up (GitHub app, public repo URL, later
-  Google Drive and others), with the repository field depending on it. The
-  backend already treats "no token" as an anonymous public clone.
+- Submit form, code source: a "Code source" choice (GitHub app, public
+  repository, Google Drive) above the job fields, built on branch
+  `code-source-ui` (2026-11-03). GitHub and public repos work; Google Drive
+  is a mock-up only (disabled folder picker, submit disabled). Each source
+  keeps its own repo when switching. The backend does not know about
+  sources yet: it treats "no token" as an anonymous public clone.
 - GitHub: installation tokens last one hour, so a local-runner job queued
   longer than that fails to clone (local runner is dev/admin only). Repo list
   and browser calls for students who have not connected GitHub share the web
