@@ -602,7 +602,23 @@ done (below); the adapter and everything after it are not built yet.
      given), p5.4xlarge (all 6 zones), p4d, p4de, p5.48xlarge, p5en, p6-b200,
      p6-b300, and the 4x/8x g6e. 80 GB+ on demand looks scarce here (AWS sells
      it through Capacity Blocks and Spot); one snapshot, at night US time.
-   - **Built on the branch (not deployed):** rate table with GPU types, per-type
+   - **Verified on the box (2026-11-04, branch `gpu-jobs` deployed, as
+     admin through the tunnel):** students get no GPU options and a GPU
+     submit is refused (403). `pytorch/examples` `mnist` on g4dn.xlarge:
+     1 epoch completed in 2m 15s (98%), 3 cents (ledger: 32 charged, 29
+     refunded); `torch`/`torchvision` in requirements.txt installed nothing;
+     boot log shows the T4. 100 epochs: 25 min (about 15 s per epoch on the
+     T4), 23 cents, so it did not reach its 30-minute limit; the time limit
+     itself is the same `job_boot.sh` path verified on CPU. Cancel mid-training:
+     failed after 1m 53s, 2 cents, instance terminated. g6e.2xlarge: no
+     capacity in any zone at 05:46 UTC (it had some in 1c at 05:25);
+     CloudTrail shows the adapter tried 1b, 1c, 1d, 1a (rotation and
+     fallback work; the SDK retries each zone 3 times) and the job was
+     refunded in full. The raw AWS error it showed named one zone and
+     suggested the others, so a launch with no capacity anywhere now fails
+     with 503 "No <type> machines are available right now..." (commit after
+     the deploy; not yet on the box). g6e.2xlarge is still untested on the box.
+   - **Built on the branch (deployed to the box 2026-11-04):** rate table with GPU types, per-type
      ceilings (`EC2_MAX_RUNTIME_CEILING_SECONDS_<TYPE>`) and overhead; `EC2_GPU_ADMIN_ONLY` (default admin-only) and
      `EC2_MAX_GPU_JOBS_TOTAL` (default 3); adapter picks the template by type,
      moves to the next subnet on `Unsupported` as well as
