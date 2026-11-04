@@ -1,6 +1,6 @@
 # Talon infra - current status
 
-_Last updated: 2026-11-03 (GitHub App sign-in merged to `main` and verified on the demo box; see to-do item 13). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
+_Last updated: 2026-11-03 (GitHub App sign-in, code-source choice, job folders and admin GitHub unlink merged to `main`; the box runs the same code from branch `code-source-ui`; see to-do item 13). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
 Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 (gitignored). Architecture doc: `docs/talon-architecture-summary-v7.docx`
 (see "Gaps to production" for where it and reality differ).
@@ -15,7 +15,7 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 | Elastic IP | Yes (no ports open; reserved for future DNS) - `terraform output public_ip` |
 | Inbound access | None. SSM Session Manager only |
 | Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`, Postgres 16 (local socket, peer auth). `EC2_JOBS_ENABLED=true` in `/etc/talon/talon.env` (written by Terraform at first boot) turns on EC2 jobs and the reconciler |
-| Deployed | `github-app` branch, same code as `main` after the 2026-11-03 merge (GitHub App sign-in) |
+| Deployed | `code-source-ui` branch, same code as `main` after the 2026-11-03 merge (GitHub App, code source, job folders) |
 | Approx cost | ~$20/month (instance ~$12, EBS ~$1.60, public IPv4 ~$3.65, 2 KMS keys ~$2, alarms/S3/SNS pennies). Estimate, not read from the bill. Plus job instances (c7g/m7g/r7g, roughly 8-17 cents per hour each), billed per second while they run and charged to students' budgets |
 | Other AWS resources | S3 backups bucket (`backups.tf`), SSM parameters under `/talon/demo/`, KMS keys `alias/talon-demo-secrets` and `alias/talon-demo-backups`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), 2 CloudWatch alarms (`alarms.tf`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and launch template (`jobs.tf`), 2 AWS Budgets alerts |
 | Root volume | 20 GB gp3, encrypted with the default AWS-managed EBS key (the architecture doc asks for a KMS key; not changed) |
@@ -187,8 +187,9 @@ toward two servers)
     (one Connect button, repo list) and the one-GitHub-account-per-user
     check ("already connected to another Talon user") verified there too.
     Admin "Unlink GitHub (<login>)" on the user edit screen, and the admin
-    user search matches GitHub logins: branch `code-source-ui`, tested
-    locally (admin unlink, then the student connects again).
+    user search matches GitHub logins (merged). A token GitHub rejects
+    (revoked anywhere: disconnecting on one server revokes the app's grant
+    for all of them) now unlinks instead of failing.
 
 **Blocked on others**
 
@@ -607,18 +608,23 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   Image select was removed because it did nothing).
 - Job-finished notification (students run overnight jobs).
 - Submit form, code source: a "Code source" choice (GitHub app, public
-  repository, Google Drive) above the job fields, built on branch
-  `code-source-ui` (2026-11-03). GitHub and public repos work; Google Drive
+  repository, Google Drive) above the job fields, merged to `main`
+  2026-11-03. GitHub and public repos work; Google Drive
   is a mock-up only (disabled folder picker, submit disabled). Each source
   keeps its own repo when switching. The backend does not know about
   sources yet: it treats "no token" as an anonymous public clone.
-- Job folder (same branch, migration 007 `jobs.folder`): a job can run from
+- Job folder (merged, migration 007 `jobs.folder`): a job can run from
   a folder inside the repo (working directory, entry script relative to it,
   its requirements.txt else the root's). Pasting a github.com
   `/tree/<branch>/<folder>` or `/blob/<branch>/<path>.py` URL fills in
   branch, folder and script (a branch name with "/" is read as branch +
-  folder). Tested locally with pytorch/examples `mnist`; not yet run on EC2.
+  folder). Verified on the box: pytorch/examples `mnist` (public, folder from the
+  URL) ran to completion on EC2.
   The local runner still installs no requirements.
+- Script arguments: there is no way to pass command-line flags to the entry
+  script yet (only environment variables). Many examples need them, e.g.
+  pytorch/examples mnist saves weights only with `--save-model`. Next small
+  item: an Arguments field, passed safely quoted.
 - GitHub: installation tokens last one hour, so a local-runner job queued
   longer than that fails to clone (local runner is dev/admin only). Repo list
   and browser calls for students who have not connected GitHub share the web
@@ -747,4 +753,5 @@ migrations take an advisory lock (concurrent deploys are safe).
   lost-job billing change, the log panel on EC2 jobs, and the new error
   messages; check them on the box now that it is deployed.
 - 2026-11-03: GitHub App sign-in replaces PATs (item 13); merged to `main`.
+- 2026-11-03: Code-source choice (GitHub / public / Drive mock-up), job folders (migration 007), admin GitHub unlink, revoked-token handling; merged to `main`.
 - `infra_2/` is the older EKS design, kept for reference only.
