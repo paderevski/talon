@@ -1,6 +1,6 @@
 import { assert, createCookieJar, login, startBackendForTests, withTestDb } from "../lib/harness.mjs";
 
-export const name = "EC2 jobs: access rules, input validation, kill switch, and no local runs for students in production";
+export const name = "EC2 jobs: access rules, input validation, kill switch, and no local runs in production";
 
 const post = (jar, baseUrl, body) =>
   jar.fetch(`${baseUrl}/api/jobs`, {
@@ -103,6 +103,14 @@ export async function run({ baseUrl }) {
     const response = await post(s, production.baseUrl, { name: "prod-local", repo: "octocat/Hello-World" });
     assert(response.status === 403, `local run for a student in production: expected 403, got ${response.status}`);
     assert((await jobCount(["prod-local"])) === 0, "refused local run must not create a job");
+
+    // Admins too: a local run executes on the web server with its role.
+    const a = createCookieJar();
+    await login(a, production.baseUrl, "admin", "admin123");
+    assert((await options(a, production.baseUrl)).localAllowed === false, "admins are not offered local runs in production");
+    const adminResponse = await post(a, production.baseUrl, { name: "prod-local-admin", repo: "octocat/Hello-World" });
+    assert(adminResponse.status === 403, `local run for an admin in production: expected 403, got ${adminResponse.status}`);
+    assert((await jobCount(["prod-local-admin"])) === 0, "refused admin local run must not create a job");
   } finally {
     await production.stop();
   }

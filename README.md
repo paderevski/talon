@@ -97,9 +97,10 @@ the adapter that started it.
   terminates stray or overrun instances. Limits: one unfinished job per user
   (admins exempt) and ten in total. Design notes and verification are in
   [`infra/CURRENT_STATUS.md`](infra/CURRENT_STATUS.md).
-- **Local** (the default for admins, tests and development). Runs the job as a
-  process on the web server. For development, tests and admins only: there is
-  no isolation, and in production it is refused for non-admins.
+- **Local** (the default for tests and development). Runs the job as a
+  process on the web server, with only PATH, HOME and locale from the
+  server's environment. There is no isolation, so in production it is
+  refused for everyone, admins included, unless `TALON_ALLOW_LOCAL_JOBS=true`.
 
 Settings (environment variables):
 
@@ -111,7 +112,7 @@ Settings (environment variables):
 | `EC2_MAX_RUNTIME_CEILING_SECONDS` | 86400 | Longest time limit offered |
 | `JOB_RATE_OVERHEAD_CENTS_PER_HOUR` | 1 | Added to the instance rate (IPv4, disk) |
 | `JOB_BOOT_ALLOWANCE_SECONDS` | 300 | Boot and upload time added when reserving |
-| `TALON_ALLOW_LOCAL_JOBS` | off | Allow local runs for non-admins in production |
+| `TALON_ALLOW_LOCAL_JOBS` | off | Allow local runs (on the web server, no isolation) in production; off refuses them for everyone, admins included |
 | `JOB_MAX_RUNTIME_SECONDS` | 1800 | Time limit for local runs |
 | `JOB_RATE_CENTS_PER_HOUR` | 0 | Rate for local runs (0 = free) |
 

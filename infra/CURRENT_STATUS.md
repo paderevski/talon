@@ -7,6 +7,21 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 
 ## Next up (as of 2026-11-04)
 
+0. **Branch `harden-ec2-cloudwatch` (written, not applied or deployed):**
+   local runs refused for everyone in production (admins too) and given only
+   PATH/HOME/locale, never the server's secrets; the web role may launch only
+   the job templates' own AMIs and root volumes up to their size; CloudWatch
+   agent on the web server via SSM State Manager (syslog, nginx, bootstrap log
+   to `/talon/demo/*`, memory and disk metrics in `Talon/Server`); alarms for
+   disk > 85%, backend `[error]`s, reconciler terminating an instance with no
+   job row, and account-wide GPU / standard vCPUs above Talon's limits (24 /
+   42). GuardDuty is in Terraform behind `enable_guardduty` (off: account-wide
+   in a shared account, agree with LCPS IT). To finish: `terraform apply`
+   (15 add, 2 in-place, nothing replaced), deploy the branch, run
+   `infra/scripts/check-launch-policy.sh` (dry-run launches from the box),
+   check logs arrive, then merge. IAM cannot limit RunInstances user data:
+   the vCPU alarms are the backstop, a lower vCPU quota (support case) or a
+   budget action would be the hard cap.
 1. **Job queue with launch retries** (step 5 without Spot): a Postgres queue
    (`FOR UPDATE SKIP LOCKED`, `not_before`) so a launch with no capacity waits
    and retries instead of failing; also gives overnight jobs.
@@ -66,12 +81,14 @@ Key paths: app `/opt/talon`, config `/etc/talon/talon.env`, secrets
   each (see "EC2-launched jobs"); their logs and output files are in the jobs
   bucket and expire after 30 days (`jobs_retention_days`), and they are not in
   the database backups. The local runner (on the web server, no isolation,
-  `JOB_MAX_RUNTIME_SECONDS` default 30 minutes) is refused for non-admins in
-  production and remains for development, tests and admins.
+  `JOB_MAX_RUNTIME_SECONDS` default 30 minutes) is refused for everyone in
+  production, admins included (`TALON_ALLOW_LOCAL_JOBS=true` overrides), and
+  remains for development and tests.
 - Job instances can reach the internet on 443 (students download datasets
   and models), so jobs are not network-isolated; the instance metadata
   service is blocked for the student user and no secrets are on the box.
-  GuardDuty is not enabled.
+  GuardDuty is not enabled (checked 2026-11-04: no detector; Terraform has it
+  behind `enable_guardduty`).
 - Nightly database backups exist, but restoring onto a new instance is manual
   and has only been tested into a scratch database.
 - Demo accounts have public passwords (they are in this repo). Fine only
@@ -81,7 +98,9 @@ Key paths: app `/opt/talon`, config `/etc/talon/talon.env`, secrets
 - Changing `user_data.sh.tftpl` replaces the instance (database is reset;
   restore from a backup by hand if it matters).
 - The local job runner executes `git clone` / `python3` directly on the host
-  as the `talon` user, so jobs are not isolated.
+  as the `talon` user, so jobs are not isolated. It passes only PATH, HOME and
+  locale (not the server's environment) and sets `AWS_EC2_METADATA_DISABLED`,
+  which stops AWS SDKs but not a raw request to the metadata service.
 
 ## To-do (in order)
 
@@ -527,8 +546,9 @@ done (below); the adapter and everything after it are not built yet.
    values). Limits: one unfinished EC2 job per user (admins exempt) and 10 in
    total (`EC2_MAX_JOBS_PER_USER`, `EC2_MAX_JOBS_TOTAL`), enforced in the
    reservation transaction under an advisory lock (parallel submits cannot
-   slip past). Local runs on the web server are refused for non-admins when
-   `NODE_ENV=production` unless `TALON_ALLOW_LOCAL_JOBS=true`. Live logs:
+   slip past). Local runs on the web server are refused for everyone (admins
+   too, since `harden-ec2-cloudwatch`) when `NODE_ENV=production` unless
+   `TALON_ALLOW_LOCAL_JOBS=true`. Live logs:
    `job_boot.sh` uploads the job log every 30 s. **Output files, complete
    solution:** two sources as in the local runner, `output/`
    (`TALON_OUTPUT_DIR`, source `output_dir`) and `changed/` (files created or
@@ -766,7 +786,7 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   lifecycle to Infrequent Access.
 - Isolation of student code: done for the first slice (own instance, student
   user, instance metadata blocked for it, no secrets on the box, HTTPS/DNS
-  only outbound, local runner refused for non-admins in production). Still
+  only outbound, local runner refused in production, admins too). Still
   open: per-job scoped credentials (the job role is shared across jobs),
   optional hardening (`timeout` run as root, cgroup memory/task limits), a
   dedicated VPC with private subnets, and GuardDuty.
@@ -785,16 +805,20 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   password hashes for the demo users and the first admin.
 - Audit log for admin actions (role and budget changes; grants record who,
   but nothing reads them yet).
-- Not verified (not checked this session): CloudTrail with 90-day retention,
-  GuardDuty, Inspector on the account; private subnet + NAT + VPC endpoints
+- Checked 2026-11-04: CloudTrail has a multi-region trail
+  (`management-events`, not an organization trail; its retention not
+  checked); GuardDuty has no detector. Not checked: Inspector; private subnet + NAT + VPC endpoints
   for the web server (it is in a public subnet today).
 
 ### 4. Operations
 
-- More alarms: ALB health, dead-letter queue depth, abnormal compute spend
-  (AWS Budgets). Only backup alarms exist.
-- Application logs to CloudWatch Logs (journald only today) and SSM
-  session logging.
+- More alarms: ALB health, dead-letter queue depth, a budget action that
+  stops launches (Budgets only email today). Backup alarms exist; disk,
+  backend errors, unknown job instances and vCPU usage alarms are on branch
+  `harden-ec2-cloudwatch`.
+- Application logs to CloudWatch Logs: on branch `harden-ec2-cloudwatch`
+  (CloudWatch agent, syslog/nginx/bootstrap). Job instance boot logs stay in
+  S3. SSM session logging not set up.
 - CI/CD: nothing runs the test suites automatically; deploys are manual SSM
   runs. Add tests on every push and automated deploys.
 - End-to-end restore drill onto a brand-new instance; a staging environment
