@@ -372,6 +372,13 @@ export default function createEc2ExecutionAdapter({
           }
         }
       }
+      // Every zone said no capacity (or does not offer the type): AWS's own
+      // message names one zone and suggests others we just tried, so say
+      // what happened instead. 503: worth trying again later.
+      if (retryInNextSubnet.has(lastError?.name)) {
+        const zones = subnets.length === 1 ? "the one zone Talon uses" : `all ${subnets.length} zones Talon uses`;
+        throw httpError(`No ${instanceType} machines are available right now (AWS has no capacity in ${zones}). Try again later or choose another machine.`, 503);
+      }
       throw httpError(`Could not launch an instance: ${lastError?.name || "unknown error"}${lastError?.message ? ` (${lastError.message})` : ""}`, 502);
     },
 

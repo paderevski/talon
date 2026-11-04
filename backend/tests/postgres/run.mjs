@@ -971,6 +971,15 @@ const tests = [
     let message = "";
     try { await strict.start(spec("r4")); } catch (e) { message = e.message; }
     assert(/UnauthorizedOperation/.test(message), `a permission error must not try other subnets: ${message}`);
+
+    const full = createEc2ExecutionAdapter({
+      ec2: aws.ec2, s3: aws.s3, prepareInput,
+      config: { bucket: "b", launchTemplateId: "lt-1", subnetIds: ["subnet-full", "subnet-not-offered"] },
+    });
+    let refusal = null;
+    try { await full.start(spec("r5")); } catch (e) { refusal = e; }
+    assert(refusal?.status === 503, `no capacity anywhere: expected 503, got ${refusal?.status}`);
+    assert(refusal.message === "No c7g.large machines are available right now (AWS has no capacity in all 2 zones Talon uses). Try again later or choose another machine.", `message: ${refusal.message}`);
   }],
 
   ["ec2 adapter: GPU types launch from their own template with a matching run.sh", async () => {
