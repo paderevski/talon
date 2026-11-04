@@ -172,12 +172,14 @@ toward two servers)
     `github-app-client-secret`, `github-app-private-key` (SecureString, made
     by hand with `alias/talon-demo-secrets`; README "GitHub App"). The backend
     re-reads them every minute while missing, so no restart and no instance
-    replacement (user_data unchanged). To do: create the app in AET-CS (and a
-    dev app), test locally, `terraform apply` (two IAM/SSM changes only),
-    put the secrets, deploy, test through the tunnel with a private repo.
-    Unverified against GitHub: that `installations/new?state=` passes `state`
-    back to the callback (if not, install-then-return shows "link expired"
-    and needs a fallback).
+    replacement (user_data unchanged). The app `talon-link` exists
+    (2026-11-03). Tested locally (dev server, :5173): install + connect and a
+    job submitted from a linked repo worked; GitHub does pass `state` back
+    after an install. Gotcha: after an install GitHub returns to the app's
+    *first* callback URL, so the server's own URL must be listed first (or use
+    a separate dev app). To do: `terraform apply` (SSM settings + one IAM
+    policy), put the two secrets, deploy the branch, test through the tunnel
+    with a private repo on an EC2 job.
 
 **Blocked on others**
 
