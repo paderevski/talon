@@ -819,3 +819,65 @@ td:last-child, th:last-child { border-right: none; }
 }
 .sort-btn:hover { color: var(--accent-blue); }
 .panel-head .panel-count { color: var(--text-muted); font-size: 13px; font-weight: 400; margin-left: 8px; }
+
+/* GitHub panel: one text size (13px) throughout; links styled as buttons
+   need the button font set explicitly (anchors inherit 16px from body). */
+.github-panel { font-size: 13px; }
+.github-text { margin: 0 0 12px; color: var(--text-secondary); line-height: 1.5; font-size: 13px; }
+.github-text strong { color: var(--text-primary); font-weight: 600; }
+.github-muted { color: var(--text-muted); }
+.github-error { color: var(--accent-red); }
+.github-message { margin-top: 12px; margin-bottom: 0; }
+.github-btn {
+  display: inline-block;
+  font-family: inherit;
+  font-size: 13px;
+  text-decoration: none;
+  padding: 8px 14px;
+}
+.github-account {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.github-account .github-text { margin: 0; }
+.github-link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.github-link-button:hover { color: var(--accent-red); text-decoration: underline; }
+.github-link-button:disabled { cursor: default; text-decoration: none; }
+.github-repo-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-height: 220px;
+  max-width: 560px;
+  overflow-y: auto;
+}
+.github-repo-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-top: 1px solid var(--border);
+}
+.github-repo-list li:first-child { border-top: none; }
+.github-repo-name { font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--text-primary); }
+.github-private {
+  font-size: 11px;
+  color: var(--accent-amber);
+  background: var(--accent-amber-dim);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.github-link { color: var(--accent-blue); font-size: 13px; text-decoration: none; }
+.github-link:hover { text-decoration: underline; }

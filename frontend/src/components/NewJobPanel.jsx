@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fetchGithubPublicRepos, fetchRepoTree } from "../api/client";
+import { fetchGithubRepos, fetchRepoTree } from "../api/client";
 import { normalizeRepoInput } from "../utils/repo";
 import { formatDollars } from "../utils/format";
 import { formatRuntime, planJob } from "../utils/jobPlan";
@@ -77,7 +77,7 @@ function makeInitialForm(defaultRepo, defaultBranch) {
   };
 }
 
-export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, githubUsername, onRepoBranchChange, compute = null, budgetDollars = null }) {
+export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, githubLinked = false, onRepoBranchChange, compute = null, budgetDollars = null }) {
   const [form, setForm] = useState(makeInitialForm(defaultRepo, defaultBranch));
   const [isAutoName, setIsAutoName] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -88,7 +88,8 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
   const [scriptOptions, setScriptOptions] = useState([]);
   const [isLoadingScripts, setIsLoadingScripts] = useState(false);
   const [scriptError, setScriptError] = useState("");
-  const canUseRepoDropdown = githubUsername && !repoError && repoOptions.length > 0;
+  const [typeRepo, setTypeRepo] = useState(false);
+  const canUseRepoDropdown = githubLinked && !typeRepo && !repoError && repoOptions.length > 0;
 
   // Machines come from the server; see utils/jobPlan.js.
   const { ec2, localAllowed, runOn, selectedMachine, estimateDollars, overBudget, nowhereToRun } = planJob({
@@ -150,9 +151,7 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
   };
 
   useEffect(() => {
-    const normalizedUsername = String(githubUsername ?? "").trim();
-
-    if (!normalizedUsername) {
+    if (!githubLinked) {
       setRepoOptions([]);
       setIsLoadingRepos(false);
       setRepoError("");
@@ -163,16 +162,19 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
     setIsLoadingRepos(true);
     setRepoError("");
 
-    fetchGithubPublicRepos(normalizedUsername)
-      .then((repos) => {
+    fetchGithubRepos()
+      .then((items) => {
+        const repos = items.map((item) => item.fullName);
         if (cancelled) {
           return;
         }
 
-        setRepoOptions(repos);
+        setRepoOptions(items);
         setForm((prev) => {
           const normalizedCurrentRepo = normalizeRepoInput(prev.repo);
-          if (!repos.length || (normalizedCurrentRepo && repos.includes(normalizedCurrentRepo))) {
+          // Keep whatever is already chosen (it stays in the menu even if
+          // it is a public repo the app was not given).
+          if (!repos.length || normalizedCurrentRepo) {
             return prev;
           }
 
@@ -199,7 +201,7 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
     return () => {
       cancelled = true;
     };
-  }, [githubUsername]);
+  }, [githubLinked]);
 
   useEffect(() => {
     const normalizedRepo = normalizeRepoInput(form.repo);
@@ -312,9 +314,12 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
           {canUseRepoDropdown ? (
             <select className="form-select" value={normalizeRepoInput(form.repo)} onChange={update("repo")} disabled={isLoadingRepos || !repoOptions.length}>
               {isLoadingRepos ? <option>Loading repositories...</option> : null}
-              {!isLoadingRepos && !repoOptions.length ? <option>No public repositories found</option> : null}
+              {!isLoadingRepos && !repoOptions.length ? <option>No repositories found</option> : null}
+              {!repoOptions.some((r) => r.fullName === normalizeRepoInput(form.repo)) && form.repo ? (
+                <option value={normalizeRepoInput(form.repo)}>{normalizeRepoInput(form.repo)}</option>
+              ) : null}
               {repoOptions.map((repo) => (
-                <option key={repo} value={repo}>{repo}</option>
+                <option key={repo.fullName} value={repo.fullName}>{repo.fullName}{repo.private ? " (private)" : ""}</option>
               ))}
             </select>
           ) : (
@@ -323,7 +328,19 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
           <span className="form-hint">
             {repoError
               ? `${repoError}. You can paste a repo URL manually.`
-              : (canUseRepoDropdown ? "Using public repositories for configured GitHub username." : "Accepts full GitHub URL or owner/repo.")}
+              : (canUseRepoDropdown
+                ? "Repositories the Talon GitHub app can read. Add more in the GitHub panel."
+                : (githubLinked
+                  ? "Accepts full GitHub URL or owner/repo. Private repos must be added to the Talon app (GitHub panel)."
+                  : "Accepts full GitHub URL or owner/repo. Connect GitHub to run a private repo."))}
+            {githubLinked && repoOptions.length > 0 ? (
+              <>
+                {" "}
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setTypeRepo((v) => !v)}>
+                  {typeRepo ? "Pick from list" : "Type another repo"}
+                </button>
+              </>
+            ) : null}
           </span>
         </div>
         <div className="form-group form-group-inline">

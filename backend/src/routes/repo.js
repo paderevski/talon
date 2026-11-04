@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getGithubTokenForUser } from "../utils/githubCredentialsStore.js";
+import { getGithubApp } from "../services/githubApp.js";
 
 const router = Router();
 const repoTreeCache = new Map();
@@ -226,12 +226,14 @@ router.get("/:owner/:repo/tree", async (req, res) => {
 
   try {
     pruneExpiredCaches();
-    const githubToken = talonUser ? await getGithubTokenForUser(talonUser) : "";
+    // The user's own GitHub App token: sees their public repos plus the private
+    // ones the app is installed on. Not linked: anonymous (public repos only).
+    const githubToken = talonUser ? (await getGithubApp().getUserAccessToken(talonUser)) || "" : "";
     const githubHeaders = getGithubHeaders(githubToken);
 
     const repoInfo = await getJsonWithHeadersOrThrow(
       `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
-      `Repository ${owner}/${repo} was not found. Check the name; a private repo needs a GitHub token saved in GitHub Credentials.`,
+      `Repository ${owner}/${repo} was not found. Check the name; for a private repo, connect GitHub and give the Talon app access to it (GitHub panel).`,
       githubHeaders,
     );
     const branch = requestedBranch || repoInfo.default_branch || "main";

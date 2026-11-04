@@ -130,21 +130,82 @@ All routes except `/api/health` and `/api/auth/*` need a signed-in session.
   `POST /api/jobs/:id/cancel`, `DELETE /api/jobs/:id` (hide),
   `POST /api/jobs/:id/unhide`
 - Results and repos: `GET /api/results`, `GET /api/repos/:owner/:repo/tree`
-- GitHub credentials: `GET|PUT|DELETE /api/github-credentials`,
-  `GET /api/github-credentials/repos/:username`
+- GitHub: `GET|DELETE /api/github` (link status, unlink),
+  `GET /api/github/connect[?mode=install]` and `GET /api/github/callback`
+  (browser round trip to GitHub), `GET /api/github/repos`
 - Teacher: `/api/teacher/*` (roster and budget allocations)
 - Admin: `/api/admin/*` (users, classes, budget adjustments, CSV roster import)
 
-## GitHub PAT setup
+## GitHub App
 
-Users can save a GitHub personal access token for Talon to use with GitHub
-API calls.
+Talon reads student repositories through a GitHub App owned by the
+[AET-CS](https://github.com/AET-CS) org. Students do not paste tokens.
 
-- The user pastes the PAT in the **GitHub Credentials** panel. The backend
-  validates it (`GET https://api.github.com/user`) and stores it encrypted
-  (AES-256-GCM) in the Postgres table `github_credentials`, one row per user.
-  It can be replaced or deleted from the same panel. These endpoints are scoped
-  to the signed-in user.
+- **Public repos** need nothing: paste the URL in Submit Job. They are cloned
+  anonymously.
+- **Private repos:** the student opens the **GitHub** panel and clicks
+  **Connect GitHub** (GitHub shows its account picker), then **Choose
+  repositories on GitHub**: installs the app on their account (or an org they
+  belong to, such as a class org) and picks the repositories Talon may read.
+  The panel and Submit Job then list those repos.
+- **What Talon holds:** the student's GitHub App user token (encrypted in
+  `github_accounts`, refreshed automatically). It only reaches repositories
+  that the student can see *and* the app is installed on, so it is the access
+  check: one student cannot run another student's private repo just because
+  both are in an org that installed the app. To clone a private repo, the web
+  server gets a one-hour, read-only installation token for that one repo. It
+  goes to git through the environment, never in the URL or `.git/config`,
+  and never reaches the job instance.
+- **Disconnect** forgets the link and revokes Talon's grant. The app stays
+  installed until the student removes it under GitHub **Settings >
+  Applications**.
+
+### Creating the app (once, by an AET-CS org owner)
+
+On github.com: **AET-CS > Settings > Developer settings > GitHub Apps > New
+GitHub App**.
+
+- Name: for example `Talon AET-CS`. Its URL name (slug) is shown afterwards.
+- Homepage URL: the repo or the Talon URL.
+- Callback URLs: `http://localhost:8080/api/github/callback` (SSM tunnel to
+  the demo box) and `http://localhost:5173/api/github/callback` (local dev);
+  later `https://talon.lcps.org/api/github/callback`. **Order matters:**
+  after an install GitHub always returns to the *first* callback URL (the
+  install page takes no redirect), so list the server's own URL first.
+  **Connect GitHub** itself is a sign-in that names its callback, so it works
+  with any listed URL.
+- Turn on **Request user authorization (OAuth) during installation**. Leave
+  **Expire user authorization tokens** on.
+- Webhook: turn **Active** off (Talon is not reachable from GitHub).
+- Repository permissions: **Contents: Read-only** (Metadata: Read-only is
+  added automatically). No organization or account permissions.
+- Where can it be installed: **Any account**, so students can install it on
+  their own accounts.
+- After creating it: note the **Client ID** and slug, **Generate a new client
+  secret**, and **Generate a private key** (downloads a `.pem`).
+
+A separate dev app (same settings, localhost:5173 callback only) keeps local
+testing away from the real one.
+
+### Configuration
+
+Local dev: copy `backend/.env.example` to `backend/.env` and fill it in
+(`npm run dev` loads it). Production reads SSM under `/talon/demo/`:
+`github-app-client-id`, `github-app-slug` and `public-url` come from Terraform
+(`github_app_client_id`, `github_app_slug`, `public_url` in
+`infra/ec2/terraform.tfvars`). The two secrets are created by hand so they
+never enter Terraform state or this conversation's tools:
+
+```bash
+aws ssm put-parameter --profile lcps --name /talon/demo/github-app-client-secret \
+  --type SecureString --key-id alias/talon-demo-secrets --value "file://client-secret.txt"
+aws ssm put-parameter --profile lcps --name /talon/demo/github-app-private-key \
+  --type SecureString --key-id alias/talon-demo-secrets --value "file://talon.private-key.pem"
+```
+
+Add `--overwrite` to replace one. The backend re-checks every minute while
+anything is missing, so no restart is needed. Without the settings, GitHub
+sign-in is off and public repos still work.
 
 ### Encryption key
 
@@ -152,33 +213,14 @@ Set `TALON_CREDENTIALS_KEY` in every non-dev environment. In production
 (`NODE_ENV=production`) the backend refuses to start without it; in dev a
 built-in key is used. On the AWS demo it comes from SSM Parameter Store.
 
-Each stored token records the id of the key that encrypted it
+Each stored token set records the id of the key that encrypted it
 (`TALON_CREDENTIALS_KEY_ID`, default `k1`) and is bound to its owner, so a row
 copied to another user will not decrypt. To rotate the key: set the new secret
 and a new `TALON_CREDENTIALS_KEY_ID`, list the old one in
 `TALON_CREDENTIALS_OLD_KEYS="k1:old-secret"`, restart, run
 `npm run db:rotate-credentials-key --workspace backend`, then remove the old
 key. Changing the key without following these steps makes stored tokens
-unreadable; they must be saved again. Tokens from the old
-`githubCredentials.json` file can be loaded once with
-`npm run db:import-github-credentials --workspace backend`.
-
-### Security notes
-
-- Never log PAT values. Use a strong, unique `TALON_CREDENTIALS_KEY` per
-  environment. Rotate PATs regularly and delete unused ones.
-
-### For users: create a PAT and add it to Talon
-
-1. In GitHub open **Settings**, then **Developer settings**, then **Personal
-   access tokens**, and choose **Fine-grained tokens** (recommended).
-2. Click **Generate new token**, pick your account or organization, set an
-   expiration date and a name (for example `talon-access`).
-3. Grant **Contents: Read-only** and **Metadata: Read-only**, then generate the
-   token and copy it immediately (GitHub shows it once).
-4. In Talon open **GitHub Credentials**, paste the token and click **Save
-   Token**. A masked suffix like `...abcd` confirms it. Use **Replace Token** or
-   **Delete Token** to change it later.
+unreadable, and those users must connect GitHub again.
 
 ## Tips for writing jobs
 

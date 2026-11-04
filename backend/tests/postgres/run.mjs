@@ -13,7 +13,10 @@ import { createUsersPostgresRepository } from "../../src/repositories/postgres/u
 import { createPasswordHash } from "../../src/utils/passwords.js";
 import { createJobsPostgresRepository } from "../../src/repositories/postgres/jobsPostgresRepository.js";
 import { computeCostCents } from "../../src/utils/jobFormat.js";
-import { createGithubCredentialsStore } from "../../src/utils/githubCredentialsStore.js";
+import { createGithubAccountsStore, GithubAccountInUseError } from "../../src/utils/githubAccountsStore.js";
+import { createAppJwt, createGithubApp, normalizeSlug } from "../../src/services/githubApp.js";
+import { describeCloneError, gitAuthEnv } from "../../src/execution/gitAuth.js";
+import { createVerify, generateKeyPairSync } from "node:crypto";
 import { BudgetError, ensureAccount, grant, transfer } from "../../src/budget/ledger.js";
 import { hourlyRateCentsFor, listInstanceOptions, reservationCentsFor } from "../../src/execution/ec2Rates.js";
 import createEc2ExecutionAdapter, { assertEntryScript, buildRunScript } from "../../src/execution/adapters/ec2ExecutionAdapter.js";
@@ -34,6 +37,33 @@ async function scalar(sql, params = []) {
   return Object.values(result.rows[0])[0];
 }
 
+
+// Fake GitHub for the GitHub App tests: routes are "METHOD /path" (path
+// relative to api.github.com or github.com); unknown routes answer 404.
+function makeFakeGithub(routes) {
+  const calls = [];
+  const fetch = async (url, init = {}) => {
+    const { pathname, search } = new URL(url);
+    const key = `${init.method || "GET"} ${pathname}${search}`;
+    const parseBody = (body) => {
+      try {
+        return JSON.parse(body);
+      } catch {
+        return Object.fromEntries(new URLSearchParams(body));
+      }
+    };
+    calls.push({ key, auth: init.headers?.Authorization || "", body: init.body ? parseBody(init.body) : null });
+    const route = routes[key] ?? { status: 404, data: { message: "Not Found" } };
+    return new Response(JSON.stringify(route.data), { status: route.status, headers: { "Content-Type": "application/json" } });
+  };
+  return { fetch, calls };
+}
+
+let fakeGithubKey = null;
+function fakeGithubConfig() {
+  fakeGithubKey ??= generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey;
+  return { clientId: "Iv1.test", slug: "talon-test", clientSecret: "test-secret", publicUrl: "http://localhost:5173", privateKey: fakeGithubKey };
+}
 
 // Fake AWS clients for the EC2 adapter: S3 is a map, EC2 records its calls.
 function makeFakeAws({ instance = { state: "running" } } = {}) {
@@ -282,77 +312,75 @@ const tests = [
       "entra with hash accepted",
     );
   }],
-  ["github credentials: token round-trips, is encrypted at rest, last4 kept", async () => {
-    const store = createGithubCredentialsStore({ pool });
+  ["github accounts: tokens round-trip, are encrypted at rest, removed with the user", async () => {
+    const store = createGithubAccountsStore({ pool });
     const userId = await scalar("SELECT id FROM users WHERE username = 'jane_smith'");
-    const token = "ghp_exampleTOKEN1234567890abcd";
-    await store.saveGithubTokenForUser(userId, token, "janehub");
+    const expires = new Date(Date.now() + 8 * 3600 * 1000);
+    await store.saveLink(userId, {
+      githubUserId: 1001,
+      githubLogin: "janehub",
+      tokens: { accessToken: "ghu_exampleACCESS1234", refreshToken: "ghr_exampleREFRESH5678", accessExpiresAt: expires, refreshExpiresAt: null },
+    });
 
-    assert((await store.getGithubTokenForUser(userId)) === token, "token did not round-trip");
-    const status = await store.getGithubTokenStatusForUser(userId);
-    assert(status.hasToken && status.tokenLast4 === "abcd" && status.githubUsername === "janehub", `status ${JSON.stringify(status)}`);
+    const tokens = await store.getTokens(userId);
+    assert(tokens.accessToken === "ghu_exampleACCESS1234" && tokens.refreshToken === "ghr_exampleREFRESH5678", "tokens did not round-trip");
+    assert(tokens.accessExpiresAt.getTime() === expires.getTime() && tokens.refreshExpiresAt === null, "expiry did not round-trip");
+    const link = await store.getLink(userId);
+    assert(link.githubLogin === "janehub" && link.githubUserId === 1001 && link.linkedAt, `link ${JSON.stringify(link)}`);
 
-    const row = (await pool.query("SELECT * FROM github_credentials WHERE user_id = $1", [userId])).rows[0];
+    const row = (await pool.query("SELECT * FROM github_accounts WHERE user_id = $1", [userId])).rows[0];
     assert(row.key_id === "k1", `key_id ${row.key_id}`);
-    assert(!JSON.stringify(row).includes("exampleTOKEN"), "plaintext token found in the row");
-    assert(!Buffer.from(row.ciphertext).toString("utf8").includes("exampleTOKEN"), "ciphertext contains the token");
+    assert(!/example(ACCESS|REFRESH)/.test(Buffer.from(row.ciphertext).toString("utf8")), "ciphertext contains a token");
+
+    const tempId = await scalar("INSERT INTO users (username, display_name) VALUES ('cascade.test@lcps.org', 'Cascade Test') RETURNING id");
+    await store.saveLink(tempId, { githubUserId: 1002, githubLogin: "cascade", tokens: { accessToken: "ghu_cascade" } });
+    await pool.query("DELETE FROM users WHERE id = $1", [tempId]);
+    assert((await scalar("SELECT count(*) FROM github_accounts WHERE user_id = $1", [tempId])) === "0", "link should be deleted with the user");
   }],
 
-  ["github credentials: a row copied to another user does not decrypt", async () => {
-    const store = createGithubCredentialsStore({ pool });
+  ["github accounts: a row copied to another user does not decrypt; one GitHub account per Talon user", async () => {
+    const store = createGithubAccountsStore({ pool });
     const jane = await scalar("SELECT id FROM users WHERE username = 'jane_smith'");
     const other = await scalar("SELECT id FROM users WHERE username = 'student_a1'");
     await pool.query(
-      `INSERT INTO github_credentials (user_id, github_username, key_id, iv, auth_tag, ciphertext, token_last4)
-       SELECT $2, github_username, key_id, iv, auth_tag, ciphertext, token_last4 FROM github_credentials WHERE user_id = $1`,
+      `INSERT INTO github_accounts (user_id, github_user_id, github_login, key_id, iv, auth_tag, ciphertext)
+       SELECT $2, 999999, github_login, key_id, iv, auth_tag, ciphertext FROM github_accounts WHERE user_id = $1`,
       [jane, other],
     );
-    assert((await store.getGithubTokenForUser(other)) === "", "copied row must not decrypt for another user");
-    assert((await store.getGithubTokenForUser(jane)).startsWith("ghp_"), "original row must still decrypt");
-    await pool.query("DELETE FROM github_credentials WHERE user_id = $1", [other]);
+    assert((await store.getTokens(other)) === null, "copied row must not decrypt for another user");
+    assert((await store.getTokens(jane))?.accessToken.startsWith("ghu_"), "original row must still decrypt");
+    await store.deleteLink(other);
+    assert((await store.getLink(other)) === null, "deleteLink left a row");
+
+    let inUse = false;
+    try {
+      await store.saveLink(other, { githubUserId: 1001, githubLogin: "janehub", tokens: { accessToken: "ghu_x" } });
+    } catch (error) {
+      inUse = error instanceof GithubAccountInUseError;
+    }
+    assert(inUse, "the same GitHub account must not link to a second Talon user");
   }],
 
-  ["github credentials: username-only rows, delete keeps username, removed with the user", async () => {
-    const store = createGithubCredentialsStore({ pool });
-    const userId = await scalar("SELECT id FROM users WHERE username = 'student_a2'");
-    await store.saveGithubUsernameForUser(userId, "a2hub");
-    let status = await store.getGithubTokenStatusForUser(userId);
-    assert(!status.hasToken && status.githubUsername === "a2hub", "username-only save failed");
-
-    await store.saveGithubTokenForUser(userId, "ghp_secondTOKEN0000", "a2hub");
-    await store.deleteGithubTokenForUser(userId);
-    status = await store.getGithubTokenStatusForUser(userId);
-    assert(!status.hasToken && status.githubUsername === "a2hub", "delete should keep the username");
-
-    await store.saveGithubUsernameForUser(userId, "");
-    assert((await scalar("SELECT count(*) FROM github_credentials WHERE user_id = $1", [userId])) === "0", "empty row should be removed");
-
-    // Deleting the user deletes their credentials row.
-    const tempId = await scalar("INSERT INTO users (username, display_name) VALUES ('cascade.test@lcps.org', 'Cascade Test') RETURNING id");
-    await store.saveGithubTokenForUser(tempId, "ghp_cascadeTOKEN9999", "cascade");
-    await pool.query("DELETE FROM users WHERE id = $1", [tempId]);
-    assert((await scalar("SELECT count(*) FROM github_credentials WHERE user_id = $1", [tempId])) === "0", "credentials should be deleted with the user");
-  }],
-
-  ["github credentials: key rotation keeps tokens readable", async () => {
-    const store = createGithubCredentialsStore({ pool });
+  ["github accounts: key rotation keeps tokens readable", async () => {
+    const store = createGithubAccountsStore({ pool });
     const userId = await scalar("SELECT id FROM users WHERE username = 'jane_smith'");
     const saved = { key: process.env.TALON_CREDENTIALS_KEY, id: process.env.TALON_CREDENTIALS_KEY_ID };
+    const tokens = { accessToken: "ghu_rotateME12345678wxyz", refreshToken: "ghr_rotate" };
 
     try {
       process.env.TALON_CREDENTIALS_KEY = "old-test-secret";
       process.env.TALON_CREDENTIALS_KEY_ID = "old1";
-      await store.saveGithubTokenForUser(userId, "ghp_rotateME12345678wxyz", "janehub");
+      await store.saveLink(userId, { githubUserId: 1001, githubLogin: "janehub", tokens });
 
       // New key becomes current; old key is only kept for decrypting.
       process.env.TALON_CREDENTIALS_KEY = "new-test-secret";
       process.env.TALON_CREDENTIALS_KEY_ID = "new2";
       process.env.TALON_CREDENTIALS_OLD_KEYS = "old1:old-test-secret";
-      assert((await store.getGithubTokenForUser(userId)) === "ghp_rotateME12345678wxyz", "old key row unreadable after key change");
+      assert((await store.getTokens(userId))?.accessToken === tokens.accessToken, "old key row unreadable after key change");
 
       // Without the old key listed, the row cannot be read (and nothing crashes).
       process.env.TALON_CREDENTIALS_OLD_KEYS = "";
-      assert((await store.getGithubTokenForUser(userId)) === "", "row must be unreadable without its key");
+      assert((await store.getTokens(userId)) === null, "row must be unreadable without its key");
       process.env.TALON_CREDENTIALS_OLD_KEYS = "old1:old-test-secret";
 
       const { execFileSync } = await import("node:child_process");
@@ -360,17 +388,131 @@ const tests = [
         cwd: new URL("../..", import.meta.url).pathname,
         env: { ...process.env, DATABASE_URL: databaseUrl },
       }).toString();
-      assert(/Rotated 1 token\(s\) to key id 'new2'; 0 failed/.test(output), `rotation output: ${output}`);
+      assert(/Rotated 1 GitHub token set\(s\) to key id 'new2'; 0 failed/.test(output), `rotation output: ${output}`);
 
       process.env.TALON_CREDENTIALS_OLD_KEYS = "";
-      assert((await store.getGithubTokenForUser(userId)) === "ghp_rotateME12345678wxyz", "token unreadable after rotation");
-      assert((await scalar("SELECT key_id FROM github_credentials WHERE user_id = $1", [userId])) === "new2", "key id not updated");
+      const after = await store.getTokens(userId);
+      assert(after?.accessToken === tokens.accessToken && after.refreshToken === tokens.refreshToken, "tokens unreadable after rotation");
+      assert((await scalar("SELECT key_id FROM github_accounts WHERE user_id = $1", [userId])) === "new2", "key id not updated");
     } finally {
       for (const [name, value] of [["TALON_CREDENTIALS_KEY", saved.key], ["TALON_CREDENTIALS_KEY_ID", saved.id]]) {
         if (value === undefined) delete process.env[name]; else process.env[name] = value;
       }
       delete process.env.TALON_CREDENTIALS_OLD_KEYS;
+      await store.deleteLink(userId);
     }
+  }],
+
+  ["github app: JWT is RS256, signed by the app key, at most 10 minutes", async () => {
+    const { privateKey, publicKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const nowMs = Date.UTC(2026, 10, 3, 12, 0, 0);
+    const jwt = createAppJwt({ clientId: "Iv1.test", privateKey }, nowMs);
+    const [header, payload, signature] = jwt.split(".");
+    assert(JSON.parse(Buffer.from(header, "base64url")).alg === "RS256", "alg");
+    const claims = JSON.parse(Buffer.from(payload, "base64url"));
+    assert(claims.iss === "Iv1.test" && claims.exp - claims.iat <= 600 && claims.iat < nowMs / 1000, `claims ${JSON.stringify(claims)}`);
+    assert(createVerify("RSA-SHA256").update(`${header}.${payload}`).verify(publicKey, Buffer.from(signature, "base64url")), "signature does not verify");
+  }],
+
+  ["github app: clone token is null for public repos, repo-scoped for private, refused when hidden", async () => {
+    const userId = await scalar("SELECT id FROM users WHERE username = 'student_a1'");
+    const fake = makeFakeGithub({
+      "GET /repos/aet-cs/public-demo": { status: 200, data: { private: false } },
+      "GET /repos/aet-cs/private-demo": { status: 200, data: { private: true } },
+      "GET /repos/aet-cs/private-demo/installation": { status: 200, data: { id: 77 } },
+      "POST /app/installations/77/access_tokens": { status: 201, data: { token: "ghs_installation" } },
+    });
+    const app = createGithubApp({ config: fakeGithubConfig(), store: createGithubAccountsStore({ pool }), fetch: fake.fetch });
+
+    // Not linked: no GitHub calls, anonymous clone.
+    assert((await app.resolveCloneToken(userId, "aet-cs/private-demo")) === null, "unlinked user should clone anonymously");
+    assert(fake.calls.length === 0, "unlinked user should not call GitHub");
+
+    await createGithubAccountsStore({ pool }).saveLink(userId, { githubUserId: 2001, githubLogin: "a1hub", tokens: { accessToken: "ghu_a1" } });
+    assert((await app.resolveCloneToken(userId, "aet-cs/public-demo")) === null, "public repo should clone anonymously");
+    assert((await app.resolveCloneToken(userId, "https://github.com/aet-cs/private-demo")) === "ghs_installation", "private repo should get an installation token");
+    const mint = fake.calls.find((c) => c.key === "POST /app/installations/77/access_tokens");
+    assert(JSON.stringify(mint.body) === JSON.stringify({ repositories: ["private-demo"], permissions: { contents: "read" } }), `mint body ${JSON.stringify(mint.body)}`);
+    assert(mint.auth.startsWith("Bearer ey"), "installation token must be minted with the app JWT");
+    assert(fake.calls.find((c) => c.key === "GET /repos/aet-cs/private-demo").auth === "Bearer ghu_a1", "access check must use the user's token");
+
+    let refused = null;
+    try {
+      await app.resolveCloneToken(userId, "someone/else-private");
+    } catch (error) {
+      refused = error;
+    }
+    assert(refused?.status === 400 && /no access/.test(refused.message), `hidden repo: ${refused?.message}`);
+    await createGithubAccountsStore({ pool }).deleteLink(userId);
+  }],
+
+  ["github app: expired access token is refreshed once; a dead refresh token unlinks", async () => {
+    const userId = await scalar("SELECT id FROM users WHERE username = 'student_a2'");
+    const store = createGithubAccountsStore({ pool });
+    const past = new Date(Date.now() - 1000);
+    await store.saveLink(userId, { githubUserId: 3001, githubLogin: "a2hub", tokens: { accessToken: "ghu_old", refreshToken: "ghr_old", accessExpiresAt: past } });
+
+    const fake = makeFakeGithub({
+      "POST /login/oauth/access_token": { status: 200, data: { access_token: "ghu_new", refresh_token: "ghr_new", expires_in: 28800, refresh_token_expires_in: 15897600 } },
+    });
+    const app = createGithubApp({ config: fakeGithubConfig(), store, fetch: fake.fetch });
+    const [a, b] = await Promise.all([app.getUserAccessToken(userId), app.getUserAccessToken(userId)]);
+    assert(a === "ghu_new" && b === "ghu_new", `tokens ${a} ${b}`);
+    const refreshes = fake.calls.filter((c) => c.key === "POST /login/oauth/access_token");
+    assert(refreshes.length === 1 && refreshes[0].body.refresh_token === "ghr_old", `refreshed ${refreshes.length} time(s)`);
+    const stored = await store.getTokens(userId);
+    assert(stored.refreshToken === "ghr_new" && stored.accessExpiresAt > new Date(), "refreshed tokens not saved");
+
+    await store.saveLink(userId, { githubUserId: 3001, githubLogin: "a2hub", tokens: { accessToken: "ghu_old", refreshToken: "ghr_used", accessExpiresAt: past } });
+    const dead = makeFakeGithub({ "POST /login/oauth/access_token": { status: 200, data: { error: "bad_refresh_token" } } });
+    const deadApp = createGithubApp({ config: fakeGithubConfig(), store, fetch: dead.fetch });
+    assert((await deadApp.getUserAccessToken(userId)) === null, "dead refresh token should give no token");
+    assert((await store.getLink(userId)) === null, "dead refresh token should unlink");
+  }],
+
+  ["github app: linking stores the account; repo list covers every installation", async () => {
+    const userId = await scalar("SELECT id FROM users WHERE username = 'student_a2'");
+    const store = createGithubAccountsStore({ pool });
+    const fake = makeFakeGithub({
+      "POST /login/oauth/access_token": { status: 200, data: { access_token: "ghu_linked", refresh_token: "ghr_linked", expires_in: 28800 } },
+      "GET /user": { status: 200, data: { id: 4001, login: "a2hub" } },
+      "GET /user/installations?per_page=100": { status: 200, data: { installations: [{ id: 1 }, { id: 2 }] } },
+      "GET /user/installations/1/repositories?per_page=100&page=1": { status: 200, data: { repositories: [{ full_name: "a2hub/zeta", private: true }] } },
+      "GET /user/installations/2/repositories?per_page=100&page=1": { status: 200, data: { repositories: [{ full_name: "AET-CS/alpha", private: false }, { full_name: "a2hub/zeta", private: true }] } },
+    });
+    const app = createGithubApp({ config: fakeGithubConfig(), store, fetch: fake.fetch });
+    const authorize = new URL(await app.authorizeUrl("state-abc"));
+    assert(authorize.origin + authorize.pathname === "https://github.com/login/oauth/authorize", `authorize ${authorize}`);
+    assert(authorize.searchParams.get("prompt") === "select_account" && authorize.searchParams.get("state") === "state-abc", `authorize params ${authorize.search}`);
+    assert(authorize.searchParams.get("redirect_uri") === "http://localhost:5173/api/github/callback", "authorize redirect_uri");
+    const install = new URL(await app.authorizeUrl("state-abc", "install"));
+    assert(install.pathname === "/apps/talon-test/installations/new" && install.searchParams.get("state") === "state-abc", `install ${install}`);
+
+    const linked = await app.completeLink(userId, "code-123");
+    assert(linked.githubLogin === "a2hub", "login");
+    const exchange = fake.calls.find((c) => c.key === "POST /login/oauth/access_token");
+    assert(exchange.body.code === "code-123" && exchange.body.redirect_uri === "http://localhost:5173/api/github/callback", `exchange ${JSON.stringify(exchange.body)}`);
+    assert((await store.getLink(userId)).githubUserId === 4001, "link not stored");
+
+    const repos = await app.listRepos(userId);
+    assert(JSON.stringify(repos) === JSON.stringify([{ fullName: "a2hub/zeta", private: true }, { fullName: "AET-CS/alpha", private: false }].sort((x, y) => x.fullName.localeCompare(y.fullName, undefined, { sensitivity: "base" }))), `repos ${JSON.stringify(repos)}`);
+    await store.deleteLink(userId);
+  }],
+
+  ["github app: slug may be given as the app's URL", async () => {
+    assert(normalizeSlug("https://github.com/apps/talon-link") === "talon-link", "url form");
+    assert(normalizeSlug("talon-link") === "talon-link", "plain form");
+    assert(normalizeSlug(" https://github.com/apps/talon-link/ ") === "talon-link", "trailing slash");
+  }],
+
+  ["git: clone token reaches git through the environment only", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const header = execFileSync("git", ["config", "--get", "http.https://github.com/.extraheader"], {
+      env: { ...process.env, ...gitAuthEnv("ghs_secret") },
+    }).toString().trim();
+    assert(header === `AUTHORIZATION: basic ${Buffer.from("x-access-token:ghs_secret").toString("base64")}`, `header ${header}`);
+    assert(JSON.stringify(gitAuthEnv(null)) === "{}", "no token should add nothing");
+    assert(/connect GitHub/.test(describeCloneError("fatal: could not read Username for 'https://github.com': terminal prompts disabled")), "private-repo hint missing");
   }],
 
   ["jobs: cost is per second with a 60 second minimum; zero rate is free", async () => {

@@ -50,3 +50,22 @@ variable "git_ref" {
   type        = string
   default     = "main"
 }
+
+# GitHub App (github.tf). Empty: that setting is not created.
+variable "github_app_client_id" {
+  description = "Client ID of the Talon GitHub App (not secret)"
+  type        = string
+  default     = ""
+}
+
+variable "github_app_slug" {
+  description = "URL name of the Talon GitHub App (github.com/apps/<slug>)"
+  type        = string
+  default     = ""
+}
+
+variable "public_url" {
+  description = "Where browsers reach Talon; the GitHub callback is <public_url>/api/github/callback"
+  type        = string
+  default     = "http://localhost:8080" # SSM tunnel (infra/scripts/tunnel.sh)
+}

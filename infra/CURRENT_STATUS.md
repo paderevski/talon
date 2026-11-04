@@ -1,6 +1,6 @@
 # Talon infra - current status
 
-_Last updated: 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
+_Last updated: 2026-11-03 (GitHub App sign-in on branch `github-app`, deployed to the demo box and verified, not merged; see to-do item 13). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
 Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 (gitignored). Architecture doc: `docs/talon-architecture-summary-v7.docx`
 (see "Gaps to production" for where it and reality differ).
@@ -149,6 +149,47 @@ toward two servers)
 12. ~~**Student jobs on their own EC2 instances**~~ _(done 2026-10-28, build
     order steps 1-3 in "EC2-launched jobs"; GPU, Spot and the overnight queue
     are steps 4-5, not started.)_
+
+**GitHub**
+
+13. **GitHub App instead of personal access tokens** _(built 2026-11-03 on
+    branch `github-app`; not merged, not deployed, not yet tried against a
+    real app)_. Before this, a saved PAT was only used for API calls (repo
+    list, browser); clones were anonymous, so private repos could be browsed
+    but failed at the clone. Now: students **Connect GitHub** (install the
+    AET-CS-owned Talon app on their account or a class org and pick repos).
+    Their GitHub App user token (encrypted in `github_accounts`, migration
+    006, refreshed automatically, one GitHub account per Talon user) is the
+    access check for the repo list, the repo browser and submit; a private
+    repo is cloned on the web server with a one-hour, read-only installation
+    token limited to that repo, passed to git through the environment (not
+    the URL or `.git/config`), never sent to the job instance. Public repos
+    still clone anonymously and need no link. No webhooks, so it works
+    through the SSM tunnel. PAT table, endpoints, panel and import script
+    removed; old backups still hold the (encrypted) PATs.
+    Settings: SSM `/talon/demo/github-app-client-id`, `github-app-slug`,
+    `public-url` (Terraform, `github.tf`, from tfvars) and
+    `github-app-client-secret`, `github-app-private-key` (SecureString, made
+    by hand with `alias/talon-demo-secrets`; README "GitHub App"). The backend
+    re-reads them every minute while missing, so no restart and no instance
+    replacement (user_data unchanged). The app `talon-link` exists
+    (2026-11-03). Tested locally (dev server, :5173): install + connect, and a
+    job on a private repo cloned and ran; GitHub does pass `state` back
+    after an install. Gotcha: after an install GitHub returns to the app's
+    *first* callback URL, so the server's own URL must be listed first (or use
+    a separate dev app). Applied and deployed to the demo box 2026-11-03
+    (`terraform apply`: three SSM settings and one IAM policy; secrets made
+    by hand) and verified through the tunnel: connect, then an EC2 job on a
+    private repo ran start to finish with live logs and a result download.
+    The sign-in link asks GitHub for its account picker
+    (`prompt=select_account`) so a student with two GitHub accounts, or on a
+    borrowed computer, chooses deliberately; verified on the box (GitHub
+    offers "sign in as <login>" or another account). The redesigned panel
+    (one Connect button, repo list) and the one-GitHub-account-per-user
+    check ("already connected to another Talon user") verified there too.
+    Still to do: an admin "Unlink GitHub" action on the user edit screen
+    (today a student who forgets which Talon account holds their link needs
+    a database fix).
 
 **Blocked on others**
 
@@ -566,6 +607,15 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   overnight queue, GPU tiers, and an environment/image choice (the Machine
   Image select was removed because it did nothing).
 - Job-finished notification (students run overnight jobs).
+- Submit form, code source: today the repository field is a list of the
+  GitHub app's repos with a "Type another repo" toggle for public URLs.
+  Planned: a source choice one level up (GitHub app, public repo URL, later
+  Google Drive and others), with the repository field depending on it. The
+  backend already treats "no token" as an anonymous public clone.
+- GitHub: installation tokens last one hour, so a local-runner job queued
+  longer than that fails to clone (local runner is dev/admin only). Repo list
+  and browser calls for students who have not connected GitHub share the web
+  server's anonymous GitHub limit (60 requests per hour per IP).
 
 ### 2. Compute pieces beyond the launch itself
 
@@ -689,4 +739,5 @@ migrations take an advisory lock (concurrent deploys are safe).
   `backend/tests/postgres/run.mjs`. Not exercised on a real instance: the
   lost-job billing change, the log panel on EC2 jobs, and the new error
   messages; check them on the box now that it is deployed.
+- 2026-11-03: GitHub App sign-in replaces PATs (branch `github-app`, item 13).
 - `infra_2/` is the older EKS design, kept for reference only.

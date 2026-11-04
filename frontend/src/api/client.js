@@ -20,9 +20,6 @@ async function apiFetch(path, options) {
   return response;
 }
 
-const githubRepoCacheTtlMs = 5 * 60 * 1000;
-const githubRepoCache = new Map();
-
 async function getJson(path) {
   const response = await apiFetch(path);
   if (!response.ok) {
@@ -276,143 +273,29 @@ export async function fetchTeacherRoster() {
   return response.json();
 }
 
-export async function fetchGithubPublicRepos(username) {
-  const normalizedUsername = String(username ?? "").trim();
-  if (!normalizedUsername) {
-    return [];
-  }
-
-  const cacheKey = normalizedUsername.toLowerCase();
-  const cached = githubRepoCache.get(cacheKey);
-  if (cached && Date.now() - cached.timestamp < githubRepoCacheTtlMs) {
-    return cached.repos;
-  }
-
-  const response = await apiFetch(
-    `/api/github-credentials/repos/${encodeURIComponent(normalizedUsername)}`,
-    {
-      headers: getRequestHeaders(),
-    },
-  );
-
-  if (!response.ok) {
-    if (response.status === 403) {
-      throw new Error(
-        "GitHub API rate limit reached (403). Try again in a few minutes",
-      );
-    }
-    throw new Error(`Unable to load repositories (${response.status})`);
-  }
-
-  const body = await response.json();
-  const items = Array.isArray(body) ? body : body?.items;
-  if (!Array.isArray(items)) {
-    return [];
-  }
-
-  const repos = items
-    .map((item) => {
-      if (typeof item === "string") {
-        return item.trim();
-      }
-      return String(item?.full_name ?? "").trim();
-    })
-    .filter(Boolean);
-
-  githubRepoCache.set(cacheKey, {
-    timestamp: Date.now(),
-    repos,
-  });
-
-  return repos;
+// GitHub App link: { configured, linked, login, linkedAt }.
+export function getGithubStatus() {
+  return getJson("/api/github");
 }
 
-export async function getGithubTokenStatus(usernameOverride = "") {
-  const response = await apiFetch("/api/github-credentials", {
-    headers: getRequestHeaders(false),
-  });
-
-
-  if (!response.ok) {
-    throw new Error(`Unable to load token status (${response.status})`);
-  }
-
-  const payload = await response.json();
-  return payload;
+// Repositories the Talon app can see for the signed-in user:
+// [{ fullName, private }]. Not cached: the list belongs to whoever is signed in.
+export async function fetchGithubRepos() {
+  const body = await getJson("/api/github/repos");
+  return Array.isArray(body?.items) ? body.items : [];
 }
 
-export async function saveGithubToken(token, usernameOverride = "", githubUsername = "") {
-  const response = await apiFetch("/api/github-credentials", {
-    method: "PUT",
-    headers: getRequestHeaders(true),
-    body: JSON.stringify({
-      token,
-      githubUsername: String(githubUsername ?? "").trim(),
-    }),
-  });
-
-
+export async function disconnectGithub() {
+  const response = await apiFetch("/api/github", { method: "DELETE" });
   if (!response.ok) {
-    let message = `Unable to save token (${response.status})`;
-    try {
-      const body = await response.json();
-      if (body?.message) {
-        message = body.message;
-      }
-    } catch {
-      // Ignore parse errors and keep fallback message.
-    }
-    throw new Error(message);
+    throw new Error(`Unable to disconnect GitHub (${response.status})`);
   }
-
-  const payload = await response.json();
-  return payload;
+  return response.json();
 }
 
-export async function deleteGithubToken(usernameOverride = "") {
-  const response = await apiFetch("/api/github-credentials", {
-    method: "DELETE",
-    headers: getRequestHeaders(false),
-  });
-
-
-  if (!response.ok) {
-    throw new Error(`Unable to delete token (${response.status})`);
-  }
-
-  const payload = await response.json();
-  return payload;
-}
-
-export async function saveGithubCredentialSettings(
-  githubUsername,
-  usernameOverride = "",
-) {
-  const normalizedGithubUsername = String(githubUsername ?? "").trim();
-
-  const response = await apiFetch("/api/github-credentials", {
-    method: "PATCH",
-    headers: getRequestHeaders(true),
-    body: JSON.stringify({ githubUsername: normalizedGithubUsername }),
-  });
-
-
-  if (!response.ok) {
-    let message = `Unable to save GitHub settings (${response.status})`;
-    try {
-      const body = await response.json();
-      if (body?.message) {
-        message = body.message;
-      }
-    } catch {
-      // Ignore parse errors and keep fallback message.
-    }
-    throw new Error(message);
-  }
-
-  const payload = await response.json();
-  return payload;
-}
+// Full-page navigations (the server redirects to GitHub and back).
+export const githubConnectUrl = "/api/github/connect";
+export const githubChooseReposUrl = "/api/github/connect?mode=install";
 
 export async function fetchCurrentUser() {
   const response = await fetch("/api/auth/me", { credentials: "same-origin" });

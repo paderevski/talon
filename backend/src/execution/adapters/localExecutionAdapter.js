@@ -11,6 +11,7 @@ import { constants as fsConstants } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { assertRepoPath } from "talon-shared/repo";
+import { describeCloneError, gitAuthEnv } from "../gitAuth.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -273,6 +274,7 @@ export default function createLocalExecutionAdapter() {
             ...process.env,
             GIT_TERMINAL_PROMPT: "0",
             GIT_ASKPASS: "echo",
+            ...gitAuthEnv(record.gitToken),
           },
         },
       );
@@ -327,6 +329,7 @@ export default function createLocalExecutionAdapter() {
         });
       });
 
+      record.gitToken = null;
       if (cloneExit.code !== 0) {
         record.state = "failed";
         record.exitCode = cloneExit.code;
@@ -337,6 +340,11 @@ export default function createLocalExecutionAdapter() {
             `Git clone timed out after ${cloneTimeoutMs}ms`,
             "system",
           );
+        } else {
+          const gitOutput = record.logLines.filter((line) => line.includes("[git]")).join("\n");
+          if (/could not read Username|Authentication failed|Repository not found|terminal prompts disabled/i.test(gitOutput)) {
+            await persistLine(record, describeCloneError(gitOutput), "system");
+          }
         }
         return;
       }
@@ -488,6 +496,10 @@ export default function createLocalExecutionAdapter() {
         repoDir,
         outputDir,
         combinedLogPath,
+        // Installation token for a private repo (null: anonymous). Kept in
+        // memory only, dropped once the clone is done. It expires after an
+        // hour, so a job queued longer than that fails to clone.
+        gitToken: jobSpec?.gitToken || null,
         jobSpec: {
           name: String(jobSpec?.name || "untitled-job"),
           repo: normalizedRepo,

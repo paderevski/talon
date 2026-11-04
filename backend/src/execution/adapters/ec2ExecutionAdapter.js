@@ -18,6 +18,7 @@ import {
 import { GetParametersCommand, SSMClient } from "@aws-sdk/client-ssm";
 import { assertRepoPath } from "talon-shared/repo";
 import { defaultInstanceType, isKnownInstanceType } from "../ec2Rates.js";
+import { describeCloneError, gitAuthEnv } from "../gitAuth.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -123,9 +124,9 @@ async function cloneAndPack(spec) {
         "clone", "--depth", "1", "--branch", assertBranch(spec.branch),
         `https://github.com/${assertRepoPath(spec.repo)}.git`, repoDir,
       ],
-      { cwd: workDir, timeout: cloneTimeoutMs, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "echo" } },
+      { cwd: workDir, timeout: cloneTimeoutMs, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "echo", ...gitAuthEnv(spec.gitToken) } },
     ).catch((error) => {
-      throw httpError(`Could not clone ${spec.repo}@${spec.branch}: ${String(error.stderr || error.message).trim().split("\n").pop()}`, 400);
+      throw httpError(`Could not clone ${spec.repo}@${spec.branch}: ${describeCloneError(String(error.stderr || error.message))}`, 400);
     });
 
     await rm(path.join(repoDir, ".git"), { recursive: true, force: true });

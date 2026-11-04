@@ -6,7 +6,7 @@
   "main": "src/server.js",
   "scripts": {
     "predev": "node scripts/db-migrate.mjs",
-    "dev": "nodemon --watch \"src\" --watch \"../shared/src\" --ext js,mjs --ignore \"src/data/**\" --ignore \"data/**\" src/server.js",
+    "dev": "nodemon --watch \"src\" --watch \"../shared/src\" --ext js,mjs --ignore \"src/data/**\" --ignore \"data/**\" --exec \"node --env-file-if-exists=.env\" src/server.js",
     "start": "node src/server.js",
     "test": "node tests/run.mjs",
     "test:regression": "node tests/run.mjs",
@@ -14,7 +14,6 @@
     "db:seed:demo": "node scripts/db-seed-demo.mjs",
     "test:postgres": "node tests/postgres/run.mjs",
     "db:unlock": "node scripts/db-unlock.mjs",
-    "db:import-github-credentials": "node scripts/db-import-github-credentials.mjs",
     "db:rotate-credentials-key": "node scripts/db-rotate-credentials-key.mjs",
     "db:create-admin": "node scripts/db-create-admin.mjs"
   },
