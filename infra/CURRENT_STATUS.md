@@ -1,6 +1,6 @@
 # Talon infra - current status
 
-_Last updated: 2026-11-03 (GitHub App sign-in, code-source choice, job folders, admin GitHub unlink and script arguments merged to `main`; the box runs the same code from branch `script-args`; see to-do item 13). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
+_Last updated: 2026-11-04 (GPU jobs, build step 4, merged to `main`: one GPU launch template on the PyTorch DLAMI for g4dn.xlarge, g4dn.2xlarge, g6.xlarge and g6e.2xlarge, admin-only; verified on the box with g4dn; the box runs the same code from branch `gpu-jobs`). Before that, 2026-11-03 (GitHub App sign-in, code-source choice, job folders, admin GitHub unlink and script arguments). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
 Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 (gitignored). Architecture doc: `docs/talon-architecture-summary-v7.docx`
 (see "Gaps to production" for where it and reality differ).
@@ -15,7 +15,7 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 | Elastic IP | Yes (no ports open; reserved for future DNS) - `terraform output public_ip` |
 | Inbound access | None. SSM Session Manager only |
 | Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`, Postgres 16 (local socket, peer auth). `EC2_JOBS_ENABLED=true` in `/etc/talon/talon.env` (written by Terraform at first boot) turns on EC2 jobs and the reconciler |
-| Deployed | `script-args` branch, same code as `main` after the 2026-11-03 merge (GitHub App, code source, job folders, script arguments) |
+| Deployed | `gpu-jobs` branch, same code as `main` after the 2026-11-04 merge (GPU jobs) |
 | Approx cost | ~$20/month (instance ~$12, EBS ~$1.60, public IPv4 ~$3.65, 2 KMS keys ~$2, alarms/S3/SNS pennies). Estimate, not read from the bill. Plus job instances (c7g/m7g/r7g, roughly 8-17 cents per hour each), billed per second while they run and charged to students' budgets |
 | Other AWS resources | S3 backups bucket (`backups.tf`), SSM parameters under `/talon/demo/`, KMS keys `alias/talon-demo-secrets` and `alias/talon-demo-backups`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), 2 CloudWatch alarms (`alarms.tf`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and launch template (`jobs.tf`), 2 AWS Budgets alerts |
 | Root volume | 20 GB gp3, encrypted with the default AWS-managed EBS key (the architecture doc asks for a KMS key; not changed) |
@@ -536,7 +536,10 @@ done (below); the adapter and everything after it are not built yet.
    data it has not flushed: tell students to `flush()` or close files
    (student documentation). A missing S3 permission for `changed/` was
    found and fixed during testing.
-4. **GPU (in progress on branch `gpu-jobs`, decided 2026-11-03).**
+4. **GPU (merged to `main` 2026-11-04; decided 2026-11-03).** Left: test
+   g6e.2xlarge on the box when it has capacity; open GPU to students
+   (`EC2_GPU_ADMIN_ONLY=false` in `/etc/talon/talon.env`, set on the box, not
+   through user_data, which would replace the instance).
    Checked that day in the LCPS account: G and P on-demand quotas 768 vCPUs
    each; on-demand prices g4dn.xlarge $0.526/h, g4dn.2xlarge $0.752/h,
    g6.xlarge $0.805/h, g7e.2xlarge $3.363/h (1x RTX PRO 6000, 96 GB);
@@ -616,8 +619,8 @@ done (below); the adapter and everything after it are not built yet.
      fallback work; the SDK retries each zone 3 times) and the job was
      refunded in full. The raw AWS error it showed named one zone and
      suggested the others, so a launch with no capacity anywhere now fails
-     with 503 "No <type> machines are available right now..." (commit after
-     the deploy; not yet on the box). g6e.2xlarge is still untested on the box.
+     with 503 "No <type> machines are available right now..." (deployed and
+     seen on the box, refunded in full). g6e.2xlarge is still untested on the box.
    - **Built on the branch (deployed to the box 2026-11-04):** rate table with GPU types, per-type
      ceilings (`EC2_MAX_RUNTIME_CEILING_SECONDS_<TYPE>`) and overhead; `EC2_GPU_ADMIN_ONLY` (default admin-only) and
      `EC2_MAX_GPU_JOBS_TOTAL` (default 3); adapter picks the template by type,
