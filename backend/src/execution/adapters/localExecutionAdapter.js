@@ -271,6 +271,7 @@ export default function createLocalExecutionAdapter() {
     try {
       await mkdir(record.runDir, { recursive: true });
       await mkdir(record.outputDir, { recursive: true });
+      await mkdir(path.join(record.runDir, "scratch"), { recursive: true });
       await writeFile(record.combinedLogPath, "", "utf8");
 
       const cloneUrl = `https://github.com/${record.jobSpec.repo}.git`;
@@ -405,6 +406,8 @@ export default function createLocalExecutionAdapter() {
         env: childEnv({
           PYTHONUNBUFFERED: "1",
           TALON_OUTPUT_DIR: record.outputDir,
+          // Space for downloaded data; not saved (as on EC2).
+          TALON_SCRATCH_DIR: path.join(record.runDir, "scratch"),
         }),
       });
 

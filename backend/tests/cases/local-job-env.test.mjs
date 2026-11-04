@@ -54,6 +54,7 @@ export async function run() {
     assert(/^AWS_EC2_METADATA_DISABLED=true$/m.test(text), "AWS SDKs in the job should not use the instance role");
     assert(/^PATH=/m.test(text), "the job should still get PATH");
     assert(/^TALON_OUTPUT_DIR=/m.test(text), "the job should get TALON_OUTPUT_DIR");
+    assert(/^TALON_SCRATCH_DIR=/m.test(text), "the job should get TALON_SCRATCH_DIR");
   } finally {
     await backend.stop();
     await rm(dir, { recursive: true, force: true });

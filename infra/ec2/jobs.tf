@@ -55,6 +55,12 @@ variable "gpu_job_root_volume_gb" {
   default     = 60
 }
 
+variable "job_max_volume_gb" {
+  description = "Largest root volume the web server may request for a job (IAM cap). Above the templates' own sizes so a per-job disk size can be added in the app without a policy change; the templates' sizes are the defaults."
+  type        = number
+  default     = 500
+}
+
 variable "job_root_volume_gb" {
   type    = number
   default = 30
@@ -457,14 +463,13 @@ resource "aws_ssm_parameter" "jobs_gpu_launch_template" {
 locals {
   ec2_arn = "arn:aws:ec2:${var.aws_region}:${local.account_id}"
 
-  # The AMIs the job templates use (the only images the web server may launch)
-  # and the largest root volume among them. insecure_value: AMI ids are public
-  # and readable in the plan.
+  # The AMIs the job templates use (the only images the web server may launch).
+  # insecure_value: AMI ids are public and readable in the plan.
   job_ami_ids = distinct(concat(
     [data.aws_ssm_parameter.ubuntu_ami.insecure_value],
     [for k, _ in local.gpu_templates : data.aws_ssm_parameter.gpu_job_ami[k].insecure_value],
   ))
-  job_max_root_gb = max(var.job_root_volume_gb, [for t in local.gpu_templates : t.root_gb]...)
+  job_max_root_gb = max(var.job_max_volume_gb, var.job_root_volume_gb, [for t in local.gpu_templates : t.root_gb]...)
 
   # Each launch template with the only instance types it may be launched as.
   job_launch_rules = merge(
@@ -530,8 +535,8 @@ data "aws_iam_policy_document" "web_launch_jobs" {
     )
   }
 
-  # Root volumes no larger than the biggest template's (a request cannot ask
-  # for a huge disk).
+  # Root volumes up to job_max_volume_gb (the templates' sizes are the
+  # defaults; this caps what a request may ask for).
   statement {
     sid       = "LaunchJobVolumes"
     actions   = ["ec2:RunInstances"]

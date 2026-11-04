@@ -235,6 +235,12 @@ unreadable, and those users must connect GitHub again.
   saved (up to 500 files, 200 MB per file and 500 MB in total). Python buffers
   file writes, so call `flush()` or close files as you go: a job stopped by its
   time limit, a cancel or running out of memory loses what was not flushed.
+- Put large downloaded data (datasets, model weights) in the directory in
+  `TALON_SCRATCH_DIR`. It is not saved and is erased when the job ends. On GPU
+  machines it is the machine's local NVMe drive (about 125 GB on g4dn.xlarge,
+  225 GB on g4dn.2xlarge, 250 GB on g6.xlarge, 450 GB on g6e.2xlarge), at no
+  extra cost; on CPU machines it is on the job's 30 GB disk. The job log's
+  first line shows how much space it has.
 - Exit code 137 usually means the script ran out of memory; choose a machine
   with more memory.
 

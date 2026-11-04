@@ -98,6 +98,28 @@ fi
 echo hello > output/hello.txt
 EOF
 fi
+# Scratch space for large data (TALON_SCRATCH_DIR in run.sh; never uploaded).
+# GPU types have a local NVMe instance-store drive, included in the price and
+# erased when the instance ends: use it when there is one, else a folder on the
+# root volume. Any failure here falls back to the root volume.
+SCRATCH_KIND="root volume"
+mkdir -p /work/scratch
+if mountpoint -q /opt/dlami/nvme; then # some Deep Learning AMIs mount it here themselves
+  mkdir -p /opt/dlami/nvme/talon-scratch &&
+    mount --bind /opt/dlami/nvme/talon-scratch /work/scratch && SCRATCH_KIND="instance NVMe"
+else
+  for dev in /dev/nvme*n1; do
+    [ -b "$dev" ] || continue
+    grep -q "Instance Storage" "/sys/block/${dev#/dev/}/device/model" 2>/dev/null || continue
+    findmnt -rn -S "$dev" >/dev/null && continue # already in use
+    if mkfs.ext4 -q -F -E nodiscard "$dev" && mount -o noatime "$dev" /work/scratch; then
+      SCRATCH_KIND="instance NVMe"
+      break
+    fi
+  done
+fi
+echo "scratch: /work/scratch on $SCRATCH_KIND"
+
 chown -R student:student /work
 touch /work/.talon-start # files newer than this were created or changed by the job
 
@@ -143,6 +165,7 @@ sync_all() {
 
 status running
 : > /tmp/job.log
+echo "[talon] TALON_SCRATCH_DIR=/work/scratch: $SCRATCH_KIND, $(df -h --output=avail /work/scratch | tail -1 | tr -d ' ') free, not saved" >> /tmp/job.log
 ( while sleep 30; do sync_all; done ) &
 LOOP=$!
 runuser -u student -- bash -c 'cd /work && exec timeout --kill-after=30 "$0" bash run.sh' "$MAX" >> /tmp/job.log 2>&1

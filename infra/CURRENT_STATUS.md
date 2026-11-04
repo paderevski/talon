@@ -10,7 +10,11 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 0. **Branch `harden-ec2-cloudwatch` (written, not applied or deployed):**
    local runs refused for everyone in production (admins too) and given only
    PATH/HOME/locale, never the server's secrets; the web role may launch only
-   the job templates' own AMIs and root volumes up to their size; CloudWatch
+   the job templates' own AMIs and root volumes up to 500 GB
+   (`job_max_volume_gb`; templates stay 30 / 60 GB, a per-job disk size in
+   the app is later work); jobs get `TALON_SCRATCH_DIR=/work/scratch`, the GPU
+   types' local NVMe instance store (formatted and mounted by `job_boot.sh`,
+   root volume otherwise; not uploaded); CloudWatch
    agent on the web server via SSM State Manager (syslog, nginx, bootstrap log
    to `/talon/demo/*`, memory and disk metrics in `Talon/Server`); alarms for
    disk > 85%, backend `[error]`s, reconciler terminating an instance with no
