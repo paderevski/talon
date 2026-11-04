@@ -7,9 +7,13 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 
 ## Next up (as of 2026-11-04)
 
-1. **Job queue with launch retries** (step 5 without Spot): a Postgres queue
-   (`FOR UPDATE SKIP LOCKED`, `not_before`) so a launch with no capacity waits
-   and retries instead of failing; also gives overnight jobs.
+1. **Job queue with launch retries** (step 5 without Spot): a launch with no
+   capacity waits and retries instead of failing; also gives overnight jobs.
+   Plan it together with "Limiting launch exposure" below: the near-term
+   choice there (a launcher Lambda fed by SQS) changes where the queue lives.
+   A Postgres queue (`FOR UPDATE SKIP LOCKED`, `not_before`) stays possible
+   for the web server's own bookkeeping; job instances must never reach
+   Postgres.
 2. **Baked CPU AMI** (boot stops installing the AWS CLI and pip each time).
 3. Leave downloaded data (`data/`, `.cache/`, `.talonignore`) out of
    "changed files".
@@ -685,6 +689,44 @@ of a student's budget).
 - Session secrets do not need sticky sessions behind an ALB: sessions are in
   Postgres and `SESSION_SECRET` / `TALON_CREDENTIALS_KEY` come from the same
   SSM parameters on every server.
+
+### Limiting launch exposure (planned, 2026-11-04)
+
+Today the web role holds `ec2:RunInstances`. The policy pins templates,
+types, AMIs, security group, subnets, tags and disk size
+(`check-launch-policy.sh`), but IAM cannot cap **how many** instances or limit
+**user data**, so a compromised web server could still launch many job
+instances running its own code. The vCPU alarms only notice. Options:
+
+- **EC2 Fleet / Spot Fleet: no help.** `CreateFleet` is another launch API
+  with the same IAM model and no cap across calls.
+- **Launcher Lambda (near term, fits one instance per job).** The web role
+  loses `RunInstances` and `iam:PassRole`; it only sends a job id (SQS or
+  invoke). The Lambda reads the job settings, counts running Talon instances
+  by tag, refuses over the limits, builds user data itself and launches.
+  Reserved concurrency 1 so launches are serialized. The cap is code, but
+  in a small function that is not internet-facing and never runs student
+  code. Closes the user-data gap. Pairs with the launch-retry queue.
+- **Auto Scaling group per machine type (structural, AWS-enforced cap).**
+  The web role gets only `autoscaling:SetDesiredCapacity` and
+  `TerminateInstanceInAutoScalingGroup` on Talon's groups, not
+  `UpdateAutoScalingGroup`, so Terraform's `MaxSize` is a hard ceiling (the
+  sum of maxes is the worst case). No `RunInstances` or PassRole on the web
+  role at all; the ASG service role launches from a fixed template. Costs:
+  instances are identical, so it needs a **worker-pull** model (job in SQS,
+  instance takes one job, then removes itself with
+  `--should-decrement-desired-capacity`, or the ASG replaces it); job role
+  needs SQS receive and self-terminate. Gains: retries on no capacity for
+  free, Spot via mixed instances, warm pools for faster starts. Verify
+  autoscaling resource-level permissions against the docs before building.
+- **Account level.** A dedicated Talon account in the LCPS Organization would
+  make lower vCPU Service Quotas (support case to decrease) and budget
+  actions real caps for Talon alone. SCPs can deny families, regions or
+  untagged launches, but not counts.
+
+Suggested order: launcher Lambda with the queue work; ASG + SQS workers
+when moving to Spot or warm pools; ask LCPS for a dedicated account before
+real students.
 
 ## Gaps to production (compared with the architecture doc, 2026-10-25)
 
