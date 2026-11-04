@@ -481,6 +481,13 @@ const tests = [
       "GET /user/installations/2/repositories?per_page=100&page=1": { status: 200, data: { repositories: [{ full_name: "AET-CS/alpha", private: false }, { full_name: "a2hub/zeta", private: true }] } },
     });
     const app = createGithubApp({ config: fakeGithubConfig(), store, fetch: fake.fetch });
+    const authorize = new URL(await app.authorizeUrl("state-abc"));
+    assert(authorize.origin + authorize.pathname === "https://github.com/login/oauth/authorize", `authorize ${authorize}`);
+    assert(authorize.searchParams.get("prompt") === "select_account" && authorize.searchParams.get("state") === "state-abc", `authorize params ${authorize.search}`);
+    assert(authorize.searchParams.get("redirect_uri") === "http://localhost:5173/api/github/callback", "authorize redirect_uri");
+    const install = new URL(await app.authorizeUrl("state-abc", "install"));
+    assert(install.pathname === "/apps/talon-test/installations/new" && install.searchParams.get("state") === "state-abc", `install ${install}`);
+
     const linked = await app.completeLink(userId, "code-123");
     assert(linked.githubLogin === "a2hub", "login");
     const exchange = fake.calls.find((c) => c.key === "POST /login/oauth/access_token");

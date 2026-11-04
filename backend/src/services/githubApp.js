@@ -201,7 +201,10 @@ export function createGithubApp({
     if (mode === "install") {
       return `${webBase}/apps/${encodeURIComponent(cfg.slug)}/installations/new?state=${encodeURIComponent(state)}`;
     }
-    const params = new URLSearchParams({ client_id: cfg.clientId, redirect_uri: callbackUrl(cfg), state });
+    // prompt=select_account: GitHub shows its account picker instead of
+    // silently using whoever is signed in to github.com in this browser
+    // (students with a personal and a school account; borrowed computers).
+    const params = new URLSearchParams({ client_id: cfg.clientId, redirect_uri: callbackUrl(cfg), state, prompt: "select_account" });
     return `${webBase}/login/oauth/authorize?${params}`;
   }
 

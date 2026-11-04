@@ -1,6 +1,6 @@
 # Talon infra - current status
 
-_Last updated: 2026-11-03 (GitHub App sign-in built on branch `github-app`, not merged or deployed; see to-do item 13). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
+_Last updated: 2026-11-03 (GitHub App sign-in on branch `github-app`, deployed to the demo box and verified, not merged; see to-do item 13). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
 Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 (gitignored). Architecture doc: `docs/talon-architecture-summary-v7.docx`
 (see "Gaps to production" for where it and reality differ).
@@ -177,9 +177,13 @@ toward two servers)
     job on a private repo cloned and ran; GitHub does pass `state` back
     after an install. Gotcha: after an install GitHub returns to the app's
     *first* callback URL, so the server's own URL must be listed first (or use
-    a separate dev app). To do: `terraform apply` (SSM settings + one IAM
-    policy), put the two secrets, deploy the branch, test through the tunnel
-    with a private repo on an EC2 job.
+    a separate dev app). Applied and deployed to the demo box 2026-11-03
+    (`terraform apply`: three SSM settings and one IAM policy; secrets made
+    by hand) and verified through the tunnel: connect, then an EC2 job on a
+    private repo ran start to finish with live logs and a result download.
+    The sign-in link asks GitHub for its account picker
+    (`prompt=select_account`) so a student with two GitHub accounts, or on a
+    borrowed computer, chooses deliberately; check that GitHub honors it.
 
 **Blocked on others**
 
