@@ -102,7 +102,7 @@ export function assertFolder(folder) {
 
 // Runs from the job's folder: its requirements.txt is installed (else the
 // repo root's), and the entry script path is relative to it.
-export function buildRunScript(entryScript, environment = [], folder = "") {
+export function buildRunScript(entryScript, environment = [], folder = "", scriptArgs = []) {
   const dir = assertFolder(folder);
   const workDir = dir ? `/work/repo/${dir}` : "/work/repo";
   return [
@@ -125,7 +125,7 @@ export function buildRunScript(entryScript, environment = [], folder = "") {
     '  echo "Installing $REQS"',
     '  python3 -m venv /work/venv && . /work/venv/bin/activate && pip install --quiet -r "$REQS" || { echo "pip install failed"; exit 1; }',
     "fi",
-    `exec python3 -u '${assertEntryScript(entryScript)}'`,
+    `exec python3 -u '${assertEntryScript(entryScript)}'${scriptArgs.map((arg) => ` ${shellQuote(arg)}`).join("")}`,
     "",
   ].join("\n");
 }
@@ -280,7 +280,7 @@ export default function createEc2ExecutionAdapter({
       try {
         const base = `jobs/${jobId}/input`;
         await s3.send(new PutObjectCommand({ Bucket: cfg.bucket, Key: `${base}/repo.tgz`, Body: await readFile(archive) }));
-        await s3.send(new PutObjectCommand({ Bucket: cfg.bucket, Key: `${base}/run.sh`, Body: buildRunScript(jobSpec.entryScript, jobSpec.environment, jobSpec.folder) }));
+        await s3.send(new PutObjectCommand({ Bucket: cfg.bucket, Key: `${base}/run.sh`, Body: buildRunScript(jobSpec.entryScript, jobSpec.environment, jobSpec.folder, jobSpec.scriptArgs || []) }));
       } finally {
         await rm(workDir, { recursive: true, force: true });
       }

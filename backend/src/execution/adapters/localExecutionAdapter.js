@@ -384,7 +384,7 @@ export default function createLocalExecutionAdapter() {
         return;
       }
 
-      const processHandle = spawn(pythonBin, [scriptRelativePath], {
+      const processHandle = spawn(pythonBin, [scriptRelativePath, ...record.jobSpec.scriptArgs], {
         cwd: workDir,
         env: {
           ...process.env,
@@ -507,6 +507,7 @@ export default function createLocalExecutionAdapter() {
           repo: normalizedRepo,
           branch: normalizedBranch,
           entryScript: normalizedEntryScript,
+          scriptArgs: Array.isArray(jobSpec?.scriptArgs) ? jobSpec.scriptArgs.map(String) : [],
           folder: (() => {
             const folder = normalizeFolder(jobSpec?.folder);
             if (folder === null) {

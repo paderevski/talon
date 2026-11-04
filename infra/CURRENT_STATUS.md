@@ -621,10 +621,13 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   folder). Verified on the box: pytorch/examples `mnist` (public, folder from the
   URL) ran to completion on EC2.
   The local runner still installs no requirements.
-- Script arguments: there is no way to pass command-line flags to the entry
-  script yet (only environment variables). Many examples need them, e.g.
-  pytorch/examples mnist saves weights only with `--save-model`. Next small
-  item: an Arguments field, passed safely quoted.
+- Script arguments (branch `script-args`, migration 008 `jobs.script_args`):
+  an Arguments field next to Environment Variables, split shell-style
+  (quotes, backslashes) but never run through a shell, passed after the
+  entry script on both runners, recorded on the job. Branch is now a menu
+  of the repo's branches (default first, chosen when the current one does
+  not exist, e.g. master), free text if GitHub cannot be reached. Tested
+  locally; not yet run on EC2 (e.g. mnist with `--save-model`).
 - GitHub: installation tokens last one hour, so a local-runner job queued
   longer than that fails to clone (local runner is dev/admin only). Repo list
   and browser calls for students who have not connected GitHub share the web

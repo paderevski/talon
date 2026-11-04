@@ -1,6 +1,6 @@
 import { apiFetch, assert } from "../lib/harness.mjs";
 
-export const name = "jobs store a folder inside the repo and refuse folders that leave it";
+export const name = "jobs store a folder and script arguments; bad folders and arguments are refused";
 
 export async function run({ baseUrl }) {
   const submit = (body) => apiFetch(`${baseUrl}/api/jobs`, {
@@ -20,5 +20,10 @@ export async function run({ baseUrl }) {
   assert(job.folder === "sub/dir", `folder stored as ${JSON.stringify(job.folder)}`);
 
   const plain = await (await submit({})).json();
-  assert(plain.job.folder === "", "no folder means the repo root");
+  assert(plain.job.folder === "" && plain.job.scriptArgs === "", "no folder means the repo root, no arguments");
+
+  const badArgs = await submit({ scriptArgs: '--name "unclosed' });
+  assert(badArgs.status === 400, `unclosed quote should be 400, got ${badArgs.status}`);
+  const withArgs = await (await submit({ scriptArgs: "  --save-model --epochs 3 " })).json();
+  assert(withArgs.job.scriptArgs === "--save-model --epochs 3", `args stored as ${JSON.stringify(withArgs.job.scriptArgs)}`);
 }

@@ -1,3 +1,4 @@
+import { parseScriptArgs } from "../utils/scriptArgs.js";
 import { BudgetError } from "../budget/ledger.js";
 import { JobLimitError } from "../repositories/postgres/jobsPostgresRepository.js";
 import {
@@ -85,6 +86,7 @@ export async function launchEc2Job({ jobsRepository, adapter, user, isAdmin, pay
     branch: payload.branch || "main",
     entryScript: payload.entryScript || "train.py",
     folder: payload.folder || "",
+    scriptArgs: parseScriptArgs(payload.scriptArgs),
     maxRuntimeSeconds,
     instanceType,
     environment,
@@ -99,6 +101,7 @@ export async function launchEc2Job({ jobsRepository, adapter, user, isAdmin, pay
     branch: spec.branch,
     entryScript: spec.entryScript,
     folder: spec.folder,
+    scriptArgs: String(payload.scriptArgs ?? "").trim(),
     executionProvider: "ec2",
     computeType: instanceType,
     hourlyRateCents,

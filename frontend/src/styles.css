@@ -923,3 +923,10 @@ td:last-child, th:last-child { border-right: none; }
 }
 button.source-placeholder:disabled { color: var(--text-muted); cursor: not-allowed; }
 .form-input:disabled, .form-select:disabled { color: var(--text-muted); cursor: not-allowed; }
+
+/* Submit form: arguments and environment variables side by side. */
+.job-extras { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+.mono-input { font-family: "JetBrains Mono", monospace; font-size: 13px; }
+@media (max-width: 1100px) {
+  .job-extras { grid-template-columns: 1fr; }
+}

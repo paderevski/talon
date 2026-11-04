@@ -22,6 +22,7 @@ import { hourlyRateCentsFor, listInstanceOptions, reservationCentsFor } from "..
 import createEc2ExecutionAdapter, { assertEntryScript, buildRunScript } from "../../src/execution/adapters/ec2ExecutionAdapter.js";
 import { JobLimitError } from "../../src/repositories/postgres/jobsPostgresRepository.js";
 import { launchEc2Job, parseEnvironmentVariables } from "../../src/services/ec2Jobs.js";
+import { parseScriptArgs } from "../../src/utils/scriptArgs.js";
 import { createEc2Reconciler } from "../../src/services/ec2Reconciler.js";
 import { createJobSync } from "../../src/services/jobSync.js";
 
@@ -670,11 +671,12 @@ const tests = [
     let startedWith = null;
     const ok = await launchEc2Job({
       jobsRepository: jobs, user, isAdmin: false, maxRuntimeSeconds: 1800,
-      payload: { name: "works", repo: "x/y", instanceType: "c7g.large", folder: "mnist", entryScript: "main.py" },
+      payload: { name: "works", repo: "x/y", instanceType: "c7g.large", folder: "mnist", entryScript: "main.py", scriptArgs: "--save-model --epochs 2" },
       adapter: { async start(spec) { startedWith = spec; return { provider: "ec2", executionId: spec.jobId, jobId: spec.jobId, instanceId: "i-1" }; } },
     });
     assert(ok.executionRef.instanceId === "i-1" && ok.reservedCents > 0 && ok.computeType === undefined, `launched job ${JSON.stringify(ok)}`);
     assert(ok.folder === "mnist" && startedWith.folder === "mnist", `folder not stored or passed: ${ok.folder} / ${startedWith?.folder}`);
+    assert(ok.scriptArgs === "--save-model --epochs 2" && JSON.stringify(startedWith.scriptArgs) === JSON.stringify(["--save-model", "--epochs", "2"]), `args: ${ok.scriptArgs} / ${JSON.stringify(startedWith.scriptArgs)}`);
   }],
 
   ["ec2 reconciler: terminates orphan, finished and overrun instances, leaves live ones", async () => {
@@ -950,6 +952,27 @@ const tests = [
     }
     assert(buildRunScript("a.py").includes("PYTHONUNBUFFERED=1"), "output must not be buffered");
     assert(buildRunScript("src/train_1.py").includes("python3 -u 'src/train_1.py'"), "plain paths must pass");
+  }],
+
+  ["script arguments: parsed like a shell, never expanded", async () => {
+    const same = (text, expected) => {
+      const got = parseScriptArgs(text);
+      assert(JSON.stringify(got) === JSON.stringify(expected), `${JSON.stringify(text)} -> ${JSON.stringify(got)}`);
+    };
+    same("", []);
+    same("  --save-model   --epochs 3 ", ["--save-model", "--epochs", "3"]);
+    same(`--name "my run" --note 'it''s'`, ["--name", "my run", "--note", "its"]);
+    same(String.raw`--msg "say \"hi\""`, ["--msg", 'say "hi"']);
+    same(String.raw`a\ b`, ["a b"]);
+    same(`--x=$(id) $HOME *.py`, ["--x=$(id)", "$HOME", "*.py"]);
+    same(`--empty ""`, ["--empty", ""]);
+    for (const bad of [`--a "open`, "line\none".replace("\\n", "\n"), "x".repeat(2001)]) {
+      let refused = false;
+      try { parseScriptArgs(bad); } catch (e) { refused = e.status === 400; }
+      assert(refused, `should refuse ${JSON.stringify(bad).slice(0, 40)}`);
+    }
+    const script = buildRunScript("main.py", [], "mnist", ["--save-model", "it's $(id)"]);
+    assert(script.includes(`exec python3 -u 'main.py' '--save-model' 'it'\\''s $(id)'`), `run.sh line: ${script.split("\n").find((l) => l.startsWith("exec"))}`);
   }],
 
   ["ec2 adapter: a job folder sets the working directory and requirements", async () => {
