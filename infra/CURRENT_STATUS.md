@@ -1,6 +1,6 @@
 # Talon infra - current status
 
-_Last updated: 2026-11-03 (GitHub App sign-in, code-source choice, job folders and admin GitHub unlink merged to `main`; the box runs the same code from branch `code-source-ui`; see to-do item 13). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
+_Last updated: 2026-11-03 (GitHub App sign-in, code-source choice, job folders, admin GitHub unlink and script arguments merged to `main`; the box runs the same code from branch `script-args`; see to-do item 13). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
 Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 (gitignored). Architecture doc: `docs/talon-architecture-summary-v7.docx`
 (see "Gaps to production" for where it and reality differ).
@@ -15,7 +15,7 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 | Elastic IP | Yes (no ports open; reserved for future DNS) - `terraform output public_ip` |
 | Inbound access | None. SSM Session Manager only |
 | Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`, Postgres 16 (local socket, peer auth). `EC2_JOBS_ENABLED=true` in `/etc/talon/talon.env` (written by Terraform at first boot) turns on EC2 jobs and the reconciler |
-| Deployed | `code-source-ui` branch, same code as `main` after the 2026-11-03 merge (GitHub App, code source, job folders) |
+| Deployed | `script-args` branch, same code as `main` after the 2026-11-03 merge (GitHub App, code source, job folders, script arguments) |
 | Approx cost | ~$20/month (instance ~$12, EBS ~$1.60, public IPv4 ~$3.65, 2 KMS keys ~$2, alarms/S3/SNS pennies). Estimate, not read from the bill. Plus job instances (c7g/m7g/r7g, roughly 8-17 cents per hour each), billed per second while they run and charged to students' budgets |
 | Other AWS resources | S3 backups bucket (`backups.tf`), SSM parameters under `/talon/demo/`, KMS keys `alias/talon-demo-secrets` and `alias/talon-demo-backups`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), 2 CloudWatch alarms (`alarms.tf`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and launch template (`jobs.tf`), 2 AWS Budgets alerts |
 | Root volume | 20 GB gp3, encrypted with the default AWS-managed EBS key (the architecture doc asks for a KMS key; not changed) |
@@ -621,13 +621,22 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   folder). Verified on the box: pytorch/examples `mnist` (public, folder from the
   URL) ran to completion on EC2.
   The local runner still installs no requirements.
-- Script arguments (branch `script-args`, migration 008 `jobs.script_args`):
+- Script arguments (merged, migration 008 `jobs.script_args`):
   an Arguments field next to Environment Variables, split shell-style
   (quotes, backslashes) but never run through a shell, passed after the
   entry script on both runners, recorded on the job. Branch is now a menu
   of the repo's branches (default first, chosen when the current one does
   not exist, e.g. master), free text if GitHub cannot be reached. Tested
-  locally; not yet run on EC2 (e.g. mnist with `--save-model`).
+  locally and on the box (2026-11-03: pytorch/examples mnist with
+  `--save-model --epochs 1` saved `mnist/mnist_cnn.pt`).
+- Output files and downloaded data: "changed files" are anything created or
+  modified anywhere in the repo, listed relative to the repo root, so a
+  dataset a script downloads into the repo (mnist: `../data` from `mnist/`
+  -> `data/MNIST/raw/...`, about 65 MB) is saved as output and counts
+  against the 500 MB / 500 file limits. To decide: skip common data and
+  cache folders (`data/`, `datasets/`, `.cache/`) by default and/or honor a
+  `.talonignore` in the repo; student docs should point results at
+  `$TALON_OUTPUT_DIR`.
 - GitHub: installation tokens last one hour, so a local-runner job queued
   longer than that fails to clone (local runner is dev/admin only). Repo list
   and browser calls for students who have not connected GitHub share the web
@@ -757,4 +766,5 @@ migrations take an advisory lock (concurrent deploys are safe).
   messages; check them on the box now that it is deployed.
 - 2026-11-03: GitHub App sign-in replaces PATs (item 13); merged to `main`.
 - 2026-11-03: Code-source choice (GitHub / public / Drive mock-up), job folders (migration 007), admin GitHub unlink, revoked-token handling; merged to `main`.
+- 2026-11-03: Script arguments (migration 008) and a branch menu; merged to `main`.
 - `infra_2/` is the older EKS design, kept for reference only.
