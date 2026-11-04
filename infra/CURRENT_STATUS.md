@@ -601,6 +601,11 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   overnight queue, GPU tiers, and an environment/image choice (the Machine
   Image select was removed because it did nothing).
 - Job-finished notification (students run overnight jobs).
+- Submit form, code source: today the repository field is a list of the
+  GitHub app's repos with a "Type another repo" toggle for public URLs.
+  Planned: a source choice one level up (GitHub app, public repo URL, later
+  Google Drive and others), with the repository field depending on it. The
+  backend already treats "no token" as an anonymous public clone.
 - GitHub: installation tokens last one hour, so a local-runner job queued
   longer than that fails to clone (local runner is dev/admin only). Repo list
   and browser calls for students who have not connected GitHub share the web

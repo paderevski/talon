@@ -87,7 +87,7 @@ export default function GitHubPanel({ status, resultMessage = "", onChanged }) {
         <>
           <div className="github-account">
             <span className="github-text">
-              Signed in to GitHub as <strong>{status.login}</strong>
+              Signed in to GitHub as user: <strong>{status.login}</strong>
             </span>
             <span className="github-muted" aria-hidden="true">·</span>
             <button type="button" className="github-link-button" onClick={onDisconnect} disabled={busy}>
