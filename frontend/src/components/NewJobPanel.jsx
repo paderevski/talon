@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { fetchGithubRepos, fetchRepoBranches, fetchRepoTree } from "../api/client";
 import { normalizeFolder, normalizeRepoInput, parseGithubUrl } from "../utils/repo";
 import { formatDollars } from "../utils/format";
-import { formatRuntime, planJob } from "../utils/jobPlan";
+import { formatRuntime, machineLabel, planJob } from "../utils/jobPlan";
 
 const jobNameCountersStorageKey = "talon.jobNameCounters";
 
@@ -128,7 +128,7 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
   };
 
   // Machines come from the server; see utils/jobPlan.js.
-  const { ec2, localAllowed, runOn, selectedMachine, estimateDollars, overBudget, nowhereToRun } = planJob({
+  const { ec2, localAllowed, machines, hasGpuMachines, runOn, selectedMachine, runtimeChoices, runtimeSeconds, estimateDollars, overBudget, nowhereToRun } = planJob({
     compute,
     runOn: form.runOn,
     maxRuntimeSeconds: form.maxRuntimeSeconds,
@@ -367,13 +367,13 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
     const nameForSubmit = shouldUseAutoName ? generatedName : trimmedName;
 
     try {
-      const { runOn: _ignored, maxRuntimeSeconds, ...fields } = form;
+      const { runOn: _ignored, maxRuntimeSeconds: _chosen, ...fields } = form;
       await onSubmit({
         ...fields,
         repo: normalizedRepo,
         folder: folder ?? "",
         name: nameForSubmit,
-        ...(selectedMachine ? { compute: "ec2", instanceType: runOn, maxRuntimeSeconds: Number(maxRuntimeSeconds) } : {}),
+        ...(selectedMachine ? { compute: "ec2", instanceType: runOn, maxRuntimeSeconds: Number(runtimeSeconds) } : {}),
       });
 
       if (shouldUseAutoName) {
@@ -529,19 +529,24 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
             <div className="form-group form-group-half">
               <label className="form-label">Machine</label>
               <select className="form-select" value={runOn} onChange={update("runOn")}>
-                {ec2.options.map((option) => (
-                  <option key={option.instanceType} value={option.instanceType}>
-                    {option.memoryGb} GB memory, {option.vcpus} CPUs ({option.instanceType}) - ${(option.hourlyRateCents / 100).toFixed(3)}/hour
-                  </option>
-                ))}
+                {(hasGpuMachines ? [["cpu", "CPU"], ["gpu", "GPU"]] : [["cpu", null]]).map(([kind, groupLabel]) => {
+                  const items = machines.filter((m) => m.kind === kind).map((option) => (
+                    <option key={option.instanceType} value={option.instanceType} disabled={!option.affordable}>
+                      {machineLabel(option)}{option.affordable ? "" : " (over budget)"}
+                    </option>
+                  ));
+                  return groupLabel ? <optgroup key={kind} label={groupLabel}>{items}</optgroup> : items;
+                })}
                 {localAllowed ? <option value="local">Web server (free, no isolation)</option> : null}
               </select>
             </div>
             <div className="form-group form-group-half">
               <label className="form-label">Time limit</label>
-              <select className="form-select" value={form.maxRuntimeSeconds} onChange={update("maxRuntimeSeconds")} disabled={!selectedMachine}>
-                {ec2.runtimeSeconds.map((seconds) => (
-                  <option key={seconds} value={seconds}>{formatRuntime(seconds)}</option>
+              <select className="form-select" value={runtimeSeconds} onChange={update("maxRuntimeSeconds")} disabled={!selectedMachine}>
+                {runtimeChoices.map((choice) => (
+                  <option key={choice.seconds} value={choice.seconds} disabled={!choice.affordable}>
+                    {formatRuntime(choice.seconds)}{choice.affordable ? "" : " (over budget)"}
+                  </option>
                 ))}
               </select>
               <span className="form-hint">Includes installing requirements.txt. The job stops when it is reached.</span>
@@ -552,7 +557,7 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
                   ? `This job can cost up to ${formatDollars(estimateDollars)}. That is set aside when it starts; you are charged per second for the time it actually runs and the rest is returned. `
                   : "Runs on the web server itself: free, but not isolated. "}
                 {ec2.maxJobsPerUser === 1 ? "One job at a time." : ""}
-                {overBudget ? ` That is more than your remaining budget (${formatDollars(budgetDollars)}): choose a smaller machine or a shorter time limit.` : ""}
+                {overBudget ? ` Even the shortest time limit on this machine is more than your remaining budget (${formatDollars(budgetDollars)}): choose a smaller machine.` : ""}
               </span>
             </div>
           </>

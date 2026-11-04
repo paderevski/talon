@@ -18,7 +18,7 @@ import { createAppJwt, createGithubApp, normalizeSlug } from "../../src/services
 import { describeCloneError, gitAuthEnv } from "../../src/execution/gitAuth.js";
 import { createVerify, generateKeyPairSync } from "node:crypto";
 import { BudgetError, ensureAccount, grant, transfer } from "../../src/budget/ledger.js";
-import { hourlyRateCentsFor, listInstanceOptions, reservationCentsFor } from "../../src/execution/ec2Rates.js";
+import { bootAllowanceSeconds, hourlyRateCentsFor, imageFor, isAllowedRuntime, listInstanceOptions, reservationCentsFor } from "../../src/execution/ec2Rates.js";
 import createEc2ExecutionAdapter, { assertEntryScript, buildRunScript } from "../../src/execution/adapters/ec2ExecutionAdapter.js";
 import { JobLimitError } from "../../src/repositories/postgres/jobsPostgresRepository.js";
 import { launchEc2Job, parseEnvironmentVariables } from "../../src/services/ec2Jobs.js";
@@ -97,6 +97,8 @@ function makeFakeAws({ instance = { state: "running" } } = {}) {
         calls.push({ name, input: command.input });
         if (name === "RunInstancesCommand") {
           if (command.input.SubnetId === "subnet-full") throw Object.assign(new Error("no capacity"), { name: "InsufficientInstanceCapacity" });
+          if (command.input.SubnetId === "subnet-not-offered") throw Object.assign(new Error("type not in this zone"), { name: "Unsupported" });
+          if (command.input.SubnetId === "subnet-denied") throw Object.assign(new Error("denied"), { name: "UnauthorizedOperation" });
           return { Instances: [{ InstanceId: "i-abc", LaunchTime: new Date("2026-01-01T00:00:00Z") }] };
         }
         if (name === "DescribeInstancesCommand") {
@@ -937,11 +939,115 @@ const tests = [
     const run = aws.calls.filter((c) => c.name === "RunInstancesCommand").at(-1).input;
     const tags = Object.fromEntries(run.TagSpecifications[0].Tags.map((t) => [t.Key, t.Value]));
     assert(tags.Project === "talon" && tags.Component === "job" && tags["talon-job"] === "job-7" && tags["talon-max-seconds"] === "600", `tags ${JSON.stringify(tags)}`);
-    assert(run.InstanceType === "c7g.large" && run.ClientToken === "talon-job-7", "type or client token wrong");
+    assert(run.InstanceType === "c7g.large" && run.ClientToken === "talon-job-7-subnet-ok", "type or client token wrong");
 
     let refused = "";
     try { await adapter.start({ jobId: "job-8", instanceType: "p5.48xlarge", maxRuntimeSeconds: 60 }); } catch (e) { refused = e.message; }
     assert(/not allowed/.test(refused), `unknown type: ${refused}`);
+  }],
+
+  ["ec2 adapter: moves on when a zone does not offer the type, rotates the first subnet, stops on other errors", async () => {
+    const aws = makeFakeAws();
+    const prepareInput = async () => {
+      const dir = await mkdtemp(path.join(os.tmpdir(), "talon-test-"));
+      await writeFile(path.join(dir, "repo.tgz"), "x");
+      return { workDir: dir, archive: path.join(dir, "repo.tgz") };
+    };
+    const adapter = createEc2ExecutionAdapter({
+      ec2: aws.ec2, s3: aws.s3, prepareInput,
+      config: { bucket: "b", launchTemplateId: "lt-1", subnetIds: ["subnet-not-offered", "subnet-a", "subnet-b"] },
+    });
+    const spec = (jobId) => ({ jobId, repo: "a/b", entryScript: "train.py", maxRuntimeSeconds: 600, instanceType: "c7g.large" });
+    const launched = [];
+    for (const id of ["r1", "r2", "r3"]) launched.push((await adapter.start(spec(id))).subnetId);
+    assert(JSON.stringify(launched) === JSON.stringify(["subnet-a", "subnet-a", "subnet-b"]), `subnets ${launched}`);
+    const tried = aws.calls.filter((c) => c.name === "RunInstancesCommand").map((c) => c.input.SubnetId);
+    assert(JSON.stringify(tried) === JSON.stringify(["subnet-not-offered", "subnet-a", "subnet-a", "subnet-b"]), `tried ${tried}`);
+
+    const strict = createEc2ExecutionAdapter({
+      ec2: aws.ec2, s3: aws.s3, prepareInput,
+      config: { bucket: "b", launchTemplateId: "lt-1", subnetIds: ["subnet-denied", "subnet-a"] },
+    });
+    let message = "";
+    try { await strict.start(spec("r4")); } catch (e) { message = e.message; }
+    assert(/UnauthorizedOperation/.test(message), `a permission error must not try other subnets: ${message}`);
+  }],
+
+  ["ec2 adapter: GPU types launch from their own template with a matching run.sh", async () => {
+    const aws = makeFakeAws();
+    const prepareInput = async () => {
+      const dir = await mkdtemp(path.join(os.tmpdir(), "talon-test-"));
+      await writeFile(path.join(dir, "repo.tgz"), "x");
+      return { workDir: dir, archive: path.join(dir, "repo.tgz") };
+    };
+    const config = { bucket: "b", launchTemplateId: "lt-cpu", launchTemplateIds: { gpu: "lt-gpu" }, subnetIds: ["subnet-a"] };
+    const adapter = createEc2ExecutionAdapter({ ec2: aws.ec2, s3: aws.s3, prepareInput, config });
+    const spec = (jobId, instanceType) => ({ jobId, repo: "a/b", entryScript: "train.py", maxRuntimeSeconds: 600, instanceType });
+    const template = () => aws.calls.filter((c) => c.name === "RunInstancesCommand").at(-1).input.LaunchTemplate.LaunchTemplateId;
+
+    await adapter.start(spec("c1", "m7g.large"));
+    assert(template() === "lt-cpu", `cpu template ${template()}`);
+    assert(!aws.objects.get("jobs/c1/input/run.sh").includes("/opt/pytorch"), "cpu run.sh must not use the DLAMI python");
+
+    await adapter.start(spec("g1", "g4dn.xlarge"));
+    assert(template() === "lt-gpu", `gpu template ${template()}`);
+    const gpuRun = aws.objects.get("jobs/g1/input/run.sh");
+    assert(gpuRun.includes("DLAMI_PY=/opt/pytorch/bin/python3") && gpuRun.includes("talon-dlami.pth") && gpuRun.includes(". /work/venv/bin/activate"), "gpu run.sh must build a venv on the DLAMI's torch");
+    assert(gpuRun.indexOf("talon-dlami.pth") < gpuRun.indexOf("REQS="), "venv must exist before requirements are installed");
+
+    await adapter.start(spec("g3", "g6e.2xlarge"));
+    assert(template() === "lt-gpu", `g6e template ${template()}`);
+
+    const noGpu = createEc2ExecutionAdapter({ ec2: aws.ec2, s3: aws.s3, prepareInput, config: { ...config, launchTemplateIds: { gpu: null } } });
+    let status = 0;
+    try { await noGpu.start(spec("g2", "g4dn.xlarge")); } catch (e) { status = e.status; }
+    assert(status === 503, `GPU without its template: expected 503, got ${status}`);
+  }],
+
+  ["ec2 rates: per-type time limit ceilings, boot allowance and GPU options", async () => {
+    assert(isAllowedRuntime(86400, "g4dn.xlarge") && !isAllowedRuntime(43200, "g6e.2xlarge") && isAllowedRuntime(28800, "g6e.2xlarge"), "g6e.2xlarge ceiling is 8 h");
+    process.env.EC2_MAX_RUNTIME_CEILING_SECONDS_G6E_2XLARGE = "7200";
+    try {
+      assert(!isAllowedRuntime(14400, "g6e.2xlarge") && isAllowedRuntime(7200, "g6e.2xlarge"), "per-type ceiling setting");
+    } finally {
+      delete process.env.EC2_MAX_RUNTIME_CEILING_SECONDS_G6E_2XLARGE;
+    }
+    process.env.JOB_BOOT_ALLOWANCE_SECONDS = "600";
+    try {
+      assert(bootAllowanceSeconds("g6e.2xlarge") === 600 && bootAllowanceSeconds() === 600, "boot allowance setting");
+      const rate = hourlyRateCentsFor("g6e.2xlarge");
+      assert(reservationCentsFor(rate, 3600, "g6e.2xlarge") === Math.ceil((rate * 4200) / 3600), "reservation adds the boot allowance");
+    } finally {
+      delete process.env.JOB_BOOT_ALLOWANCE_SECONDS;
+    }
+    assert(bootAllowanceSeconds("g4dn.xlarge") === 300, "default boot allowance");
+    assert(imageFor("g4dn.xlarge") === "gpu" && imageFor("g6e.2xlarge") === "gpu" && imageFor("c7g.large") === "cpu", "images");
+    const cpuOnly = listInstanceOptions({ includeGpu: false });
+    assert(cpuOnly.length > 0 && !cpuOnly.some((o) => o.gpu), "includeGpu false hides GPU types");
+  }],
+
+  ["ec2 jobs: GPU machines are admin-only by default and capped together", async () => {
+    const jobs = createJobsPostgresRepository({ pool });
+    const adapter = { async start(spec) { return { provider: "ec2", executionId: spec.jobId, jobId: spec.jobId, instanceId: `i-${spec.jobId}` }; } };
+    const finishAll = async () => {
+      const open = await pool.query("SELECT id FROM jobs WHERE execution_provider = 'ec2' AND status IN ('queued', 'running')");
+      for (const row of open.rows) await jobs.finalize(row.id, { syncKey: "test-done", status: "failed", neverRan: true, error: "test cleanup" });
+    };
+    await finishAll();
+    const student = { id: await scalar("SELECT id FROM users WHERE username = 'student_a1'"), username: "student_a1" };
+    const admin = { id: await scalar("SELECT id FROM users WHERE username = 'admin'"), username: "admin" };
+    const launch = (user, isAdmin, instanceType = "g4dn.xlarge") => launchEc2Job({ jobsRepository: jobs, adapter, user, isAdmin, payload: { name: "gpu-cap", repo: "x/y", instanceType, maxRuntimeSeconds: 1800 } });
+
+    let status = 0;
+    try { await launch(student, false); } catch (e) { status = e.status; }
+    assert(status === 403, `student GPU launch: expected 403, got ${status}`);
+
+    for (let i = 0; i < 3; i += 1) await launch(admin, true);
+    let code = "";
+    try { await launch(admin, true, "g6.xlarge"); } catch (e) { code = e.code; }
+    assert(code === "group_limit", `4th GPU job: expected group_limit, got ${code}`);
+    await launch(admin, true, "c7g.large"); // CPU jobs are not held back by the GPU cap
+    await finishAll();
   }],
 
   ["ec2 adapter: entry script and branch cannot inject shell", async () => {

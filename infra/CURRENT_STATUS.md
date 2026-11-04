@@ -536,7 +536,82 @@ done (below); the adapter and everything after it are not built yet.
    data it has not flushed: tell students to `flush()` or close files
    (student documentation). A missing S3 permission for `changed/` was
    found and fixed during testing.
-4. GPU: Deep Learning AMI, Docker, ECR image, `g4dn` first.
+4. **GPU (in progress on branch `gpu-jobs`, decided 2026-11-03).**
+   Checked that day in the LCPS account: G and P on-demand quotas 768 vCPUs
+   each; on-demand prices g4dn.xlarge $0.526/h, g4dn.2xlarge $0.752/h,
+   g6.xlarge $0.805/h, g7e.2xlarge $3.363/h (1x RTX PRO 6000, 96 GB);
+   g4dn/g6 offered in us-east-1a-d and f, g7e only in 1b-d, none of the job
+   types in 1e. Decisions:
+   - **Native on a Deep Learning AMI, no Docker yet** (Docker and ECR move to
+     step 4b; containers need their own metadata block, a `DOCKER-USER`
+     iptables rule, and add image pull time to every job).
+   - **One x86_64 GPU launch template** `talon-demo-job-gpu` next to the arm64
+     CPU one (same role, security group, bucket and `job_boot.sh`; tag
+     `talon-image` = `cpu` or `gpu`) on the PyTorch 2.12 Ubuntu 24.04 DLAMI,
+     for g4dn.xlarge, g4dn.2xlarge, g6.xlarge and **g6e.2xlarge** (1x L40S
+     48 GB, $2.242/h, the "big GPU"). IAM lets each template launch only its
+     own types. The AMI comes from its SSM parameter at plan time, so it moves
+     forward only on `terraform apply`.
+   - **g7e dropped for now (2026-11-04).** The user asked for an 80 GB+ GPU;
+     g7e.2xlarge (RTX PRO 6000 96 GB) was picked, but no 80 GB+ type had
+     on-demand capacity in us-east-1 (capacity check below), so g6e.2xlarge
+     replaced it and the Base-DLAMI template built for g7e was removed. To add
+     G7e later: a second template on the Base DLAMI
+     (`/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-24.04`,
+     75 GB, the PyTorch DLAMIs do not list G7e), run.sh installs a CUDA 12.8+
+     torch, and test boot time and Blackwell support. Other regions were not
+     pursued: us-west-2 offers g7e/p5 with the same 768-vCPU quotas, but jobs
+     there need regional Terraform copies, a reconciler sweep per region and
+     cross-region S3 traffic; us-east-2's G quota is only 64 vCPUs.
+   - **Job subnets:** the default subnets of us-east-1a-d
+     (`job_availability_zones`), so capacity errors move to the next zone. The adapter must also move on for `Unsupported`
+     (type not offered in that zone), not only `InsufficientInstanceCapacity`,
+     and should rotate the starting subnet.
+   - **Admins only at first** (GPU kill switch, default on), plus a cap on
+     GPU jobs at once (default 3).
+   - **Time limit ceiling per type** (24 h for g4dn/g6, 8 h for g6e.2xlarge, settings)
+     **and limited by the user's available budget**: the options carry the
+     budget; the form disables unaffordable time limits (and a machine with
+     none); the server keeps its 402 check.
+   - Boot allowance: 300 s is enough on the PyTorch template (measured); a
+     per-type override exists in the rate table but no type uses it.
+   - **Applied 2026-11-03** (templates `talon-demo-job-gpu` and
+     `talon-demo-job-gpu-base`, SSM `jobs-gpu-launch-template-id` and
+     `jobs-gpu-base-launch-template-id`, 4 job subnets). Dry runs from the web
+     server's role: each template launches only its own types (g4dn/g6 on
+     `gpu`, g7e on `gpu-base`, CPU types on the CPU template); p5 denied.
+     The g6e swap (next apply) removes `talon-demo-job-gpu-base` and its SSM
+     parameter and adds g6e.2xlarge to the GPU template's types.
+   - **g4dn.xlarge smoke tests (2026-11-04, `Component=debug`):** 43 s from
+     launch to the script; AWS CLI already on the DLAMI (no snap install);
+     Tesla T4 15 GB, driver 595, CUDA 13.2; `student` can use the GPU (device
+     files are 0666) and the metadata service is blocked; apt over HTTPS works
+     on x86 (archive and security). **torch lives in the `/opt/pytorch` venv
+     on Python 3.13**, not the system 3.12 (so GPU jobs run 3.13, CPU jobs
+     3.12). `--system-site-packages` does not see it (it is a venv itself); a
+     job venv on `/usr/bin/python3.13` plus a `.pth` file pointing at
+     `/opt/pytorch`'s site-packages does: `torch` in requirements.txt is
+     "already satisfied", a different pinned version installs into the job
+     venv and wins (pip leaves `/opt` alone). First `import torch` takes about
+     90 s (the root volume loads lazily from its snapshot; billed). 4096x4096
+     matmul: CPU 592 ms, GPU 29 ms.
+   - **Big-GPU capacity check (us-east-1, 2026-11-04 about 05:30 UTC):**
+     launched and terminated at once, every zone that offers the type. Got
+     capacity: g6e.2xlarge (1c), g6e.4xlarge and g6e.8xlarge (1a). None:
+     g6e.xlarge and .16xlarge, every g7e size (2xl to 48xl, also with no zone
+     given), p5.4xlarge (all 6 zones), p4d, p4de, p5.48xlarge, p5en, p6-b200,
+     p6-b300, and the 4x/8x g6e. 80 GB+ on demand looks scarce here (AWS sells
+     it through Capacity Blocks and Spot); one snapshot, at night US time.
+   - **Built on the branch (not deployed):** rate table with GPU types, per-type
+     ceilings (`EC2_MAX_RUNTIME_CEILING_SECONDS_<TYPE>`) and overhead; `EC2_GPU_ADMIN_ONLY` (default admin-only) and
+     `EC2_MAX_GPU_JOBS_TOTAL` (default 3); adapter picks the template by type,
+     moves to the next subnet on `Unsupported` as well as
+     `InsufficientInstanceCapacity`, rotates the first subnet, and uses one
+     `ClientToken` per subnet attempt; run.sh per image; `job_boot.sh` reads
+     `talon-image`, skips apt on the PyTorch image and logs `nvidia-smi`
+     (needs a `terraform apply` to reach the templates); form groups CPU and
+     GPU machines, shows each machine's own time limits and disables choices
+     the budget does not cover.
 5. Spot, overnight queue, interruption handling, checkpoint docs.
 
 **Network.** Stay in the default VPC for steps 1-3 (job security group with

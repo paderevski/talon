@@ -27,9 +27,32 @@ variable "job_instance_type" {
 }
 
 variable "allowed_job_instance_types" {
-  description = "Instance types the web server may launch. The vCPU quotas are far too high to act as a cap, so this is the cap."
+  description = "CPU instance types the web server may launch (CPU launch template only). The vCPU quotas are far too high to act as a cap, so this is the cap."
   type        = list(string)
   default     = ["c7g.large", "c7g.xlarge", "m7g.large", "m7g.xlarge", "r7g.large"]
+}
+
+# GPU jobs (x86_64) on the PyTorch Deep Learning AMI, from their own launch
+# template; the web server may launch it only with these types. Keep in step
+# with backend/src/execution/ec2Rates.js. Types the PyTorch DLAMI does not
+# support (G7e) would need a second template on the Base DLAMI (see
+# CURRENT_STATUS.md, EC2 jobs step 4).
+variable "gpu_job_instance_types" {
+  description = "GPU types launched from the PyTorch Deep Learning AMI template."
+  type        = list(string)
+  default     = ["g4dn.xlarge", "g4dn.2xlarge", "g6.xlarge", "g6e.2xlarge"]
+}
+
+variable "gpu_job_ami_parameter" {
+  description = "SSM parameter for the PyTorch Deep Learning AMI. Resolved at plan time, so the AMI moves forward only on terraform apply."
+  type        = string
+  default     = "/aws/service/deeplearning/ami/x86_64/oss-nvidia-driver-gpu-pytorch-2.12-ubuntu-24.04/latest/ami-id"
+}
+
+variable "gpu_job_root_volume_gb" {
+  description = "Root volume for the PyTorch DLAMI template (the AMI itself is 30 GB)."
+  type        = number
+  default     = 60
 }
 
 variable "job_root_volume_gb" {
@@ -44,9 +67,15 @@ variable "job_vpc_id" {
 }
 
 variable "job_subnet_ids" {
-  description = "Subnets the web server may launch jobs into. Empty: the same default subnet as the web server. Must give instances a route to the internet (public IP or NAT)."
+  description = "Subnets the web server may launch jobs into. Empty: the default subnet of each zone in job_availability_zones (set this when job_vpc_id is not the default VPC). Must give instances a route to the internet (public IP or NAT)."
   type        = list(string)
   default     = []
+}
+
+variable "job_availability_zones" {
+  description = "Zones whose default subnets take jobs when job_subnet_ids is empty. A launch moves to the next zone when one has no capacity or does not offer the type (us-east-1e offers none of the job types)."
+  type        = list(string)
+  default     = ["us-east-1a", "us-east-1b", "us-east-1c", "us-east-1d"]
 }
 
 variable "monthly_budget_usd" {
@@ -61,10 +90,17 @@ variable "daily_budget_usd" {
   default     = 10
 }
 
+data "aws_subnet" "job" {
+  for_each          = length(var.job_subnet_ids) > 0 ? toset([]) : toset(var.job_availability_zones)
+  vpc_id            = data.aws_vpc.default.id
+  availability_zone = each.value
+  default_for_az    = true
+}
+
 locals {
   jobs_bucket_name = "${local.name}-jobs-${data.aws_caller_identity.current.account_id}"
   job_vpc_id       = var.job_vpc_id != "" ? var.job_vpc_id : data.aws_vpc.default.id
-  job_subnet_ids   = length(var.job_subnet_ids) > 0 ? var.job_subnet_ids : [data.aws_subnet.this.id]
+  job_subnet_ids   = length(var.job_subnet_ids) > 0 ? var.job_subnet_ids : [for az in var.job_availability_zones : data.aws_subnet.job[az].id]
   account_id       = data.aws_caller_identity.current.account_id
 }
 
@@ -294,6 +330,7 @@ resource "aws_launch_template" "job" {
       Owner        = var.owner
       ManagedBy    = "talon-web"
       talon-bucket = aws_s3_bucket.jobs.id
+      talon-image  = "cpu"
     }
   }
 
@@ -301,6 +338,84 @@ resource "aws_launch_template" "job" {
     resource_type = "volume"
     tags = {
       Name      = "${local.name}-job"
+      Project   = "talon"
+      Component = "job"
+    }
+  }
+}
+
+# GPU job template: the same contract, role, security group and boot script
+# as the CPU template, on the x86_64 PyTorch Deep Learning AMI. job_boot.sh
+# reads the talon-image tag to know which image it is on. A map, so a second
+# GPU image (for example the Base DLAMI for G7e) is one more entry.
+data "aws_ssm_parameter" "gpu_job_ami" {
+  for_each = local.gpu_templates
+  name     = each.value.ami_parameter
+}
+
+locals {
+  gpu_templates = {
+    gpu = {
+      ami_parameter = var.gpu_job_ami_parameter
+      root_gb       = var.gpu_job_root_volume_gb
+      types         = var.gpu_job_instance_types
+      description   = "Talon GPU job instance (PyTorch Deep Learning AMI, Ubuntu x86_64)"
+    }
+  }
+}
+
+resource "aws_launch_template" "job_gpu" {
+  for_each               = local.gpu_templates
+  name                   = "${local.name}-job-${each.key}"
+  description            = each.value.description
+  image_id               = data.aws_ssm_parameter.gpu_job_ami[each.key].value
+  instance_type          = each.value.types[0]
+  vpc_security_group_ids = [aws_security_group.job.id]
+  update_default_version = true
+
+  user_data = base64encode(file("${path.module}/job_boot.sh"))
+
+  instance_initiated_shutdown_behavior = "terminate"
+
+  iam_instance_profile {
+    arn = aws_iam_instance_profile.job.arn
+  }
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+    instance_metadata_tags      = "enabled"
+  }
+
+  block_device_mappings {
+    device_name = "/dev/sda1"
+    ebs {
+      volume_type           = "gp3"
+      volume_size           = each.value.root_gb
+      encrypted             = true
+      delete_on_termination = true
+    }
+  }
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = {
+      Name         = "${local.name}-job-${each.key}"
+      Project      = "talon"
+      Component    = "job"
+      Environment  = var.environment
+      Owner        = var.owner
+      ManagedBy    = "talon-web"
+      talon-bucket = aws_s3_bucket.jobs.id
+      talon-image  = each.key
+    }
+  }
+
+  tag_specifications {
+    resource_type = "volume"
+    tags = {
+      Name      = "${local.name}-job-${each.key}"
       Project   = "talon"
       Component = "job"
     }
@@ -329,43 +444,60 @@ resource "aws_ssm_parameter" "jobs_subnets" {
   value = join(",", local.job_subnet_ids)
 }
 
+# jobs-gpu-launch-template-id
+resource "aws_ssm_parameter" "jobs_gpu_launch_template" {
+  for_each = local.gpu_templates
+  name     = "${local.secrets_prefix}/jobs-${each.key}-launch-template-id"
+  type     = "String"
+  value    = aws_launch_template.job_gpu[each.key].id
+}
+
 # ---------------------------------------------------------------- web server permissions
 
 locals {
   ec2_arn = "arn:aws:ec2:${var.aws_region}:${local.account_id}"
+
+  # Each launch template with the only instance types it may be launched as.
+  job_launch_rules = merge(
+    { cpu = { arn = aws_launch_template.job.arn, types = var.allowed_job_instance_types } },
+    { for k, t in local.gpu_templates : k => { arn = aws_launch_template.job_gpu[k].arn, types = t.types } },
+  )
 }
 
 data "aws_iam_policy_document" "web_launch_jobs" {
-  # The instance itself: only the Talon launch template, an allowed type,
-  # IMDSv2 required, and tagged as a Talon job.
-  statement {
-    sid       = "LaunchJobInstances"
-    actions   = ["ec2:RunInstances"]
-    resources = ["${local.ec2_arn}:instance/*"]
-    condition {
-      test     = "StringEquals"
-      variable = "ec2:InstanceType"
-      values   = var.allowed_job_instance_types
-    }
-    condition {
-      test     = "StringEquals"
-      variable = "ec2:MetadataHttpTokens"
-      values   = ["required"]
-    }
-    condition {
-      test     = "StringEquals"
-      variable = "aws:RequestTag/Project"
-      values   = ["talon"]
-    }
-    condition {
-      test     = "StringEquals"
-      variable = "aws:RequestTag/Component"
-      values   = ["job"]
-    }
-    condition {
-      test     = "ArnEquals"
-      variable = "ec2:LaunchTemplate"
-      values   = [aws_launch_template.job.arn]
+  # The instance itself: only a Talon launch template with one of its own
+  # types, IMDSv2 required, and tagged as a Talon job.
+  dynamic "statement" {
+    for_each = local.job_launch_rules
+    content {
+      sid       = "LaunchJobInstances${replace(title(replace(statement.key, "-", " ")), " ", "")}"
+      actions   = ["ec2:RunInstances"]
+      resources = ["${local.ec2_arn}:instance/*"]
+      condition {
+        test     = "StringEquals"
+        variable = "ec2:InstanceType"
+        values   = statement.value.types
+      }
+      condition {
+        test     = "StringEquals"
+        variable = "ec2:MetadataHttpTokens"
+        values   = ["required"]
+      }
+      condition {
+        test     = "StringEquals"
+        variable = "aws:RequestTag/Project"
+        values   = ["talon"]
+      }
+      condition {
+        test     = "StringEquals"
+        variable = "aws:RequestTag/Component"
+        values   = ["job"]
+      }
+      condition {
+        test     = "ArnEquals"
+        variable = "ec2:LaunchTemplate"
+        values   = [statement.value.arn]
+      }
     }
   }
 
@@ -381,6 +513,7 @@ data "aws_iam_policy_document" "web_launch_jobs" {
         "${local.ec2_arn}:launch-template/${aws_launch_template.job.id}",
         "arn:aws:ec2:${var.aws_region}::image/*",
       ],
+      [for k, _ in local.gpu_templates : "${local.ec2_arn}:launch-template/${aws_launch_template.job_gpu[k].id}"],
       [for s in local.job_subnet_ids : "${local.ec2_arn}:subnet/${s}"],
     )
   }
@@ -448,11 +581,14 @@ data "aws_iam_policy_document" "web_launch_jobs" {
   statement {
     sid     = "ReadJobSettings"
     actions = ["ssm:GetParameter", "ssm:GetParameters"]
-    resources = [
-      aws_ssm_parameter.jobs_bucket.arn,
-      aws_ssm_parameter.jobs_launch_template.arn,
-      aws_ssm_parameter.jobs_subnets.arn,
-    ]
+    resources = concat(
+      [
+        aws_ssm_parameter.jobs_bucket.arn,
+        aws_ssm_parameter.jobs_launch_template.arn,
+        aws_ssm_parameter.jobs_subnets.arn,
+      ],
+      [for p in aws_ssm_parameter.jobs_gpu_launch_template : p.arn],
+    )
   }
 
   statement {
@@ -536,6 +672,10 @@ output "jobs_bucket" {
 
 output "job_launch_template_id" {
   value = aws_launch_template.job.id
+}
+
+output "job_gpu_launch_template_ids" {
+  value = { for k, t in aws_launch_template.job_gpu : k => t.id }
 }
 
 output "job_security_group_id" {
