@@ -612,6 +612,13 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   is a mock-up only (disabled folder picker, submit disabled). Each source
   keeps its own repo when switching. The backend does not know about
   sources yet: it treats "no token" as an anonymous public clone.
+- Job folder (same branch, migration 007 `jobs.folder`): a job can run from
+  a folder inside the repo (working directory, entry script relative to it,
+  its requirements.txt else the root's). Pasting a github.com
+  `/tree/<branch>/<folder>` or `/blob/<branch>/<path>.py` URL fills in
+  branch, folder and script (a branch name with "/" is read as branch +
+  folder). Tested locally with pytorch/examples `mnist`; not yet run on EC2.
+  The local runner still installs no requirements.
 - GitHub: installation tokens last one hour, so a local-runner job queued
   longer than that fails to clone (local runner is dev/admin only). Repo list
   and browser calls for students who have not connected GitHub share the web

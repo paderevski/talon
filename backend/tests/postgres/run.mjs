@@ -643,12 +643,14 @@ const tests = [
     assert(failed && failed.status === "failed" && failed.costCents === 0, `failed job ${JSON.stringify(failed)}`);
     assert(Number(await scalar("SELECT balance_cents FROM budget_accounts WHERE id = $1", [accountId])) === balanceBefore, "full refund expected");
 
+    let startedWith = null;
     const ok = await launchEc2Job({
       jobsRepository: jobs, user, isAdmin: false, maxRuntimeSeconds: 1800,
-      payload: { name: "works", repo: "x/y", instanceType: "c7g.large" },
-      adapter: { async start(spec) { return { provider: "ec2", executionId: spec.jobId, jobId: spec.jobId, instanceId: "i-1" }; } },
+      payload: { name: "works", repo: "x/y", instanceType: "c7g.large", folder: "mnist", entryScript: "main.py" },
+      adapter: { async start(spec) { startedWith = spec; return { provider: "ec2", executionId: spec.jobId, jobId: spec.jobId, instanceId: "i-1" }; } },
     });
     assert(ok.executionRef.instanceId === "i-1" && ok.reservedCents > 0 && ok.computeType === undefined, `launched job ${JSON.stringify(ok)}`);
+    assert(ok.folder === "mnist" && startedWith.folder === "mnist", `folder not stored or passed: ${ok.folder} / ${startedWith?.folder}`);
   }],
 
   ["ec2 reconciler: terminates orphan, finished and overrun instances, leaves live ones", async () => {
@@ -924,6 +926,20 @@ const tests = [
     }
     assert(buildRunScript("a.py").includes("PYTHONUNBUFFERED=1"), "output must not be buffered");
     assert(buildRunScript("src/train_1.py").includes("python3 -u 'src/train_1.py'"), "plain paths must pass");
+  }],
+
+  ["ec2 adapter: a job folder sets the working directory and requirements", async () => {
+    const root = buildRunScript("train.py");
+    assert(root.includes("cd '/work/repo' ||"), "no folder runs from the repo root");
+    const nested = buildRunScript("main.py", [], "mnist");
+    assert(nested.includes("cd '/work/repo/mnist' ||"), "folder must be the working directory");
+    assert(nested.includes("if [ -f requirements.txt ]; then REQS=requirements.txt; elif [ -f /work/repo/requirements.txt ]"), "folder requirements first, then the root's");
+    assert(nested.includes("exec python3 -u 'main.py'"), "entry script is relative to the folder");
+    for (const bad of ["../etc", "a/../../b", "x'; id; '", "a b", "/abs/../.."]) {
+      let refused = false;
+      try { buildRunScript("main.py", [], bad); } catch { refused = true; }
+      assert(refused, `folder ${JSON.stringify(bad)} must be refused`);
+    }
   }],
 
   ["ec2 adapter: status, logs, files and cancel come from S3 and the instance", async () => {

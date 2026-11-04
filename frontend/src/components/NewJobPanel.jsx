@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchGithubRepos, fetchRepoTree } from "../api/client";
-import { normalizeRepoInput } from "../utils/repo";
+import { normalizeFolder, normalizeRepoInput, parseGithubUrl } from "../utils/repo";
 import { formatDollars } from "../utils/format";
 import { formatRuntime, planJob } from "../utils/jobPlan";
 
@@ -77,6 +77,7 @@ function makeInitialForm(defaultRepo, defaultBranch) {
     repo,
     branch: defaultBranch || "main",
     entryScript: "train.py",
+    folder: "",
     runOn: "",
     maxRuntimeSeconds: 3600,
     s3DataSource: "",
@@ -166,13 +167,13 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
     }
 
     const timeoutId = window.setTimeout(() => {
-      onRepoBranchChange(activeRepo, form.branch);
+      onRepoBranchChange(activeRepo, form.branch, normalizeFolder(form.folder) ?? "");
     }, 250);
 
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [activeRepo, form.branch, onRepoBranchChange]);
+  }, [activeRepo, form.branch, form.folder, onRepoBranchChange]);
 
   const update = (field) => (event) => {
     setForm((prev) => ({ ...prev, [field]: event.target.value }));
@@ -237,11 +238,14 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
     };
   }, [githubLinked]);
 
+  const folder = normalizeFolder(form.folder);
+  const folderInvalid = folder === null;
+
   useEffect(() => {
     const normalizedRepo = normalizeRepoInput(activeRepo);
     const branch = String(form.branch ?? "").trim() || "main";
 
-    if (!normalizedRepo) {
+    if (!normalizedRepo || folderInvalid) {
       setScriptOptions([]);
       setIsLoadingScripts(false);
       setScriptError("");
@@ -252,7 +256,9 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
     setIsLoadingScripts(true);
     setScriptError("");
 
-    fetchRepoTree(normalizedRepo, branch)
+    // Scripts directly in the job's folder (the repo root when there is none).
+    const prefix = folder ? `${folder}/` : "";
+    fetchRepoTree(normalizedRepo, branch, { path: folder })
       .then((repoData) => {
         if (cancelled) {
           return;
@@ -261,7 +267,9 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
         const pythonFiles = (repoData.items || [])
           .filter((item) => item?.type === "file")
           .map((item) => String(item.path || item.rawName || item.name || "").trim())
-          .filter((filePath) => filePath && !filePath.includes("/") && filePath.toLowerCase().endsWith(".py"));
+          .filter((filePath) => filePath.startsWith(prefix) && filePath.toLowerCase().endsWith(".py"))
+          .map((filePath) => filePath.slice(prefix.length))
+          .filter((name) => name && !name.includes("/"));
 
         setScriptOptions(pythonFiles);
         setForm((prev) => {
@@ -281,7 +289,9 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
         }
 
         setScriptOptions([]);
-        setScriptError(error.message || "Unable to load Python scripts");
+        setScriptError(folder && /not found|404/i.test(error.message || "")
+          ? `Folder '${folder}' was not found on this branch.`
+          : error.message || "Unable to load Python scripts");
       })
       .finally(() => {
         if (!cancelled) {
@@ -292,7 +302,25 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
     return () => {
       cancelled = true;
     };
-  }, [activeRepo, form.branch]);
+  }, [activeRepo, form.branch, folder, folderInvalid]);
+
+  // A pasted github.com/.../tree/<branch>/<folder> (or /blob/.../script.py)
+  // URL also fills in the branch, folder and script.
+  const onPublicRepoChange = (event) => {
+    const value = event.target.value;
+    const parsed = parseGithubUrl(value);
+    setForm((prev) => {
+      const next = { ...prev, repo: value };
+      if (parsed?.branch) {
+        next.branch = parsed.branch;
+        next.folder = parsed.folder ?? "";
+        if (parsed.entryScript) {
+          next.entryScript = parsed.entryScript;
+        }
+      }
+      return next;
+    });
+  };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -310,6 +338,7 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
       await onSubmit({
         ...fields,
         repo: normalizedRepo,
+        folder: folder ?? "",
         name: nameForSubmit,
         ...(selectedMachine ? { compute: "ec2", instanceType: runOn, maxRuntimeSeconds: Number(maxRuntimeSeconds) } : {}),
       });
@@ -324,6 +353,8 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
         name: getNextJobName(prev.repo),
         repo: prev.repo,
         branch: prev.branch,
+        folder: prev.folder,
+        entryScript: prev.entryScript,
       }));
       setIsAutoName(true);
     } catch (error) {
@@ -389,8 +420,8 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
           {source === "public" ? (
             <>
               <label className="form-label">Repository URL</label>
-              <input className="form-input" value={form.repo} onChange={update("repo")} placeholder="https://github.com/owner/repo" />
-              <span className="form-hint">Any public GitHub repository, as a URL or owner/repo. No sign-in needed.</span>
+              <input className="form-input" value={form.repo} onChange={onPublicRepoChange} placeholder="https://github.com/owner/repo" />
+              <span className="form-hint">Any public GitHub repository, as a URL or owner/repo. A link to a folder also sets the branch and folder.</span>
             </>
           ) : null}
           {isDrive ? (
@@ -413,6 +444,21 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
           </div>
         )}
         <div className="form-group form-group-inline">
+          <label className="form-label">Folder</label>
+          <input
+            className="form-input"
+            value={isDrive ? "" : form.folder}
+            onChange={update("folder")}
+            placeholder="(repository root)"
+            disabled={isDrive}
+          />
+          <span className="form-hint">
+            {folderInvalid
+              ? "Use a plain path inside the repository, like mnist or src/train."
+              : "The job runs from here and installs its requirements.txt."}
+          </span>
+        </div>
+        <div className="form-group form-group-inline">
           <label className="form-label">Entry Script</label>
           {scriptOptions.length ? (
             <select className="form-select" value={form.entryScript} onChange={update("entryScript")} disabled={isLoadingScripts}>
@@ -431,8 +477,8 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
               : (isLoadingScripts
                 ? "Loading top-level Python files..."
                 : (scriptOptions.length
-                  ? "Select any top-level .py file from this repo and branch."
-                  : "No top-level .py files found on this branch. You can enter one manually."))}
+                  ? `Any .py file in ${folder ? `${folder}/` : "the repository root"}.`
+                  : `No .py files in ${folder ? `${folder}/` : "the repository root"} on this branch. You can type one.`))}
           </span>
         </div>
         {ec2 ? (
@@ -483,7 +529,7 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
           />
         </div>
         <div className="form-group full form-actions submit-actions-row">
-          <button className="btn btn-primary" type="submit" disabled={submitting || overBudget || nowhereToRun || isDrive || !normalizeRepoInput(activeRepo)}>
+          <button className="btn btn-primary" type="submit" disabled={submitting || overBudget || nowhereToRun || isDrive || folderInvalid || !normalizeRepoInput(activeRepo)}>
             {submitting ? "Submitting..." : "Submit Job"}
           </button>
           {isDrive ? <span className="form-hint">Google Drive is not available yet.</span> : null}

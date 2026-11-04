@@ -26,6 +26,7 @@ function mapJobRow(row) {
     repo: row.repo,
     branch: row.branch,
     entryScript: row.entry_script,
+    folder: row.folder || "",
     status: row.status,
     hidden: row.hidden,
     ownerUsername: row.owner_username,
@@ -109,6 +110,7 @@ export function createJobsPostgresRepository({ pool } = {}) {
     repo,
     branch = "main",
     entryScript = "train.py",
+    folder = "",
     status = "queued",
     executionProvider = null,
     executionRef = null,
@@ -119,13 +121,13 @@ export function createJobsPostgresRepository({ pool } = {}) {
     const result = await db().query(
       `INSERT INTO jobs
          (owner_user_id, name, repo, branch, entry_script, status, execution_provider,
-          execution_ref, compute_type, hourly_rate_cents, max_runtime_seconds)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          execution_ref, compute_type, hourly_rate_cents, max_runtime_seconds, folder)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        RETURNING id`,
       [
         ownerUserId, name, repo, branch, entryScript, status, executionProvider,
         executionRef ? JSON.stringify(executionRef) : null,
-        computeType, hourlyRateCents, maxRuntimeSeconds,
+        computeType, hourlyRateCents, maxRuntimeSeconds, folder,
       ],
     );
     return findById(result.rows[0].id);
@@ -143,6 +145,7 @@ export function createJobsPostgresRepository({ pool } = {}) {
     repo,
     branch = "main",
     entryScript = "train.py",
+    folder = "",
     executionProvider,
     computeType,
     hourlyRateCents,
@@ -193,12 +196,12 @@ export function createJobsPostgresRepository({ pool } = {}) {
         const inserted = await client.query(
           `INSERT INTO jobs
              (owner_user_id, name, repo, branch, entry_script, status, execution_provider,
-              compute_type, hourly_rate_cents, max_runtime_seconds, reserved_cents)
-           VALUES ($1, $2, $3, $4, $5, 'queued', $6, $7, $8, $9, $10)
+              compute_type, hourly_rate_cents, max_runtime_seconds, reserved_cents, folder)
+           VALUES ($1, $2, $3, $4, $5, 'queued', $6, $7, $8, $9, $10, $11)
            RETURNING id`,
           [
             ownerUserId, name, repo, branch, entryScript, executionProvider,
-            computeType, hourlyRateCents, maxRuntimeSeconds, reserveCents,
+            computeType, hourlyRateCents, maxRuntimeSeconds, reserveCents, folder,
           ],
         );
         const id = inserted.rows[0].id;

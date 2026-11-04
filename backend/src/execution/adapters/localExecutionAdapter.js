@@ -10,7 +10,7 @@ import {
 import { constants as fsConstants } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { assertRepoPath } from "talon-shared/repo";
+import { assertRepoPath, normalizeFolder } from "talon-shared/repo";
 import { describeCloneError, gitAuthEnv } from "../gitAuth.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -352,11 +352,13 @@ export default function createLocalExecutionAdapter() {
       const scriptRelativePath = assertEntryScriptPath(
         record.jobSpec.entryScript,
       );
+      // The job runs from its folder; the entry script is relative to it.
+      const workDir = path.resolve(record.repoDir, record.jobSpec.folder);
       const scriptAbsolutePath = path.resolve(
-        record.repoDir,
+        workDir,
         scriptRelativePath,
       );
-      if (!scriptAbsolutePath.startsWith(record.repoDir)) {
+      if (!workDir.startsWith(record.repoDir) || !scriptAbsolutePath.startsWith(record.repoDir)) {
         record.state = "failed";
         record.exitCode = 1;
         record.endedAt = new Date().toISOString();
@@ -376,14 +378,14 @@ export default function createLocalExecutionAdapter() {
         record.endedAt = new Date().toISOString();
         await persistLine(
           record,
-          `Entry script not found: ${scriptRelativePath}`,
+          `Entry script not found: ${record.jobSpec.folder ? `${record.jobSpec.folder}/` : ""}${scriptRelativePath}`,
           "system",
         );
         return;
       }
 
       const processHandle = spawn(pythonBin, [scriptRelativePath], {
-        cwd: record.repoDir,
+        cwd: workDir,
         env: {
           ...process.env,
           TALON_OUTPUT_DIR: record.outputDir,
@@ -505,6 +507,13 @@ export default function createLocalExecutionAdapter() {
           repo: normalizedRepo,
           branch: normalizedBranch,
           entryScript: normalizedEntryScript,
+          folder: (() => {
+            const folder = normalizeFolder(jobSpec?.folder);
+            if (folder === null) {
+              throw new Error("Folder is invalid");
+            }
+            return folder;
+          })(),
           // Hard limit on the training script (null: no limit).
           maxRuntimeSeconds: Number(jobSpec?.maxRuntimeSeconds) > 0 ? Number(jobSpec.maxRuntimeSeconds) : null,
         },
