@@ -5,6 +5,7 @@
 #   talon-job          job id (falls back to manual-<instance id>)
 #   talon-bucket       jobs bucket (set by the launch template)
 #   talon-max-seconds  time limit for the user's script (default 1800)
+#   talon-image        cpu or gpu (PyTorch DLAMI); set by the launch template
 # Input (jobs/<id>/input/ in the bucket) is run.sh and, for real jobs,
 # repo.tgz (the cloned repository, unpacked to /work/repo).
 #
@@ -27,6 +28,7 @@ export AWS_DEFAULT_REGION=$(imds meta-data/placement/region)
 JOB=$(tag talon-job); JOB=${JOB:-manual-$INSTANCE_ID}
 BUCKET=$(tag talon-bucket)
 MAX=$(tag talon-max-seconds); MAX=${MAX:-1800}
+IMAGE=$(tag talon-image); IMAGE=${IMAGE:-cpu}
 PREFIX="s3://$BUCKET/jobs/$JOB"
 START=$(date -u +%FT%TZ)
 
@@ -41,8 +43,11 @@ status() { # state [exit_code] [message]
 finish() { sync; shutdown -h now; }
 trap finish EXIT
 
-# The AWS CLI is not on the stock AMI (a baked AMI will replace this later).
-for i in 1 2 3; do snap install aws-cli --classic && break; sleep 5; done
+# The AWS CLI is not on the stock Ubuntu AMI (a baked AMI will replace this
+# later); the Deep Learning AMIs may already have it.
+if ! command -v aws >/dev/null; then
+  for i in 1 2 3; do snap install aws-cli --classic && break; sleep 5; done
+fi
 if ! command -v aws >/dev/null; then echo "no aws cli"; exit 1; fi
 if [ -z "$BUCKET" ]; then echo "no talon-bucket tag"; exit 1; fi
 
@@ -71,8 +76,15 @@ fi
 if [ -f /work/repo.tgz ]; then # a Talon job: the cloned repository
   mkdir -p /work/repo && tar -xzf /work/repo.tgz -C /work/repo && rm -f /work/repo.tgz
   # pip and venv are not on the stock image (a baked AMI will replace this).
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq && apt-get install -y -qq python3-venv python3-pip
+  # The PyTorch DLAMI has its own Python with venv (run.sh uses it).
+  if [ "$IMAGE" != gpu ]; then
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq && apt-get install -y -qq python3-venv python3-pip
+  fi
+fi
+if [ "$IMAGE" != cpu ]; then # the driver can take a moment after boot
+  for i in $(seq 1 30); do nvidia-smi >/dev/null 2>&1 && break; sleep 2; done
+  nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader || echo "nvidia-smi failed"
 fi
 if [ ! -f /work/run.sh ]; then # smoke test when launched by hand with no input
   cat > /work/run.sh <<'EOF'

@@ -5,8 +5,10 @@ import {
   bootAllowanceSeconds,
   defaultInstanceType,
   defaultMaxRuntimeSeconds,
+  gpuInstanceTypes,
   hourlyRateCentsFor,
   isAllowedRuntime,
+  isGpuType,
   isKnownInstanceType,
   reservationCentsFor,
 } from "../execution/ec2Rates.js";
@@ -58,7 +60,11 @@ function readLimit(name, fallback) {
 export const ec2JobLimits = () => ({
   perUser: readLimit("EC2_MAX_JOBS_PER_USER", 1),
   total: readLimit("EC2_MAX_JOBS_TOTAL", 10),
+  gpuTotal: readLimit("EC2_MAX_GPU_JOBS_TOTAL", 3), // GPU jobs at once, everyone together
 });
+
+// GPU machines are for admins only unless EC2_GPU_ADMIN_ONLY=false.
+export const gpuAllowed = (isAdmin) => isAdmin || process.env.EC2_GPU_ADMIN_ONLY === "false";
 
 // Starts a job on its own EC2 instance. Order matters:
 //   1. create the job and reserve its maximum cost (one transaction; fails
@@ -73,8 +79,14 @@ export async function launchEc2Job({ jobsRepository, adapter, user, isAdmin, pay
   if (!isKnownInstanceType(instanceType)) {
     throw badRequest(`Unknown instance type: ${instanceType}`);
   }
+  const gpu = isGpuType(instanceType);
+  if (gpu && !gpuAllowed(isAdmin)) {
+    const error = new Error("GPU machines are limited to admins right now");
+    error.status = 403;
+    throw error;
+  }
   const maxRuntimeSeconds = Number(payload.maxRuntimeSeconds ?? defaultMaxRuntimeSeconds);
-  if (!isAllowedRuntime(maxRuntimeSeconds)) {
+  if (!isAllowedRuntime(maxRuntimeSeconds, instanceType)) {
     throw badRequest("That time limit is not available");
   }
   const environment = parseEnvironmentVariables(payload.environmentVariables);
@@ -106,10 +118,11 @@ export async function launchEc2Job({ jobsRepository, adapter, user, isAdmin, pay
     computeType: instanceType,
     hourlyRateCents,
     maxRuntimeSeconds,
-    reserveCents: reservationCentsFor(hourlyRateCents, maxRuntimeSeconds),
+    reserveCents: reservationCentsFor(hourlyRateCents, maxRuntimeSeconds, instanceType),
     enforceBalance: !isAdmin,
     maxUnfinishedPerUser: isAdmin ? null : limits.perUser,
     maxUnfinishedTotal: limits.total,
+    ...(gpu ? { groupLimit: { computeTypes: gpuInstanceTypes(), max: limits.gpuTotal, label: "GPU jobs" } } : {}),
   });
 
   try {

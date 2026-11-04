@@ -157,6 +157,7 @@ export function createJobsPostgresRepository({ pool } = {}) {
     enforceBalance = true,
     maxUnfinishedPerUser = null, // null: no limit
     maxUnfinishedTotal = null,
+    groupLimit = null, // { computeTypes, max, label }: e.g. GPU jobs at once, everyone together
   }) {
     const jobId = await withTransaction(
       async (client) => {
@@ -181,6 +182,18 @@ export function createJobsPostgresRepository({ pool } = {}) {
           const all = await client.query(`SELECT count(*)::int AS n FROM jobs WHERE ${unfinished}`, [executionProvider]);
           if (all.rows[0].n >= maxUnfinishedTotal) {
             throw new JobLimitError("Talon is running as many jobs as it can right now. Try again in a few minutes.", "system_limit");
+          }
+        }
+        if (groupLimit) {
+          const group = await client.query(
+            `SELECT count(*)::int AS n FROM jobs WHERE ${unfinished} AND compute_type = ANY($2::text[])`,
+            [executionProvider, groupLimit.computeTypes],
+          );
+          if (group.rows[0].n >= groupLimit.max) {
+            throw new JobLimitError(
+              `Talon is running as many ${groupLimit.label} as it can right now. Try again in a few minutes or choose another machine.`,
+              "group_limit",
+            );
           }
         }
 

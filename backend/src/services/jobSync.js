@@ -39,7 +39,7 @@ export function createJobSync({ jobsRepository, getExecutionStatus, getExecution
     if (Number.isFinite(launchedMs)) {
       durationSeconds = Math.max(0, Math.round((now() - launchedMs) / 1000));
       if (job.maxRuntimeSeconds) {
-        durationSeconds = Math.min(durationSeconds, job.maxRuntimeSeconds + bootAllowanceSeconds());
+        durationSeconds = Math.min(durationSeconds, job.maxRuntimeSeconds + bootAllowanceSeconds(job.executionRef?.instanceType));
       }
     }
 

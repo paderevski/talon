@@ -48,8 +48,33 @@ export async function run({ baseUrl }) {
       assert(response.status === 400, `${label}: expected 400, got ${response.status}`);
     }
     assert((await jobCount(["bad-unknown instance type", "bad-time limit not offered", "bad-bad environment variable"])) === 0, "refused requests must not create jobs");
+
+    // GPU machines: admin-only by default, hidden from students and refused.
+    assert(!menu.ec2.options.some((o) => o.gpu), "students must not be offered GPU machines by default");
+    const gpuSubmit = await post(s, on.baseUrl, { name: "gpu-student", repo: "o/r", entryScript: "t.py", compute: "ec2", instanceType: "g4dn.xlarge", maxRuntimeSeconds: 3600 });
+    assert(gpuSubmit.status === 403, `student GPU submit: expected 403, got ${gpuSubmit.status}`);
+    assert((await jobCount(["gpu-student"])) === 0, "refused GPU submit must not create a job");
+    const a = createCookieJar();
+    await login(a, on.baseUrl, "admin", "admin123");
+    const adminMenu = await options(a, on.baseUrl);
+    const t4 = adminMenu.ec2.options.find((o) => o.instanceType === "g4dn.xlarge");
+    const l40s = adminMenu.ec2.options.find((o) => o.instanceType === "g6e.2xlarge");
+    assert(t4 && t4.gpu === "NVIDIA T4" && t4.gpuMemoryGb === 16 && t4.runtimeSeconds.at(-1) === 86400, `g4dn.xlarge ${JSON.stringify(t4)}`);
+    assert(l40s && l40s.gpu === "NVIDIA L40S" && l40s.gpuMemoryGb === 48 && l40s.runtimeSeconds.at(-1) === 28800 && !("43200" in l40s.reserveCentsByRuntime), `g6e.2xlarge ceiling ${JSON.stringify(l40s)}`);
+    const tooLong = await post(a, on.baseUrl, { name: "gpu-too-long", repo: "o/r", entryScript: "t.py", compute: "ec2", instanceType: "g6e.2xlarge", maxRuntimeSeconds: 43200 });
+    assert(tooLong.status === 400 && (await jobCount(["gpu-too-long"])) === 0, `g6e.2xlarge over its ceiling: expected 400, got ${tooLong.status}`);
   } finally {
     await on.stop();
+  }
+
+  // GPU opened to everyone with EC2_GPU_ADMIN_ONLY=false.
+  const gpuOpen = await startBackendForTests({ env: { EC2_JOBS_ENABLED: "true", EC2_GPU_ADMIN_ONLY: "false", EC2_RECONCILE_INTERVAL_MS: "3600000" }, reset: false });
+  try {
+    const s = createCookieJar();
+    await login(s, gpuOpen.baseUrl, "student_a1", "student123");
+    assert((await options(s, gpuOpen.baseUrl)).ec2.options.some((o) => o.instanceType === "g4dn.xlarge"), "EC2_GPU_ADMIN_ONLY=false offers GPU machines to students");
+  } finally {
+    await gpuOpen.stop();
   }
 
   // 3. Kill switch: admin-only.

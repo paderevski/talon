@@ -14,7 +14,7 @@ import {
   openExecutionOutputFile,
   submitExecution,
 } from "../services/jobExecutionService.js";
-import { ec2JobLimits, launchEc2Job, launchErrorStatus } from "../services/ec2Jobs.js";
+import { ec2JobLimits, gpuAllowed, launchEc2Job, launchErrorStatus } from "../services/ec2Jobs.js";
 import { defaultMaxRuntimeSeconds, listInstanceOptions, runtimeOptions } from "../execution/ec2Rates.js";
 import { markJobAsExecutionLost, synchronizeJobFromExecution } from "../services/jobSync.js";
 import { getJobsRepository } from "../repositories/jobsRepository.js";
@@ -177,7 +177,8 @@ router.get("/compute-options", (req, res) => {
   res.json({
     ec2: {
       enabled: ec2Enabled,
-      options: ec2Enabled ? listInstanceOptions() : [],
+      // GPU machines only for those who may launch them (admins by default).
+      options: ec2Enabled ? listInstanceOptions({ includeGpu: gpuAllowed(hasRole(req.user, "admin")) }) : [],
       runtimeSeconds: ec2Enabled ? runtimeOptions() : [],
       defaultRuntimeSeconds: defaultMaxRuntimeSeconds,
       maxJobsPerUser: ec2JobLimits().perUser,
