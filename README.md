@@ -144,9 +144,10 @@ Talon reads student repositories through a GitHub App owned by the
 - **Public repos** need nothing: paste the URL in Submit Job. They are cloned
   anonymously.
 - **Private repos:** the student opens the **GitHub** panel and clicks
-  **Connect GitHub**, installs the app on their account (or on an org they
+  **Connect GitHub** (GitHub shows its account picker), then **Choose
+  repositories on GitHub**: installs the app on their account (or an org they
   belong to, such as a class org) and picks the repositories Talon may read.
-  Submit Job then lists those repos.
+  The panel and Submit Job then list those repos.
 - **What Talon holds:** the student's GitHub App user token (encrypted in
   `github_accounts`, refreshed automatically). It only reaches repositories
   that the student can see *and* the app is installed on, so it is the access
@@ -170,9 +171,9 @@ GitHub App**.
   the demo box) and `http://localhost:5173/api/github/callback` (local dev);
   later `https://talon.lcps.org/api/github/callback`. **Order matters:**
   after an install GitHub always returns to the *first* callback URL (the
-  install page takes no redirect), so list the server's own URL first. The
-  sign-in-only flow ("I already installed the app") names its callback and
-  works with any listed URL.
+  install page takes no redirect), so list the server's own URL first.
+  **Connect GitHub** itself is a sign-in that names its callback, so it works
+  with any listed URL.
 - Turn on **Request user authorization (OAuth) during installation**. Leave
   **Expire user authorization tokens** on.
 - Webhook: turn **Active** off (Talon is not reachable from GitHub).
