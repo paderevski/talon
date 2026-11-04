@@ -168,7 +168,11 @@ GitHub App**.
 - Homepage URL: the repo or the Talon URL.
 - Callback URLs: `http://localhost:8080/api/github/callback` (SSM tunnel to
   the demo box) and `http://localhost:5173/api/github/callback` (local dev);
-  later `https://talon.lcps.org/api/github/callback`.
+  later `https://talon.lcps.org/api/github/callback`. **Order matters:**
+  after an install GitHub always returns to the *first* callback URL (the
+  install page takes no redirect), so list the server's own URL first. The
+  sign-in-only flow ("I already installed the app") names its callback and
+  works with any listed URL.
 - Turn on **Request user authorization (OAuth) during installation**. Leave
   **Expire user authorization tokens** on.
 - Webhook: turn **Active** off (Talon is not reachable from GitHub).
