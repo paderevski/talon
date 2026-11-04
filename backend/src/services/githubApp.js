@@ -92,6 +92,10 @@ function readEnvConfig(env) {
   };
 }
 
+// Accepts the slug or the app's page URL (https://github.com/apps/<slug>).
+export const normalizeSlug = (value) =>
+  String(value || "").trim().replace(/^https?:\/\/github\.com\/apps\//i, "").replace(/[/?#].*$/, "");
+
 const isComplete = (c) => Boolean(c.clientId && c.slug && c.clientSecret && c.privateKey);
 
 export function createGithubApp({
@@ -122,6 +126,7 @@ export function createGithubApp({
     }
     return {
       ...resolved,
+      slug: normalizeSlug(resolved.slug),
       publicUrl: (resolved.publicUrl || "http://localhost:5173").replace(/\/+$/, ""),
       privateKey: createPrivateKey(resolved.privateKey),
     };

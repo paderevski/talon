@@ -14,7 +14,7 @@ import { createPasswordHash } from "../../src/utils/passwords.js";
 import { createJobsPostgresRepository } from "../../src/repositories/postgres/jobsPostgresRepository.js";
 import { computeCostCents } from "../../src/utils/jobFormat.js";
 import { createGithubAccountsStore, GithubAccountInUseError } from "../../src/utils/githubAccountsStore.js";
-import { createAppJwt, createGithubApp } from "../../src/services/githubApp.js";
+import { createAppJwt, createGithubApp, normalizeSlug } from "../../src/services/githubApp.js";
 import { describeCloneError, gitAuthEnv } from "../../src/execution/gitAuth.js";
 import { createVerify, generateKeyPairSync } from "node:crypto";
 import { BudgetError, ensureAccount, grant, transfer } from "../../src/budget/ledger.js";
@@ -490,6 +490,12 @@ const tests = [
     const repos = await app.listRepos(userId);
     assert(JSON.stringify(repos) === JSON.stringify([{ fullName: "a2hub/zeta", private: true }, { fullName: "AET-CS/alpha", private: false }].sort((x, y) => x.fullName.localeCompare(y.fullName, undefined, { sensitivity: "base" }))), `repos ${JSON.stringify(repos)}`);
     await store.deleteLink(userId);
+  }],
+
+  ["github app: slug may be given as the app's URL", async () => {
+    assert(normalizeSlug("https://github.com/apps/talon-link") === "talon-link", "url form");
+    assert(normalizeSlug("talon-link") === "talon-link", "plain form");
+    assert(normalizeSlug(" https://github.com/apps/talon-link/ ") === "talon-link", "trailing slash");
   }],
 
   ["git: clone token reaches git through the environment only", async () => {
