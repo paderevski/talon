@@ -5,6 +5,19 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 (gitignored). Architecture doc: `docs/talon-architecture-summary-v7.docx`
 (see "Gaps to production" for where it and reality differ).
 
+## Next up (as of 2026-11-04)
+
+1. **Job queue with launch retries** (step 5 without Spot): a Postgres queue
+   (`FOR UPDATE SKIP LOCKED`, `not_before`) so a launch with no capacity waits
+   and retries instead of failing; also gives overnight jobs.
+2. **Baked CPU AMI** (boot stops installing the AWS CLI and pip each time).
+3. Leave downloaded data (`data/`, `.cache/`, `.talonignore`) out of
+   "changed files".
+4. Test g6e.2xlarge on the box when it has capacity; decide when to open GPU
+   machines to students (`EC2_GPU_ADMIN_ONLY=false`, set on the box).
+5. Not code: ask LCPS IT for the `talon.lcps.org` DNS records and the Entra
+   App Registration (lead time); decide exposure and subnet for ALB/WAF.
+
 ## Running now
 
 | Item | Value |
