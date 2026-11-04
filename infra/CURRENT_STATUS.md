@@ -7,25 +7,6 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 
 ## Next up (as of 2026-11-04)
 
-0. **Branch `harden-ec2-cloudwatch` (written, not applied or deployed):**
-   local runs refused for everyone in production (admins too) and given only
-   PATH/HOME/locale, never the server's secrets; the web role may launch only
-   the job templates' own AMIs and root volumes up to 500 GB
-   (`job_max_volume_gb`; templates stay 30 / 60 GB, a per-job disk size in
-   the app is later work); jobs get `TALON_SCRATCH_DIR=/work/scratch`, the GPU
-   types' local NVMe instance store (formatted and mounted by `job_boot.sh`,
-   root volume otherwise; not uploaded); CloudWatch
-   agent on the web server via SSM State Manager (syslog, nginx, bootstrap log
-   to `/talon/demo/*`, memory and disk metrics in `Talon/Server`); alarms for
-   disk > 85%, backend `[error]`s, reconciler terminating an instance with no
-   job row, and account-wide GPU / standard vCPUs above Talon's limits (24 /
-   42). GuardDuty is in Terraform behind `enable_guardduty` (off: account-wide
-   in a shared account, agree with LCPS IT). To finish: `terraform apply`
-   (15 add, 2 in-place, nothing replaced), deploy the branch, run
-   `infra/scripts/check-launch-policy.sh` (dry-run launches from the box),
-   check logs arrive, then merge. IAM cannot limit RunInstances user data:
-   the vCPU alarms are the backstop, a lower vCPU quota (support case) or a
-   budget action would be the hard cap.
 1. **Job queue with launch retries** (step 5 without Spot): a Postgres queue
    (`FOR UPDATE SKIP LOCKED`, `not_before`) so a launch with no capacity waits
    and retries instead of failing; also gives overnight jobs.
@@ -47,9 +28,9 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 | Elastic IP | Yes (no ports open; reserved for future DNS) - `terraform output public_ip` |
 | Inbound access | None. SSM Session Manager only |
 | Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`, Postgres 16 (local socket, peer auth). `EC2_JOBS_ENABLED=true` in `/etc/talon/talon.env` (written by Terraform at first boot) turns on EC2 jobs and the reconciler |
-| Deployed | `gpu-jobs` branch, same code as `main` after the 2026-11-04 merge (GPU jobs) |
+| Deployed | `harden-ec2-cloudwatch` branch (2026-11-04; same code as `main` once merged) |
 | Approx cost | ~$20/month (instance ~$12, EBS ~$1.60, public IPv4 ~$3.65, 2 KMS keys ~$2, alarms/S3/SNS pennies). Estimate, not read from the bill. Plus job instances (c7g/m7g/r7g, roughly 8-17 cents per hour each), billed per second while they run and charged to students' budgets |
-| Other AWS resources | S3 backups bucket (`backups.tf`), SSM parameters under `/talon/demo/`, KMS keys `alias/talon-demo-secrets` and `alias/talon-demo-backups`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), 2 CloudWatch alarms (`alarms.tf`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and launch template (`jobs.tf`), 2 AWS Budgets alerts |
+| Other AWS resources | S3 backups bucket (`backups.tf`), SSM parameters under `/talon/demo/`, KMS keys `alias/talon-demo-secrets` and `alias/talon-demo-backups`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), CloudWatch alarms (`alarms.tf`: 2 backup; `monitoring.tf`: disk, backend errors, unknown job instance, GPU and standard vCPUs), CloudWatch agent on the web server (SSM State Manager; logs in `/talon/demo/{syslog,nginx-access,nginx-error,bootstrap}`, 30 days; metrics in `Talon/Server`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and launch template (`jobs.tf`), 2 AWS Budgets alerts |
 | Root volume | 20 GB gp3, encrypted with the default AWS-managed EBS key (the architecture doc asks for a KMS key; not changed) |
 | OS patching | `unattended-upgrades` enabled on the box (checked) |
 | Terraform state | S3 `talon-tfstate-<account id>` (versioned, locked); `infra/state` stack's own state is local and tiny |
@@ -551,7 +532,7 @@ done (below); the adapter and everything after it are not built yet.
    total (`EC2_MAX_JOBS_PER_USER`, `EC2_MAX_JOBS_TOTAL`), enforced in the
    reservation transaction under an advisory lock (parallel submits cannot
    slip past). Local runs on the web server are refused for everyone (admins
-   too, since `harden-ec2-cloudwatch`) when `NODE_ENV=production` unless
+   too, since 2026-11-04) when `NODE_ENV=production` unless
    `TALON_ALLOW_LOCAL_JOBS=true`. Live logs:
    `job_boot.sh` uploads the job log every 30 s. **Output files, complete
    solution:** two sources as in the local runner, `output/`
@@ -818,10 +799,10 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
 
 - More alarms: ALB health, dead-letter queue depth, a budget action that
   stops launches (Budgets only email today). Backup alarms exist; disk,
-  backend errors, unknown job instances and vCPU usage alarms are on branch
-  `harden-ec2-cloudwatch`.
-- Application logs to CloudWatch Logs: on branch `harden-ec2-cloudwatch`
-  (CloudWatch agent, syslog/nginx/bootstrap). Job instance boot logs stay in
+  backend errors, unknown job instances and vCPU usage alarms exist
+  (`monitoring.tf`).
+- Application logs are in CloudWatch Logs (CloudWatch agent,
+  syslog/nginx/bootstrap). Job instance boot logs stay in
   S3. SSM session logging not set up.
 - CI/CD: nothing runs the test suites automatically; deploys are manual SSM
   runs. Add tests on every push and automated deploys.
@@ -865,6 +846,18 @@ migrations take an advisory lock (concurrent deploys are safe).
 
 ## History
 
+- 2026-11-04: Hardening (`harden-ec2-cloudwatch`), applied, deployed and
+  checked on the box. Local runs refused in production for everyone and
+  given only PATH/HOME/locale. Web role may launch only the job templates'
+  AMIs, root volumes up to 500 GB (`job_max_volume_gb`; templates stay
+  30 / 60 GB, a per-job disk size in the app is later work), tags it cannot
+  override; `infra/scripts/check-launch-policy.sh` dry-runs all of this from
+  the box (all as expected; user data override still allowed, IAM cannot
+  limit it). Jobs get `TALON_SCRATCH_DIR` (GPU instance-store NVMe, verified
+  on g4dn). CloudWatch agent, server logs and the new alarms above.
+  GuardDuty in Terraform behind `enable_guardduty` (off; account-wide in a
+  shared account, agree with LCPS IT). Hard spending cap still missing: a
+  lower vCPU quota (support case) or a budget action.
 - 2026-10-25: Torn down old EKS test stacks (`app`, `platform`, `bootstrap`)
   and stray EC2s in the personal account. Old IAM access keys for user
   `patrick` deactivated (deleted 2026-10-28).
