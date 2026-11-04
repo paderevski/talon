@@ -2,3 +2,8 @@
 account_id = "123456789012" # LCPS account this stack may deploy into
 owner      = "your-username"
 alert_email = "you@example.org" # backup alerts go here (confirm the email AWS sends)
+
+# GitHub App (github.tf), from the app's settings page on github.com.
+# github_app_client_id = "Iv23li..."
+# github_app_slug      = "talon-aet-cs"
+# public_url           = "http://localhost:8080" # later https://talon.lcps.org

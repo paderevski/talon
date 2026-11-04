@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { cancelJob, fetchComputeOptions, fetchCurrentUser, fetchJobFiles, fetchJobs, fetchRepoTree, fetchResults, hideJob, login, logout, setUnauthorizedHandler, submitJob, unhideJob } from "./api/client";
+import { cancelJob, fetchComputeOptions, fetchCurrentUser, fetchJobFiles, fetchJobs, fetchRepoTree, fetchResults, getGithubStatus, hideJob, login, logout, setUnauthorizedHandler, submitJob, unhideJob } from "./api/client";
 import NewJobPanel from "./components/NewJobPanel";
 import RepoBrowserPanel from "./components/RepoBrowserPanel";
 import JobStatusPanel from "./components/JobStatusPanel";
 import ResultsPanel from "./components/ResultsPanel";
-import GitHubCredentialsPanel from "./components/GitHubCredentialsPanel";
+import GitHubPanel, { githubResultMessage } from "./components/GitHubPanel";
 import AdminConsole from "./components/AdminConsole";
 import ChangePasswordDialog from "./components/ChangePasswordDialog";
 import TeacherStudentsPanel from "./components/TeacherStudentsPanel";
@@ -39,6 +39,7 @@ function getNavSections(role, hasTeacherStudentView) {
       { id: "job-status", label: "Job Status" },
       { id: "results", label: "Results" },
       { id: "new-job", label: "Submit New Job" },
+      { id: "github", label: "GitHub" },
     ];
   }
 
@@ -47,7 +48,7 @@ function getNavSections(role, hasTeacherStudentView) {
     { id: "results", label: "Results" },
     { id: "new-job", label: "Submit New Job" },
     { id: "repo-browser", label: "Repo Browser" },
-    { id: "github-credentials", label: "GitHub Credentials" },
+    { id: "github", label: "GitHub" },
   ];
 
   return sections;
@@ -55,13 +56,9 @@ function getNavSections(role, hasTeacherStudentView) {
 
 const emptyRepo = { repository: "", branch: "", lastCommit: "", items: [] };
 const authStorageKey = "talon.authUser";
-const githubSettingsStorageKey = "talon.githubSettings";
 const fallbackRepo = "";
 const fallbackBranch = "main";
 
-const defaultGithubSettings = {
-  githubUsername: "",
-};
 const validUserRoles = new Set(["student", "teacher", "admin"]);
 
 const autoStatusFilters = new Set(["completed", "queued", "running"]);
@@ -164,36 +161,35 @@ function getStoredAuthUser() {
   }
 }
 
-function getStoredGithubSettings() {
-  try {
-    const rawValue = window.localStorage.getItem(githubSettingsStorageKey);
-    if (!rawValue) {
-      return defaultGithubSettings;
-    }
-
-    const parsed = JSON.parse(rawValue);
-    const sanitizedSettings = {
-      githubUsername: String(parsed?.githubUsername ?? "").trim(),
-    };
-
-    const hasLegacyKeys = Object.prototype.hasOwnProperty.call(parsed || {}, "defaultRepo")
-      || Object.prototype.hasOwnProperty.call(parsed || {}, "defaultBranch");
-
-    if (hasLegacyKeys) {
-      window.localStorage.setItem(githubSettingsStorageKey, JSON.stringify(sanitizedSettings));
-    }
-
-    return sanitizedSettings;
-  } catch {
-    window.localStorage.removeItem(githubSettingsStorageKey);
-    return defaultGithubSettings;
-  }
+// One-time cleanup: the GitHub username used to be kept in the browser.
+try {
+  window.localStorage.removeItem("talon.githubSettings");
+} catch {
+  // Storage unavailable: nothing to clean up.
 }
+
+// ?github=<code> is set by the server after the GitHub sign-in round trip.
+// Read it once and remove it from the address bar.
+function takeGithubResult() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get("github") || "";
+  if (code) {
+    params.delete("github");
+    const query = params.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
+  }
+  return code;
+}
+
+// Once per page load (not in a state initializer: StrictMode runs those twice).
+const githubResultOnLoad = takeGithubResult();
 
 export default function App() {
   const [authUser, setAuthUser] = useState(getStoredAuthUser);
-  const [activePage, setActivePage] = useState("landing");
-  const [githubSettings, setGithubSettings] = useState(getStoredGithubSettings);
+  // Coming back from GitHub sign-in: go straight to the workspace (GitHub panel).
+  const [activePage, setActivePage] = useState(githubResultOnLoad ? "workspace" : "landing");
+  const [githubStatus, setGithubStatus] = useState(null);
+  const githubResult = githubResultOnLoad;
   const [selectedStudentView, setSelectedStudentView] = useState(null);
   const [budgetBalance, setBudgetBalance] = useState(null);
   const [username, setUsername] = useState("");
@@ -610,6 +606,17 @@ export default function App() {
       .then((data) => setComputeOptions(data))
       .catch(() => setComputeOptions(null));
   }, [signedInUsername]);
+  const loadGithubStatus = () => {
+    getGithubStatus()
+      .then((data) => setGithubStatus(data))
+      .catch(() => setGithubStatus({ configured: false, linked: false, login: "" }));
+  };
+  useEffect(() => {
+    setGithubStatus(null);
+    if (signedInUsername) {
+      loadGithubStatus();
+    }
+  }, [signedInUsername]);
   const isTeacher = normalizeUserRole(authUser?.role) === "teacher";
   const hasTeacherStudentView = Boolean(selectedStudentView);
   const navSections = useMemo(
@@ -669,15 +676,6 @@ export default function App() {
     setActivePage("landing");
   };
   onLogoutRef.current = onLogout;
-
-  const onSaveGithubSettings = (nextSettings) => {
-    const sanitizedSettings = {
-      githubUsername: String(nextSettings?.githubUsername ?? "").trim(),
-    };
-
-    setGithubSettings(sanitizedSettings);
-    window.localStorage.setItem(githubSettingsStorageKey, JSON.stringify(sanitizedSettings));
-  };
 
   if (!authUser) {
     return (
@@ -804,8 +802,8 @@ export default function App() {
               >
                 Change password
               </button>
-              <a className="user-menu-item" href="#github-credentials" role="menuitem" onClick={() => setIsUserMenuOpen(false)}>
-                GitHub Credentials
+              <a className="user-menu-item" href="#github" role="menuitem" onClick={() => setIsUserMenuOpen(false)}>
+                GitHub
               </a>
               <button type="button" className="user-menu-item" role="menuitem" onClick={onLogout}>
                 Logout
@@ -891,7 +889,7 @@ export default function App() {
             onSubmit={onSubmitJob}
             defaultRepo={repoPath}
             defaultBranch={repoBranch}
-            githubUsername={githubSettings.githubUsername}
+            githubLinked={Boolean(githubStatus?.linked)}
             onRepoBranchChange={onRepoBranchChange}
             compute={computeOptions}
             budgetDollars={normalizeUserRole(authUser?.role) === "student" ? budgetBalance : null}
@@ -904,10 +902,10 @@ export default function App() {
             isRefreshing={isRefreshingRepo}
             canRefresh={Boolean(repoPath)}
           />
-          <GitHubCredentialsPanel
-            settings={githubSettings}
-            onSave={onSaveGithubSettings}
-            authUsername={authUser?.username || ""}
+          <GitHubPanel
+            status={githubStatus}
+            resultMessage={githubResultMessage(githubResult)}
+            onChanged={loadGithubStatus}
           />
             </>
           ) : null}

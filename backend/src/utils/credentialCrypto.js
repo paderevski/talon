@@ -5,7 +5,7 @@ import {
   scryptSync,
 } from "node:crypto";
 
-// Encryption for secrets stored in the database (GitHub tokens).
+// Encryption for secrets stored in the database (users' GitHub App tokens).
 //
 //   TALON_CREDENTIALS_KEY       current key secret (required in production)
 //   TALON_CREDENTIALS_KEY_ID    its id, stored with every encrypted value
@@ -16,6 +16,7 @@ import {
 // To rotate: set the new secret with a new KEY_ID, move the old one into
 // OLD_KEYS, restart, run `npm run db:rotate-credentials-key`, then drop it
 // from OLD_KEYS.
+// The salt name is historical (PAT era); changing it would change every key.
 const keySalt = "talon-github-credentials";
 const devFallbackSecret = "talon-dev-only-change-this-key";
 const derivedKeys = new Map();
@@ -75,19 +76,4 @@ export function decryptSecret({ keyId, iv, authTag, ciphertext }, { purpose, own
   decipher.setAAD(additionalData(purpose, ownerId, keyId));
   decipher.setAuthTag(authTag);
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
-}
-
-// Format used by the old githubCredentials.json file (no key id, no AAD),
-// only for the one-time import.
-export function decryptLegacyEntry(entry) {
-  const iv = Buffer.from(String(entry?.iv ?? ""), "base64");
-  const tag = Buffer.from(String(entry?.tag ?? ""), "base64");
-  const data = Buffer.from(String(entry?.encryptedToken ?? ""), "base64");
-  const decipher = createDecipheriv(
-    "aes-256-gcm",
-    deriveKey(process.env.TALON_CREDENTIALS_KEY || devFallbackSecret),
-    iv,
-  );
-  decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
 }

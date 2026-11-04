@@ -65,7 +65,9 @@ export const ec2JobLimits = () => ({
 //   2. launch (clone, ship to S3, RunInstances), and save the execution ref,
 //   3. if the launch fails, finalize the job as failed, which refunds the
 //      whole reservation. Launching is synchronous: no retry or queue yet.
-export async function launchEc2Job({ jobsRepository, adapter, user, isAdmin, payload }) {
+// gitToken: installation token for a private repo (null: anonymous clone).
+// Passed to the adapter only, never stored.
+export async function launchEc2Job({ jobsRepository, adapter, user, isAdmin, payload, gitToken = null }) {
   const instanceType = String(payload.instanceType || defaultInstanceType);
   if (!isKnownInstanceType(instanceType)) {
     throw badRequest(`Unknown instance type: ${instanceType}`);
@@ -106,7 +108,7 @@ export async function launchEc2Job({ jobsRepository, adapter, user, isAdmin, pay
   });
 
   try {
-    const executionRef = await adapter.start({ ...spec, jobId: job.id });
+    const executionRef = await adapter.start({ ...spec, jobId: job.id, gitToken });
     return await jobsRepository.setExecutionRef(job.id, executionRef);
   } catch (error) {
     await jobsRepository.finalize(job.id, {

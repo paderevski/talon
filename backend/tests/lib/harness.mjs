@@ -132,6 +132,12 @@ export async function startBackendForTests({ env: extraEnv = {}, reset = true } 
       ...process.env,
       PORT: String(port),
       DATABASE_URL: testDatabaseUrl,
+      // Tests never talk to GitHub: the GitHub App is off unless a test asks.
+      GITHUB_APP_CLIENT_ID: "",
+      GITHUB_APP_SLUG: "",
+      GITHUB_APP_CLIENT_SECRET: "",
+      GITHUB_APP_PRIVATE_KEY: "",
+      GITHUB_APP_PRIVATE_KEY_FILE: "",
       ...extraEnv,
     },
     stdio: ["ignore", "pipe", "pipe"],

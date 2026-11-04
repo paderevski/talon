@@ -18,6 +18,7 @@ import { ec2JobLimits, launchEc2Job, launchErrorStatus } from "../services/ec2Jo
 import { defaultMaxRuntimeSeconds, listInstanceOptions, runtimeOptions } from "../execution/ec2Rates.js";
 import { markJobAsExecutionLost, synchronizeJobFromExecution } from "../services/jobSync.js";
 import { getJobsRepository } from "../repositories/jobsRepository.js";
+import { getGithubApp } from "../services/githubApp.js";
 import { attachAccessScope, canModify, hasRole, narrowScopeToOwner, scopeAllows } from "../auth/access.js";
 
 const router = Router();
@@ -183,6 +184,18 @@ router.get("/compute-options", (req, res) => {
   });
 });
 
+// The token to clone the job's repo with (null: anonymous, public repos),
+// checked before anything is reserved. Sends the error response itself and
+// returns undefined when the user may not use that repo.
+async function cloneTokenOr4xx(req, res, repo) {
+  try {
+    return await getGithubApp().resolveCloneToken(req.user.id, repo);
+  } catch (error) {
+    res.status(error?.status || 500).json({ message: error?.status ? error.message : "Could not check the repository on GitHub" });
+    return undefined;
+  }
+}
+
 router.post("/", async (req, res) => {
   const payload = req.body ?? {};
 
@@ -193,6 +206,11 @@ router.post("/", async (req, res) => {
       });
     }
 
+    const gitToken = await cloneTokenOr4xx(req, res, payload.repo || "unknown/repo");
+    if (gitToken === undefined) {
+      return undefined;
+    }
+
     try {
       const job = await launchEc2Job({
         jobsRepository,
@@ -200,6 +218,7 @@ router.post("/", async (req, res) => {
         user: req.user,
         isAdmin: hasRole(req.user, "admin"),
         payload,
+        gitToken,
       });
       return res.status(201).json({ message: "Job started on EC2", job });
     } catch (error) {
@@ -232,7 +251,12 @@ router.post("/", async (req, res) => {
     maxRuntimeSeconds: jobMaxRuntimeSeconds(),
   };
 
-  const executionRef = await submitExecution(spec);
+  const gitToken = await cloneTokenOr4xx(req, res, spec.repo);
+  if (gitToken === undefined) {
+    return undefined;
+  }
+
+  const executionRef = await submitExecution({ ...spec, gitToken });
   const savedJob = await jobsRepository.create({
     ownerUserId: req.user.id,
     name: spec.name,
