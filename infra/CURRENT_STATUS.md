@@ -1,6 +1,6 @@
 # Talon infra - current status
 
-_Last updated: 2026-11-03 (GitHub App sign-in on branch `github-app`, deployed to the demo box and verified, not merged; see to-do item 13). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
+_Last updated: 2026-11-03 (GitHub App sign-in merged to `main` and verified on the demo box; see to-do item 13). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
 Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 (gitignored). Architecture doc: `docs/talon-architecture-summary-v7.docx`
 (see "Gaps to production" for where it and reality differ).
@@ -15,7 +15,7 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 | Elastic IP | Yes (no ports open; reserved for future DNS) - `terraform output public_ip` |
 | Inbound access | None. SSM Session Manager only |
 | Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`, Postgres 16 (local socket, peer auth). `EC2_JOBS_ENABLED=true` in `/etc/talon/talon.env` (written by Terraform at first boot) turns on EC2 jobs and the reconciler |
-| Deployed | `origin/main` (cleanup pass, 2026-10-28) |
+| Deployed | `github-app` branch, same code as `main` after the 2026-11-03 merge (GitHub App sign-in) |
 | Approx cost | ~$20/month (instance ~$12, EBS ~$1.60, public IPv4 ~$3.65, 2 KMS keys ~$2, alarms/S3/SNS pennies). Estimate, not read from the bill. Plus job instances (c7g/m7g/r7g, roughly 8-17 cents per hour each), billed per second while they run and charged to students' budgets |
 | Other AWS resources | S3 backups bucket (`backups.tf`), SSM parameters under `/talon/demo/`, KMS keys `alias/talon-demo-secrets` and `alias/talon-demo-backups`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), 2 CloudWatch alarms (`alarms.tf`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and launch template (`jobs.tf`), 2 AWS Budgets alerts |
 | Root volume | 20 GB gp3, encrypted with the default AWS-managed EBS key (the architecture doc asks for a KMS key; not changed) |
@@ -152,9 +152,8 @@ toward two servers)
 
 **GitHub**
 
-13. **GitHub App instead of personal access tokens** _(built 2026-11-03 on
-    branch `github-app`; not merged, not deployed, not yet tried against a
-    real app)_. Before this, a saved PAT was only used for API calls (repo
+13. ~~**GitHub App instead of personal access tokens**~~ _(done 2026-11-03,
+    merged to `main`, deployed and verified on the demo box)_. Before this, a saved PAT was only used for API calls (repo
     list, browser); clones were anonymous, so private repos could be browsed
     but failed at the clone. Now: students **Connect GitHub** (install the
     AET-CS-owned Talon app on their account or a class org and pick repos).
@@ -739,5 +738,5 @@ migrations take an advisory lock (concurrent deploys are safe).
   `backend/tests/postgres/run.mjs`. Not exercised on a real instance: the
   lost-job billing change, the log panel on EC2 jobs, and the new error
   messages; check them on the box now that it is deployed.
-- 2026-11-03: GitHub App sign-in replaces PATs (branch `github-app`, item 13).
+- 2026-11-03: GitHub App sign-in replaces PATs (item 13); merged to `main`.
 - `infra_2/` is the older EKS design, kept for reference only.
