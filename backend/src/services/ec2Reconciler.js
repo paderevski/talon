@@ -1,4 +1,5 @@
 import { overrunGraceSeconds } from "../execution/adapters/ec2ExecutionAdapter.js";
+import { log as defaultLog } from "../utils/log.js";
 
 // Keeps EC2 jobs honest without anyone watching. Every tick it
 //   1. syncs each unfinished EC2 job, which stores the result and settles the
@@ -7,7 +8,7 @@ import { overrunGraceSeconds } from "../execution/adapters/ec2ExecutionAdapter.j
 //      them, the job is already finished, or it is past its time limit.
 // A finished instance left running keeps billing, so this is not optional.
 // One backend runs it today; two would both do the same idempotent work.
-export function createEc2Reconciler({ jobsRepository, adapter, sync, markLost, now = () => Date.now(), log = console }) {
+export function createEc2Reconciler({ jobsRepository, adapter, sync, markLost, now = () => Date.now(), log = defaultLog }) {
   const isFinal = (job) => job.status === "completed" || job.status === "failed" || Boolean(job.resultSyncKey);
 
   async function tick() {
@@ -18,7 +19,7 @@ export function createEc2Reconciler({ jobsRepository, adapter, sync, markLost, n
         if (error?.status === 404) {
           await markLost(job);
         } else {
-          log.error(`[ec2-reconciler] sync ${job.id}: ${error.message}`);
+          log.error("reconciler could not sync job", { event: "ec2.reconcile_sync_failed", jobId: job.id, err: error });
         }
       }
     }
@@ -42,9 +43,15 @@ export function createEc2Reconciler({ jobsRepository, adapter, sync, markLost, n
         try {
           await adapter.terminateInstance(instance.instanceId);
           terminated.push(instance.instanceId);
-          log.log(`[ec2-reconciler] terminated ${instance.instanceId} (${reason})`);
+          // Alarm "unknown-job-instance" matches event + reason "no job row".
+          log.warn(`reconciler terminated ${instance.instanceId} (${reason})`, {
+            event: "ec2.instance_terminated",
+            instanceId: instance.instanceId,
+            jobId: instance.jobId || undefined,
+            reason,
+          });
         } catch (error) {
-          log.error(`[ec2-reconciler] terminate ${instance.instanceId}: ${error.message}`);
+          log.error("reconciler could not terminate instance", { event: "ec2.terminate_failed", instanceId: instance.instanceId, jobId: instance.jobId || undefined, err: error });
         }
       }
     }
@@ -65,7 +72,7 @@ export function createEc2Reconciler({ jobsRepository, adapter, sync, markLost, n
         try {
           await tick();
         } catch (error) {
-          log.error(`[ec2-reconciler] ${error.message}`);
+          log.error("reconciler tick failed", { event: "ec2.reconcile_failed", err: error });
         } finally {
           running = false;
         }

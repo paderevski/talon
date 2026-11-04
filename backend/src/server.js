@@ -14,6 +14,8 @@ import { ec2JobsEnabled, getEc2Adapter } from "./services/jobExecutionService.js
 import { markJobAsExecutionLost, synchronizeJobFromExecution } from "./services/jobSync.js";
 import { createEc2Reconciler } from "./services/ec2Reconciler.js";
 import { getJobsRepository } from "./repositories/jobsRepository.js";
+import { log } from "./utils/log.js";
+import { requestLogger } from "./utils/requestLog.js";
 
 const app = express();
 const port = Number(process.env.PORT || 5174);
@@ -23,6 +25,7 @@ const bindHost = String(process.env.TALON_BIND_HOST || "127.0.0.1").trim();
 
 // nginx terminates client connections in front of us (needed for secure cookies).
 app.set("trust proxy", 1);
+app.use(requestLogger());
 // No CORS: the frontend is same-origin (Vite proxy in dev, nginx in prod).
 app.use(express.json({ limit: "512kb" })); // roster imports are the large bodies
 
@@ -42,8 +45,15 @@ app.use("/api/admin", requireRole("admin"), adminRouter);
 app.use("/api/teacher", requireRole("teacher"), teacherRouter);
 
 // Last resort for errors that escape a route: log, and answer without details.
-app.use((error, _req, res, next) => {
-  console.error(`[error] ${error?.stack || error}`);
+app.use((error, req, res, next) => {
+  log.error("unhandled error", {
+    event: "http.unhandled_error",
+    requestId: req.id,
+    method: req.method,
+    path: req.originalUrl.split("?")[0],
+    userId: req.user?.id,
+    err: error,
+  });
   if (res.headersSent) {
     return next(error);
   }
@@ -58,11 +68,11 @@ if (ec2JobsEnabled()) {
     adapter: getEc2Adapter(),
     sync: synchronizeJobFromExecution,
     markLost: markJobAsExecutionLost,
+    log,
   }).start(Number(process.env.EC2_RECONCILE_INTERVAL_MS || 45_000));
-  console.log("EC2 jobs enabled: reconciler started");
+  log.info("EC2 jobs enabled: reconciler started", { event: "server.reconciler_started" });
 }
 
 app.listen(port, bindHost, () => {
-  // eslint-disable-next-line no-console
-  console.log(`Talon backend listening on http://${bindHost}:${port}`);
+  log.info(`Talon backend listening on http://${bindHost}:${port}`, { event: "server.started", port });
 });

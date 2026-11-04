@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import { getPool } from "../db/pool.js";
+import { log } from "../utils/log.js";
 
 const sessionIdleMs = 7 * 24 * 60 * 60 * 1000; // 7 days of inactivity
 export const sessionCookieName = "talon.sid";
@@ -17,9 +18,9 @@ function getSessionSecret() {
   }
 
   // Dev only: random per process, so everyone is signed out on restart.
-  console.warn(
-    "[session] SESSION_SECRET not set; using a random secret (sessions end on restart)",
-  );
+  log.warn("SESSION_SECRET not set; using a random secret (sessions end on restart)", {
+    event: "session.random_secret",
+  });
   return randomBytes(32).toString("hex");
 }
 

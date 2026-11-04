@@ -16,6 +16,7 @@ import {
 } from "../services/management.js";
 import { importRoster } from "../services/rosterImport.js";
 import { getGithubApp } from "../services/githubApp.js";
+import { log } from "../utils/log.js";
 
 // Mounted behind requireRole("admin") in server.js.
 const router = Router();
@@ -85,7 +86,13 @@ router.delete("/users/:userId/github", handle(async (req, res) => {
     return res.status(404).json({ message: "This user has no GitHub account linked" });
   }
   await github.unlink(req.params.userId);
-  console.log(`[admin] ${req.user.username} unlinked GitHub account ${link.githubLogin} from user ${req.params.userId}`);
+  log.info(`admin ${req.user.username} unlinked GitHub account ${link.githubLogin}`, {
+    event: "admin.github_unlinked",
+    requestId: req.id,
+    userId: req.user.id,
+    targetUserId: req.params.userId,
+    githubLogin: link.githubLogin,
+  });
   return res.json({ ok: true, githubLogin: link.githubLogin });
 }));
 

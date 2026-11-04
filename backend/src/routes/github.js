@@ -3,6 +3,7 @@ import { Router } from "express";
 import { requireAuth } from "../auth/middleware.js";
 import { getGithubApp } from "../services/githubApp.js";
 import { GithubAccountInUseError } from "../utils/githubAccountsStore.js";
+import { log } from "../utils/log.js";
 
 // "Connect GitHub" (GitHub App user sign-in). The browser is sent to GitHub
 // and comes back to /callback; nothing on GitHub calls Talon (no webhooks),
@@ -71,7 +72,7 @@ export function createGithubRouter({ app = null } = {}) {
       if (error instanceof GithubAccountInUseError) {
         return backToApp(res, "in-use");
       }
-      console.warn(`[github] linking failed for user ${req.user.id}: ${error.message}`);
+      log.warn("GitHub linking failed", { event: "github.link_failed", requestId: req.id, userId: req.user.id, error: error.message });
       return backToApp(res, "failed");
     }
   });

@@ -1,6 +1,9 @@
 // Postgres repository tests. Uses a throwaway database (default talon_test),
 // whose public schema is dropped and recreated on every run.
 //   npm run test:postgres --workspace backend
+// Code under test logs job events; keep the test output to errors. The
+// logger reads this when it writes, so setting it here is early enough.
+process.env.TALON_LOG_LEVEL ??= "error";
 import pg from "pg";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -712,7 +715,7 @@ const tests = [
       },
       sync: async () => {},
       markLost: async () => {},
-      log: { log() {}, error() {} },
+      log: { info() {}, warn() {}, error() {} },
     });
     await reconciler.tick();
     assert(terminated.sort().join() === "i-finished,i-orphan,i-overrun,i-untagged", `terminated ${terminated.sort()}`);
@@ -741,12 +744,12 @@ const tests = [
         if (job.id === flaky.id) throw new Error("AWS throttled");
       },
       markLost: async (job) => { lost.push(job.id); },
-      log: { log() {}, error(message) { errors.push(message); } },
+      log: { info() {}, warn() {}, error(msg, fields) { errors.push(fields); } },
     });
     await reconciler.tick();
     assert(synced.length === 3, `a failing job must not stop the others: synced ${synced}`);
     assert(lost.length === 1 && lost[0] === gone.id, `only the 404 job is lost: ${lost}`);
-    assert(errors.length === 1 && errors[0].includes(flaky.id) && errors[0].includes("AWS throttled"), `errors ${errors}`);
+    assert(errors.length === 1 && errors[0].jobId === flaky.id && errors[0].err.message.includes("AWS throttled"), `errors ${JSON.stringify(errors)}`);
   }],
 
   ["ec2 reconciler + jobSync: a vanished instance fails the job, is billed from launch time, the rest refunded once", async () => {
@@ -778,7 +781,7 @@ const tests = [
       adapter: { async listJobInstances() { return []; }, async terminateInstance() {} },
       sync: sync.synchronizeJobFromExecution,
       markLost: sync.markJobAsExecutionLost,
-      log: { log() {}, error() {} },
+      log: { info() {}, warn() {}, error() {} },
     });
     await reconciler.tick();
     await reconciler.tick();

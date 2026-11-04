@@ -38,9 +38,12 @@ variable "enable_guardduty" {
 # ---------------------------------------------------------------- server logs
 
 locals {
-  # Log group suffix => file on the web server. The backend, backups and
-  # deploys log to journald, which rsyslog copies to /var/log/syslog.
+  # Log group suffix => file on the web server. The backend writes JSON lines
+  # to its own file (systemd drop-in from infra/server/configure.sh, applied by
+  # deploy.sh); backups, deploys and the rest of the system log to journald,
+  # which rsyslog copies to /var/log/syslog. nginx access lines are JSON too.
   server_logs = {
+    backend      = "/var/log/talon/backend.log"
     syslog       = "/var/log/syslog"
     nginx-access = "/var/log/nginx/access.log"
     nginx-error  = "/var/log/nginx/error.log"
@@ -176,12 +179,12 @@ resource "aws_cloudwatch_metric_alarm" "server_disk" {
   ok_actions          = [aws_sns_topic.alerts.arn]
 }
 
-# Backend errors that reached the last-resort handler (server.js logs them as
-# "[error] ...").
+# Backend lines at level "error": unhandled route errors, reconciler failures,
+# database errors (backend/src/utils/log.js).
 resource "aws_cloudwatch_log_metric_filter" "backend_errors" {
   name           = "${local.name}-backend-errors"
-  log_group_name = aws_cloudwatch_log_group.server["syslog"].name
-  pattern        = "\"[error]\""
+  log_group_name = aws_cloudwatch_log_group.server["backend"].name
+  pattern        = "{ $.level = \"error\" }"
   metric_transformation {
     name      = "BackendErrors"
     namespace = local.server_metrics_namespace
@@ -191,7 +194,7 @@ resource "aws_cloudwatch_log_metric_filter" "backend_errors" {
 
 resource "aws_cloudwatch_metric_alarm" "backend_errors" {
   alarm_name          = "${local.name}-backend-errors"
-  alarm_description   = "10 or more unhandled Talon backend errors in 15 minutes. Check log group /talon/${var.environment}/syslog for \"[error]\"."
+  alarm_description   = "10 or more Talon backend errors in 15 minutes. Logs Insights saved query Talon/Backend errors, or log group /talon/${var.environment}/backend with level = error."
   namespace           = local.server_metrics_namespace
   metric_name         = "BackendErrors"
   statistic           = "Sum"
@@ -207,8 +210,8 @@ resource "aws_cloudwatch_metric_alarm" "backend_errors" {
 # without going through Talon.
 resource "aws_cloudwatch_log_metric_filter" "unknown_job_instance" {
   name           = "${local.name}-unknown-job-instance"
-  log_group_name = aws_cloudwatch_log_group.server["syslog"].name
-  pattern        = "\"[ec2-reconciler] terminated\" \"(no job row)\""
+  log_group_name = aws_cloudwatch_log_group.server["backend"].name
+  pattern        = "{ ($.event = \"ec2.instance_terminated\") && ($.reason = \"no job row\") }"
   metric_transformation {
     name      = "UnknownJobInstanceTerminated"
     namespace = local.server_metrics_namespace
@@ -225,6 +228,33 @@ resource "aws_cloudwatch_metric_alarm" "unknown_job_instance" {
   period              = 300
   evaluation_periods  = 1
   threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+}
+
+# Many failed or locked-out logins: someone guessing passwords. Per-account
+# lockout already slows one account down; this catches a spread-out attempt.
+resource "aws_cloudwatch_log_metric_filter" "failed_logins" {
+  name           = "${local.name}-failed-logins"
+  log_group_name = aws_cloudwatch_log_group.server["backend"].name
+  pattern        = "{ ($.event = \"auth.login_failed\") || ($.event = \"auth.login_locked\") }"
+  metric_transformation {
+    name      = "FailedLogins"
+    namespace = local.server_metrics_namespace
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "failed_logins" {
+  alarm_name          = "${local.name}-failed-logins"
+  alarm_description   = "50 or more failed or locked-out Talon logins in 15 minutes. Logs Insights saved query Talon/Failed logins shows usernames and IPs."
+  namespace           = local.server_metrics_namespace
+  metric_name         = "FailedLogins"
+  statistic           = "Sum"
+  period              = 900
+  evaluation_periods  = 1
+  threshold           = 50
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
   alarm_actions       = [aws_sns_topic.alerts.arn]

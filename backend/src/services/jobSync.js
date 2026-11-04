@@ -3,6 +3,7 @@ import { getExecutionOutputFiles, getExecutionStatus } from "./jobExecutionServi
 import { getJobsRepository } from "../repositories/jobsRepository.js";
 import { bootAllowanceSeconds } from "../execution/ec2Rates.js";
 import { durationSecondsBetween, formatDuration } from "../utils/jobFormat.js";
+import { log } from "../utils/log.js";
 
 // Brings a job row in line with what its execution reports: progress while it
 // runs, and on the first look after it ends, the stored result and the charge.
@@ -43,6 +44,7 @@ export function createJobSync({ jobsRepository, getExecutionStatus, getExecution
       }
     }
 
+    log.warn("job execution lost", { event: "job.lost", jobId: job.id, instanceId: job.executionRef?.instanceId, durationSeconds });
     return jobsRepository.finalize(job.id, {
       syncKey: `lost:${job.executionRef?.executionId || "unknown"}`,
       status: "failed",
@@ -92,6 +94,15 @@ export function createJobSync({ jobsRepository, getExecutionStatus, getExecution
                   : `Execution failed${Number.isFinite(execution.exitCode) ? ` (exit code ${execution.exitCode})` : ""}`)
             : null,
         finalizedAt: execution.endedAt || null,
+      });
+      log.info("job finished", {
+        event: "job.finished",
+        jobId: job.id,
+        status,
+        executionState: execution.state,
+        exitCode: execution.exitCode,
+        durationSeconds,
+        costCents: finalized?.costCents,
       });
       return { job: finalized, execution };
     }
