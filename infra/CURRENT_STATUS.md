@@ -187,7 +187,8 @@ toward two servers)
     (one Connect button, repo list) and the one-GitHub-account-per-user
     check ("already connected to another Talon user") verified there too.
     Admin "Unlink GitHub (<login>)" on the user edit screen, and the admin
-    user search matches GitHub logins: branch `code-source-ui`.
+    user search matches GitHub logins: branch `code-source-ui`, tested
+    locally (admin unlink, then the student connects again).
 
 **Blocked on others**
 
