@@ -587,7 +587,7 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
             <label className="form-label" htmlFor="job-env-vars">Environment Variables</label>
             <textarea
               id="job-env-vars"
-              className="form-input form-textarea"
+              className="form-input form-textarea mono-input"
               value={form.environmentVariables}
               onChange={update("environmentVariables")}
               placeholder={"BATCH_SIZE=32\nLEARNING_RATE=0.001\nEPOCHS=50"}

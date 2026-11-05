@@ -142,6 +142,10 @@ export default function AdminUsersPanel({ users, classes, authUser, onChanged, t
 
   return (
     <>
+      <div className="panel-head panel-head-tabbed">
+        <h2 className="panel-title">Users</h2>
+      </div>
+
       <div className="admin-section">
       {credentials ? (
         <CredentialsNotice {...credentials} onDismiss={() => setCredentials(null)} />

@@ -79,18 +79,6 @@ export default function UserList({
 
   return (
     <section className="panel admin-section" id={id}>
-      <div className="panel-head">
-        <h2 className="panel-title">
-          {title}
-          <span className="panel-count">
-            {isFiltered ? `${rows.length} of ${users.length}` : users.length}
-          </span>
-        </h2>
-        <button type="button" className="btn btn-primary btn-sm" onClick={() => onAdd(kind)}>
-          Add {kind}
-        </button>
-      </div>
-
       <div className="list-controls">
         <input
           className="form-input"
@@ -115,6 +103,16 @@ export default function UserList({
             ))}
           </select>
         ) : null}
+        <div className="list-controls-end">
+          {isFiltered ? (
+            <span className="list-match-count" aria-live="polite">
+              {rows.length} of {users.length}
+            </span>
+          ) : null}
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => onAdd(kind)}>
+            Add {kind}
+          </button>
+        </div>
       </div>
 
       <div className="table-card table-scroll-region">
