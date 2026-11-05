@@ -85,6 +85,9 @@ resource "aws_db_parameter_group" "main" {
   parameter {
     name  = "rds.force_ssl"
     value = "1"
+    # What AWS records for it; with the default ("immediate") every plan
+    # shows a change.
+    apply_method = "pending-reboot"
   }
 }
 
