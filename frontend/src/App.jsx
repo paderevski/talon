@@ -12,46 +12,47 @@ import talonLogo from "../../assets/talon-logo.png";
 import { normalizeRepoInput } from "./utils/repo";
 import { formatDollars } from "./utils/format";
 
-function getNavSections(role, hasTeacherStudentView) {
+// Each nav item is its own view, addressed by the URL hash (#jobs, #users/teachers).
+// The first view in the list is where the role lands after sign-in.
+function getViews(role, teacherStudent) {
   const normalizedRole = normalizeUserRole(role);
 
-  if (normalizedRole === "teacher" && !hasTeacherStudentView) {
-    return [{ id: "teacher-students", label: "Students" }];
-  }
-
-  // A teacher looking at one student sees their jobs and results only.
   if (normalizedRole === "teacher") {
-    return [
-      { id: "teacher-student-view", label: "Student" },
-      { id: "job-status", label: "Job Status" },
-      { id: "results", label: "Results" },
-    ];
+    const views = [{ id: "students", label: "Students" }];
+    // A teacher looking at one student sees that student's jobs and results.
+    if (teacherStudent) {
+      views.push({ id: "student", label: teacherStudent.fullName || teacherStudent.username });
+    }
+    return views;
   }
 
-  if (normalizedRole === "admin") {
-    return [
-      { id: "admin-roster", label: "Overview" },
-      { id: "admin-students", label: "Students" },
-      { id: "admin-teachers", label: "Teachers" },
-      { id: "admin-admins", label: "Admins" },
-      { id: "admin-import", label: "Import" },
-      { id: "admin-classes", label: "Classes" },
-      { id: "job-status", label: "Job Status" },
-      { id: "results", label: "Results" },
-      { id: "new-job", label: "Submit New Job" },
-      { id: "github", label: "GitHub" },
-    ];
-  }
-
-  const sections = [
-    { id: "job-status", label: "Job Status" },
-    { id: "results", label: "Results" },
-    { id: "new-job", label: "Submit New Job" },
-    { id: "repo-browser", label: "Repo Browser" },
+  const jobViews = [
+    { id: "jobs", label: "Jobs", showCount: true },
+    { id: "new-job", label: "New Job" },
     { id: "github", label: "GitHub" },
   ];
 
-  return sections;
+  if (normalizedRole === "admin") {
+    return [
+      { id: "overview", label: "Overview" },
+      { id: "users", label: "Users" },
+      { id: "classes", label: "Classes" },
+      { id: "import", label: "Import" },
+      ...jobViews,
+    ];
+  }
+
+  return jobViews;
+}
+
+// "#users/teachers" -> { view: "users", sub: "teachers" }
+function readHashRoute() {
+  const [view = "", sub = ""] = window.location.hash.replace(/^#\/?/, "").split("/");
+  return { view, sub };
+}
+
+function clearHash() {
+  window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
 }
 
 const emptyRepo = { repository: "", branch: "", lastCommit: "", items: [] };
@@ -66,50 +67,6 @@ const autoStatusFilters = new Set(["completed", "queued", "running"]);
 function normalizeUserRole(role) {
   const normalizedRole = String(role ?? "").trim().toLowerCase();
   return validUserRoles.has(normalizedRole) ? normalizedRole : "student";
-}
-
-function getLandingContentForRole(role) {
-  const normalizedRole = normalizeUserRole(role);
-
-  if (normalizedRole === "teacher") {
-    return {
-      kicker: "Teacher Home",
-      title: "Review class workloads and unblock student runs",
-      description: "Teacher accounts land on a teaching-focused overview with quick access to current experiments, recent outputs, and repo checks.",
-      highlights: [
-        "Review active and queued jobs across your class projects.",
-        "Open the repo browser to verify assignment branches and entry scripts.",
-        "Check recent results before sharing feedback with students.",
-      ],
-      primaryAction: "Open Teaching Workspace",
-    };
-  }
-
-  if (normalizedRole === "admin") {
-    return {
-      kicker: "Admin Home",
-      title: "Manage users, classes and budgets",
-      description: "Admin accounts land on the management screens: who can sign in, which classes exist, and how much each teacher can hand out.",
-      highlights: [
-        "Add users, change roles, reset passwords and disable accounts.",
-        "Create classes and assign teachers and students.",
-        "Click any budget to add or remove money.",
-      ],
-      primaryAction: "Open Admin Workspace",
-    };
-  }
-
-  return {
-    kicker: "Student Home",
-    title: "Launch experiments and track your training progress",
-    description: "Student accounts land on a workspace tuned for submitting jobs, watching status changes, and reviewing outputs.",
-    highlights: [
-      "Submit a new training job from your repository.",
-      "Track queued and running work without leaving the page.",
-      "Review generated results and output files after completion.",
-    ],
-    primaryAction: "Open Student Workspace",
-  };
 }
 
 function getPreferredStatusFilter(jobItems) {
@@ -186,8 +143,8 @@ const githubResultOnLoad = takeGithubResult();
 
 export default function App() {
   const [authUser, setAuthUser] = useState(getStoredAuthUser);
-  // Coming back from GitHub sign-in: go straight to the workspace (GitHub panel).
-  const [activePage, setActivePage] = useState(githubResultOnLoad ? "workspace" : "landing");
+  // Coming back from GitHub sign-in the server redirects to #github.
+  const [route, setRoute] = useState(readHashRoute);
   const [githubStatus, setGithubStatus] = useState(null);
   const githubResult = githubResultOnLoad;
   const [selectedStudentView, setSelectedStudentView] = useState(null);
@@ -595,10 +552,6 @@ export default function App() {
     }
     return value.slice(0, 2).toUpperCase();
   }, [authUser]);
-  const landingContent = useMemo(
-    () => getLandingContentForRole(authUser?.role),
-    [authUser],
-  );
   const isAdmin = normalizeUserRole(authUser?.role) === "admin";
   const [computeOptions, setComputeOptions] = useState(null);
   const signedInUsername = authUser?.username || "";
@@ -624,10 +577,31 @@ export default function App() {
   }, [signedInUsername]);
   const isTeacher = normalizeUserRole(authUser?.role) === "teacher";
   const hasTeacherStudentView = Boolean(selectedStudentView);
-  const navSections = useMemo(
-    () => getNavSections(authUser?.role, hasTeacherStudentView),
-    [authUser, hasTeacherStudentView],
+  const views = useMemo(
+    () => getViews(authUser?.role, selectedStudentView),
+    [authUser, selectedStudentView],
   );
+  const activeView = views.some((view) => view.id === route.view) ? route.view : views[0].id;
+
+  useEffect(() => {
+    const onHashChange = () => setRoute(readHashRoute());
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
+
+  // A new view starts at the top, not wherever the previous one was scrolled.
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [activeView]);
+
+  const openStudentView = (student) => {
+    setSelectedStudentView(student);
+    window.location.hash = "student";
+  };
+  const closeStudentView = () => {
+    setSelectedStudentView(null);
+    window.location.hash = "students";
+  };
 
   const onLogin = async (event) => {
     event.preventDefault();
@@ -649,7 +623,8 @@ export default function App() {
         window.localStorage.setItem(authStorageKey, JSON.stringify(user));
       }
       setSelectedStudentView(null);
-      setActivePage("landing");
+      clearHash();
+      setRoute(readHashRoute());
       setPassword("");
     } catch (error) {
       setAuthError(error.message || "Login failed");
@@ -678,7 +653,8 @@ export default function App() {
     setJobActionError("");
     setActiveFilter("completed");
     setSelectedStudentView(null);
-    setActivePage("landing");
+    clearHash();
+    setRoute(readHashRoute());
   };
   onLogoutRef.current = onLogout;
 
@@ -723,38 +699,6 @@ export default function App() {
     );
   }
 
-  if (activePage === "landing") {
-    return (
-      <div className="login-shell">
-        <div className="login-card">
-          <p className="login-kicker">{landingContent.kicker}</p>
-          <h1 className="login-title">{landingContent.title}</h1>
-          <img src={talonLogo} alt="Talon" className="login-logo" />
-          <p className="form-hint">Signed in as {authUser.fullName || authUser.username} ({normalizeUserRole(authUser.role)}).</p>
-          <p className="form-hint">{landingContent.description}</p>
-
-          <div className="form-group full">
-            <label className="form-label">Quick Start</label>
-            <ul>
-              {landingContent.highlights.map((highlight) => (
-                <li key={highlight}>{highlight}</li>
-              ))}
-            </ul>
-          </div>
-
-          <div className="form-group full form-actions submit-actions-row">
-            <button type="button" className="btn btn-primary" onClick={() => setActivePage("workspace")}>
-              {landingContent.primaryAction}
-            </button>
-            <button type="button" className="btn btn-secondary" onClick={onLogout}>
-              Logout
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="app">
       <nav className="topbar">
@@ -767,13 +711,6 @@ export default function App() {
             onClick={() => setIsMobileNavOpen((previous) => !previous)}
           >
             Menu
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary btn-sm"
-            onClick={() => setActivePage("landing")}
-          >
-            Role Home
           </button>
           <div className="topbar-brand">Academies of Loudoun</div>
         </div>
@@ -825,30 +762,28 @@ export default function App() {
           <div className="side-title">
             <img src={talonLogo} alt="Talon" className="side-logo" />
           </div>
-          {navSections.map((section) => (
+          {views.map((view) => (
             <a
-              key={section.id}
-              href={`#${section.id}`}
-              className="nav-item"
+              key={view.id}
+              href={`#${view.id}`}
+              className={`nav-item${view.id === activeView ? " active" : ""}`}
+              aria-current={view.id === activeView ? "page" : undefined}
               onClick={() => setIsMobileNavOpen(false)}
             >
-              {section.label}
-              {section.id === "job-status" ? <span className="nav-count">{statusCount}</span> : null}
+              {view.label}
+              {view.showCount ? <span className="nav-count">{statusCount}</span> : null}
             </a>
           ))}
         </nav>
 
         <main className="main">
-          {isAdmin ? <AdminConsole authUser={authUser} /> : null}
+          {isAdmin ? <AdminConsole authUser={authUser} view={activeView} sub={route.sub} /> : null}
 
-          {!isAdmin && isTeacher && !hasTeacherStudentView ? (
-            <TeacherStudentsPanel
-              authUser={authUser}
-              onOpenStudentView={(student) => setSelectedStudentView(student)}
-            />
+          {isTeacher && activeView === "students" ? (
+            <TeacherStudentsPanel authUser={authUser} onOpenStudentView={openStudentView} />
           ) : null}
 
-          {!isAdmin && isTeacher && hasTeacherStudentView ? (
+          {isTeacher && activeView === "student" && hasTeacherStudentView ? (
             <section className="panel" id="teacher-student-view">
               <div className="panel-head">
                 <h2 className="panel-title">Student Workspace</h2>
@@ -862,11 +797,7 @@ export default function App() {
                   student&apos;s jobs and results, but only the student (or an admin) can change them.
                 </div>
                 <div className="form-actions">
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => setSelectedStudentView(null)}
-                  >
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={closeStudentView}>
                     Back to Class Roster
                   </button>
                 </div>
@@ -874,48 +805,52 @@ export default function App() {
             </section>
           ) : null}
 
-          {isAdmin || !isTeacher || hasTeacherStudentView ? (
+          {activeView === "jobs" || activeView === "student" ? (
             <>
-          <JobStatusPanel
-            jobs={visibleJobs}
-            activeFilter={activeFilter}
-            setActiveFilter={setActiveFilter}
-            statusAvailability={visibleStatusAvailability}
-            onCancelJob={onCancelJob}
-            onHideJob={onHideJob}
-            onUnhideJob={onUnhideJob}
-            jobActionError={jobActionError}
-            readOnly={isTeacher}
-          />
-          <ResultsPanel results={visibleResults} jobs={visibleJobs} filesByJobId={filesByJobId} />
-          {!isTeacher ? (
-            <>
-          <NewJobPanel
-            onSubmit={onSubmitJob}
-            defaultRepo={repoPath}
-            defaultBranch={repoBranch}
-            githubLinked={Boolean(githubStatus?.linked)}
-            githubLogin={githubStatus?.login || ""}
-            onRepoBranchChange={onRepoBranchChange}
-            compute={computeOptions}
-            budgetDollars={normalizeUserRole(authUser?.role) === "student" ? budgetBalance : null}
-          />
-          <RepoBrowserPanel
-            repoData={repoData}
-            repoError={repoError}
-            onRefresh={onRefreshRepo}
-            onNavigatePath={onNavigateRepoPath}
-            isRefreshing={isRefreshingRepo}
-            canRefresh={Boolean(repoPath)}
-          />
-          <GitHubPanel
-            status={githubStatus}
-            resultMessage={githubResultMessage(githubResult)}
-            onChanged={loadGithubStatus}
-          />
+              <JobStatusPanel
+                jobs={visibleJobs}
+                activeFilter={activeFilter}
+                setActiveFilter={setActiveFilter}
+                statusAvailability={visibleStatusAvailability}
+                onCancelJob={onCancelJob}
+                onHideJob={onHideJob}
+                onUnhideJob={onUnhideJob}
+                jobActionError={jobActionError}
+                readOnly={isTeacher}
+              />
+              <ResultsPanel results={visibleResults} jobs={visibleJobs} filesByJobId={filesByJobId} />
             </>
           ) : null}
+
+          {activeView === "new-job" ? (
+            <>
+              <NewJobPanel
+                onSubmit={onSubmitJob}
+                defaultRepo={repoPath}
+                defaultBranch={repoBranch}
+                githubLinked={Boolean(githubStatus?.linked)}
+                githubLogin={githubStatus?.login || ""}
+                onRepoBranchChange={onRepoBranchChange}
+                compute={computeOptions}
+                budgetDollars={normalizeUserRole(authUser?.role) === "student" ? budgetBalance : null}
+              />
+              <RepoBrowserPanel
+                repoData={repoData}
+                repoError={repoError}
+                onRefresh={onRefreshRepo}
+                onNavigatePath={onNavigateRepoPath}
+                isRefreshing={isRefreshingRepo}
+                canRefresh={Boolean(repoPath)}
+              />
             </>
+          ) : null}
+
+          {activeView === "github" ? (
+            <GitHubPanel
+              status={githubStatus}
+              resultMessage={githubResultMessage(githubResult)}
+              onChanged={loadGithubStatus}
+            />
           ) : null}
         </main>
       </div>
