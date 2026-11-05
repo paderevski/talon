@@ -1,10 +1,12 @@
 #!/bin/bash
 # Server configuration that lives in the repo rather than in user_data (so it
 # can change without replacing the instance). Run as root by
-# infra/scripts/deploy.sh after every deploy; safe to run again.
+# /usr/local/bin/talon-configure (written by infra/ec2/web_user_data.sh.tftpl)
+# at the end of every talon-deploy (first boot and infra/scripts/deploy.sh);
+# safe to run again.
 #
-# deploy.sh does not run this from the working tree: it extracts the file from
-# the deployed git commit (`git show HEAD:...`) to a root-owned path first.
+# Never run from the working tree: the file is extracted from the deployed
+# git commit (`git show HEAD:...`) to a root-owned path first.
 #
 # What it sets up (logging):
 # - talon-backend writes its JSON log lines to /var/log/talon/backend.log

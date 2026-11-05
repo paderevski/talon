@@ -11,11 +11,58 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
    zone, from launch template `talon-demo-web`) behind an internal ALB,
    reached through the SSM tunnel. Phases 1 and 2 are done and merged
    (2026-11-05; details under "Later: two web servers"); plan doc "Talon Web
-   Tier Plan" has the design. Before building: first boot does not run
-   `infra/server/configure.sh` (JSON logging, proxy headers, trusted
-   proxies), so servers the group replaces would lack it until a deploy;
-   check RDS `db.t4g.micro` connections against two pools of 10; raise the
-   ALB idle timeout (~180 s) for job submit and roster import.
+   Tier Plan" has the design. Branch `web-tier-phase3` (2026-11-05),
+   **applied** (not merged; servers run `main`, which has no app change
+   from this branch):
+   - `web.tf`: `aws_instance.web` replaced by Auto Scaling group
+     `talon-demo-web` (`web_server_count` = 2, app subnets 1a/1b, ELB health
+     checks, 10 min grace, rolling instance refresh that launches before it
+     terminates). The launch template copies the provider's default tags
+     (ASG-launched instances do not get them; scripts find servers by them).
+   - `alb.tf`: internal ALB `talon-demo-web` (idle timeout 180 s, drops
+     invalid headers), target group port 80, health `GET /api/health`, 30 s
+     drain; SG rules web->ALB:80 (tunnel) and ALB->web:80; alarms for
+     healthy hosts < 2 for 10 min and ALB 5xx.
+   - Disk alarm is a Metrics Insights query (fullest disk of any server).
+   - First boot runs `infra/server/configure.sh` through
+     `/usr/local/bin/talon-configure`, called by `talon-deploy`, and waits
+     for the dpkg lock (`DPkg::Lock::Timeout`): SSM State Manager's
+     CloudWatch agent install runs at registration and won the race on one
+     server, whose first boot then died on `apt-get install`.
+   - `tunnel.sh` forwards to the ALB through a web server
+     (`AWS-StartPortForwardingSessionToRemoteHost`); `TALON_DIRECT=1` goes to
+     one server's nginx. Outputs: `web_asg_name`, `alb_dns_name`.
+   - RDS connections checked: `max_connections` 79, two pools of 10 fit.
+   Apply notes: the first group in the account creates
+   `AWSServiceRoleForAutoScaling`; launches failed for a minute while it
+   propagated, Terraform timed out and tainted the group (`terraform untaint`,
+   then apply). The template fix rolled through with no downtime (instance
+   refresh, ~12 min for two servers; a new server is healthy ~2.5 min after
+   launch). `terraform plan`: no changes.
+   Verified 2026-11-05: both servers healthy (1a, 1b, template v4), JSON logs
+   and proxy config from first boot with no deploy.sh; tunnel through the
+   ALB; requests spread over both servers; a login session works on both.
+   Seen once: one server's health check timed out on `SELECT 1` (2 s) for
+   13 s at 18:19 UTC, no outage. The pool has no `idleTimeoutMillis` (pg
+   default 10 s), so most health checks open a new TLS + IAM-token
+   connection; fixed on the branch (`idleTimeoutMillis` 5 min, not yet
+   deployed).
+   Failover check 2026-11-05 (backend stopped on the 1a server at 19:03:51,
+   probing through the tunnel every 2 s): the ALB marked it unhealthy at
+   19:04:35; until then about half the requests got 502 from that server's
+   nginx; none failed after. The group replaced it at 19:04:49 (ELB health),
+   the new server was healthy at 19:07:18; no alarm fired. This also covers
+   "terminate one". Health check tightened on the branch to 10 s x 2 (~20 s
+   window), applied 2026-11-05.
+   Deploy check 2026-11-05: `deploy.sh web-tier-phase3` (40 s) updated both
+   servers in turn (4ffaf1a, includes the idle timeout), migrations already
+   current, configure ran (twice per server, no changes the second time),
+   reseeded once on the first server.
+   Reconciler check: `job-1051` (paderevski/minimal-rnn `script.py`,
+   c7g.large) completed in 2 min, $0.01. Status picked up by the 1b
+   server's request sync; instance terminated once, by the 1a server's
+   reconciler; ledger has one reserve (-5c) and one refund (+4c).
+   All phase 3 checks pass; merge to `main` next.
 1. **Job queue with launch retries** (step 5 without Spot): a launch with no
    capacity waits and retries instead of failing; also gives overnight jobs.
    Plan it together with "Limiting launch exposure" below: the near-term

@@ -32,11 +32,8 @@ esac
 ID_LIST="$(web_instance_ids)" # macOS bash 3.2: no mapfile
 IDS=($ID_LIST)
 
-# After the deploy, apply the repo's server config (infra/server/configure.sh:
-# logging, proxy headers). It runs as root, so it is taken from the deployed
-# commit with `git show`, not from the working tree the talon user can write
-# to. Older branches without the file skip it.
-CONFIGURE='if sudo -u talon git -C /opt/talon cat-file -e HEAD:infra/server/configure.sh 2>/dev/null; then sudo -u talon git -C /opt/talon show HEAD:infra/server/configure.sh > /run/talon-configure.sh && bash /run/talon-configure.sh; fi'
+# talon-deploy (web_user_data.sh.tftpl) builds, migrates, applies the repo's
+# server config (infra/server/configure.sh, via talon-configure) and restarts.
 
 # Wipes and reseeds the demo data (backend/src/db/seedDemo.js, replaceAll).
 SEED='sudo -u talon bash -c '"'"'set -a; . /etc/talon/talon.env; . /etc/talon/secrets.env; set +a; cd /opt/talon && npm run --silent db:seed:demo --workspace backend -- --replace-all'"'"''
@@ -46,7 +43,7 @@ n=0
 for ID in "${IDS[@]}"; do
   n=$((n + 1))
   echo "--- [$n/${#IDS[@]}] $ID"
-  run_ssm "$ID" "talon deploy $REF" "[\"set -e\",\"/usr/local/bin/talon-deploy $REF\",\"$CONFIGURE\"]" \
+  run_ssm "$ID" "talon deploy $REF" "[\"set -e\",\"/usr/local/bin/talon-deploy $REF\"]" \
     || { echo "Deploy failed on $ID; servers after it still run the previous version." >&2; exit 1; }
 done
 

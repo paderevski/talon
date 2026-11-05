@@ -120,6 +120,12 @@ export function getPool() {
       // Fail instead of hanging when the database is unreachable (a remote
       // server can drop packets rather than refuse the connection).
       connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS || 10_000),
+      // Keep idle connections for 5 minutes (pg's default is 10 s). The ALB
+      // checks /api/health every 15 s from each of its nodes; with the default
+      // nearly every check opened a new connection (TLS plus an IAM token),
+      // and one such connect once took over the health check's 2 s limit.
+      // A connection stays valid after its IAM token expires.
+      idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS || 300_000),
       keepAlive: true,
     });
     pool.on("error", (error) => {

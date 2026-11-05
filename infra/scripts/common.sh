@@ -9,21 +9,22 @@ export AWS_PAGER=""
 TALON_ENV="${TALON_ENV:-demo}"
 
 # Running web servers, oldest first, one id per line. Found by tag
-# (Project=talon, Component=web, Environment=$TALON_ENV), so it works for one
-# server or an Auto Scaling group. Falls back to the Terraform output for a
-# box launched before the Component tag existed.
+# (Project=talon, Component=web, Environment=$TALON_ENV): the Auto Scaling
+# group's servers (web.tf).
 web_instance_ids() {
   local ids
   ids="$(aws ec2 describe-instances \
     --filters Name=tag:Project,Values=talon Name=tag:Component,Values=web \
               "Name=tag:Environment,Values=$TALON_ENV" Name=instance-state-name,Values=running \
     --query 'sort_by(Reservations[].Instances[], &LaunchTime)[].InstanceId' --output text | tr '\t' '\n' | sed '/^$/d')"
-  if [ -z "$ids" ]; then
-    ids="$(terraform -chdir="$INFRA_DIR/ec2" output -raw instance_id 2>/dev/null || true)"
-    [ -n "$ids" ] && echo "note: no running instance tagged Component=web; using the Terraform output ($ids)" >&2
-  fi
   [ -n "$ids" ] || { echo "No running Talon web server found (TALON_ENV=$TALON_ENV)" >&2; return 1; }
   echo "$ids"
+}
+
+# DNS name of the internal ALB (alb.tf), or nothing if there is none.
+web_alb_dns() {
+  aws elbv2 describe-load-balancers --names "talon-$TALON_ENV-web" \
+    --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null || true
 }
 
 # One web server for shell, tunnel and checks: TALON_INSTANCE if set,

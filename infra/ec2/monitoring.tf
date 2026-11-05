@@ -166,13 +166,16 @@ resource "aws_ssm_association" "cw_agent_config" {
 # ---------------------------------------------------------------- server alarms
 
 resource "aws_cloudwatch_metric_alarm" "server_disk" {
-  alarm_name          = "${local.name}-server-disk"
-  alarm_description   = "Talon web server root disk is over 85% full (app build, local job runs and logs live there)."
-  namespace           = local.server_metrics_namespace
-  metric_name         = "disk_used_percent"
-  dimensions          = { InstanceId = aws_instance.web.id } # phase 3: per server in the group
-  statistic           = "Maximum"
-  period              = 300
+  alarm_name        = "${local.name}-server-disk"
+  alarm_description = "A Talon web server's root disk is over 85% full (app build, local job runs and logs live there). Metric disk_used_percent in ${local.server_metrics_namespace} shows which server."
+  # The fullest disk of all web servers: the Auto Scaling group replaces
+  # servers, so the alarm cannot name instance ids.
+  metric_query {
+    id          = "fullest"
+    expression  = "SELECT MAX(disk_used_percent) FROM SCHEMA(\"${local.server_metrics_namespace}\", InstanceId)"
+    period      = 300
+    return_data = true
+  }
   evaluation_periods  = 2
   threshold           = 85
   comparison_operator = "GreaterThanThreshold"
