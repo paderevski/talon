@@ -290,9 +290,11 @@ upload_tree() {
 sync_all() {
   aws s3 cp /tmp/job.log "$PREFIX/logs/job.log" --only-show-errors 2>/dev/null
   upload_tree /work/output "$PREFIX/output"
+  # Nothing hidden (any path part starting with "."): .git, .venv, .cache
+  # (model and dataset caches), .ipynb_checkpoints, dotfiles.
   upload_tree /work/repo "$PREFIX/changed" -newer /work/.talon-start \
-    ! -path '*/.git/*' ! -path '*/__pycache__/*' ! -name '*.pyc' ! -path '*/node_modules/*' \
-    ! -path '*/.venv/*' ! -path '*/venv/*' ! -path '*/.ipynb_checkpoints/*'
+    ! -path '*/.*' ! -path '*/__pycache__/*' ! -name '*.pyc' ! -path '*/node_modules/*' \
+    ! -path '*/venv/*'
 }
 
 status running

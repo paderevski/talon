@@ -44,10 +44,11 @@ const cloneTimeoutMs = Number(
 const maxArtifactFileBytes = Number(
   process.env.LOCAL_MAX_ARTIFACT_BYTES || 50 * 1024 * 1024,
 );
+// Never listed as changed files: anything hidden (a path part starting with
+// ".": .git, .venv, .cache, dotfiles) and these folders at the repo root.
+// Same rule as the EC2 runner (infra/ec2/job_boot.sh, sync_all).
 const excludedArtifactPrefixes = [
-  ".git/",
   "node_modules/",
-  ".venv/",
   "venv/",
   "__pycache__/",
 ];
@@ -147,6 +148,10 @@ function isArtifactPathAllowed(relativePath) {
     .replace(/^\.\//, "");
 
   if (!normalizedPath) {
+    return false;
+  }
+
+  if (normalizedPath.split("/").some((part) => part.startsWith("."))) {
     return false;
   }
 
