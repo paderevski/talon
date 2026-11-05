@@ -74,13 +74,16 @@ resource "aws_lb_target_group" "web" {
   target_type          = "instance"
   deregistration_delay = 30
 
-  # 503 when the server cannot reach the database (backend/src/server.js).
+  # Liveness only (backend/src/server.js): is the app on this server up? Not
+  # the database, which both servers share: a database outage or failover
+  # must not get healthy servers replaced (seen 2026-11-05). /api/health
+  # still checks the database, for people and scripts.
   # Until a server is marked unhealthy the ALB keeps sending it its share of
   # requests (502s from nginx when the backend is down): about interval x
   # unhealthy_threshold. Measured 2026-11-05 with 15 s x 3: 44 s, half the
   # requests failing. 10 s x 2 brings that to about 20 s.
   health_check {
-    path                = "/api/health"
+    path                = "/api/health/live"
     matcher             = "200"
     interval            = 10
     timeout             = 5

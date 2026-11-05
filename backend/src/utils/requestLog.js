@@ -17,7 +17,7 @@ export function requestId(req) {
   return requestIdPattern.test(incoming) ? incoming : randomUUID();
 }
 
-export function requestLogger({ quietPaths = ["/api/health"] } = {}) {
+export function requestLogger({ quietPaths = ["/api/health", "/api/health/live"] } = {}) {
   return (req, res, next) => {
     const startedAt = process.hrtime.bigint();
     req.id = requestId(req);

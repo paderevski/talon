@@ -119,7 +119,7 @@ resource "aws_autoscaling_group" "web" {
     version = aws_launch_template.web.latest_version
   }
 
-  # The ALB's health check (GET /api/health, which also checks the database)
+  # The ALB's health check (GET /api/health/live: is the app up on this server)
   # decides when a server is replaced. First boot builds the app and takes
   # about 2 minutes; the grace period leaves room for a slow npm.
   target_group_arns         = [aws_lb_target_group.web.arn]

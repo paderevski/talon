@@ -16,7 +16,13 @@ export async function withTryAdvisoryLock(pool, lockId, fn) {
   let broken = false;
 
   try {
-    const result = await client.query("SELECT pg_try_advisory_lock($1) AS locked", [lockId]);
+    let result;
+    try {
+      result = await client.query("SELECT pg_try_advisory_lock($1) AS locked", [lockId]);
+    } catch (error) {
+      broken = true; // a connection that failed a query is not reused
+      throw error;
+    }
     locked = result.rows[0]?.locked === true;
     if (!locked) {
       return { skipped: true };

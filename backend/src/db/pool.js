@@ -120,13 +120,24 @@ export function getPool() {
       // Fail instead of hanging when the database is unreachable (a remote
       // server can drop packets rather than refuse the connection).
       connectionTimeoutMillis: Number(process.env.PG_CONNECT_TIMEOUT_MS || 10_000),
-      // Keep idle connections for 5 minutes (pg's default is 10 s). The ALB
-      // checks /api/health every 15 s from each of its nodes; with the default
-      // nearly every check opened a new connection (TLS plus an IAM token),
-      // and one such connect once took over the health check's 2 s limit.
-      // A connection stays valid after its IAM token expires.
+      // Keep idle connections for 5 minutes (pg's default is 10 s), so the
+      // periodic database checks reuse one instead of opening a new
+      // connection (TLS plus an IAM token) each time; one such connect once
+      // took over the check's 2 s limit. A connection stays valid after its
+      // IAM token expires.
       idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS || 300_000),
+      // Database failover (RDS Multi-AZ): the endpoint moves to the standby
+      // and the old primary's address goes silent, so queries on connections
+      // to it hang instead of failing. A query that gets no answer in time
+      // fails, and the pool then discards its connection (pg-pool removes a
+      // client released with an error), so the next query connects to the
+      // new primary. Measured 2026-11-05 without this: the pool stayed stuck
+      // after the failover finished. Long enough for any real query here.
+      query_timeout: Number(process.env.PG_QUERY_TIMEOUT_MS || 15_000),
+      // TCP keepalive probes after 10 s idle (default: the OS's 2 hours), so
+      // an idle connection to a vanished server is noticed and dropped.
       keepAlive: true,
+      keepAliveInitialDelayMillis: 10_000,
     });
     pool.on("error", (error) => {
       log.error("database idle client error", { event: "db.idle_client_error", error: error.message });
@@ -146,6 +157,9 @@ export async function closePool() {
 
 export async function withTransaction(fn, { pool: targetPool = getPool() } = {}) {
   const client = await targetPool.connect();
+  // A connection whose ROLLBACK fails (dead after a failover, or timed out)
+  // is discarded, never handed to the next caller.
+  let broken = false;
 
   try {
     await client.query("BEGIN");
@@ -153,9 +167,11 @@ export async function withTransaction(fn, { pool: targetPool = getPool() } = {})
     await client.query("COMMIT");
     return result;
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    await client.query("ROLLBACK").catch(() => {
+      broken = true;
+    });
     throw error;
   } finally {
-    client.release();
+    client.release(broken);
   }
 }
