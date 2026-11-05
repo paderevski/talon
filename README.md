@@ -1,5 +1,7 @@
 # Talon
 
+[![CI](https://github.com/paderevski/talon/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/paderevski/talon/actions/workflows/ci.yml)
+
 Talon is an educational GPU/CPU job portal for the Academy of Loudoun (LCPS).
 Students submit training jobs from a GitHub repository and run them on their
 own EC2 machine, teachers manage classes and budgets, and admins oversee
