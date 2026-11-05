@@ -71,6 +71,7 @@ infra/scripts/deploy.sh                    # deploy origin/main to every web ser
 infra/scripts/deploy.sh my-branch --keep-data
 infra/scripts/shell.sh                     # shell on a web server
 infra/scripts/check-launch-policy.sh       # dry-run what the web role may launch
+infra/scripts/status.sh [--deep] [--plan]  # one-screen status: servers, ALB, RDS, jobs, network, IAM, alarms, cost
 ```
 
 On a web server:
