@@ -147,7 +147,7 @@ locals {
       groups = [aws_cloudwatch_log_group.jobs.name]
       query  = <<-EOQ
         fields @timestamp, @logStream, @message
-        | filter @message like /(?i)(error|fail|could not|denied|SECURITY PROBLEM|no aws cli|talon-cwlog)/
+        | filter @message like /(?i)(\berror|\bfailed\b|\bfailure|could not|denied|SECURITY PROBLEM|no aws cli|talon-cwlog)/
           or (event = "job.boot_summary" and result != "succeeded")
         | sort @timestamp desc
         | limit 200
