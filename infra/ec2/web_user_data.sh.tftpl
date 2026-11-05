@@ -11,6 +11,14 @@ exec > >(tee -a /var/log/talon-bootstrap.log) 2>&1
 
 export DEBIAN_FRONTEND=noninteractive
 
+# Wait for the dpkg lock instead of failing on it. SSM State Manager starts
+# the CloudWatch agent install (monitoring.tf) as soon as the server
+# registers, which is while this script is still using apt; without this,
+# whichever loses the race fails (a group server's first boot died on
+# `apt-get install` this way, 2026-11-05). Applies to every apt call here,
+# including the NodeSource setup script's.
+echo 'DPkg::Lock::Timeout "600";' > /etc/apt/apt.conf.d/99talon-lock-timeout
+
 # --- swap (2 GB box; keeps npm/vite builds from OOMing) ---
 if [ ! -f /swapfile ]; then
   fallocate -l 2G /swapfile
