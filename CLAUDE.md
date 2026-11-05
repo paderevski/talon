@@ -46,7 +46,12 @@ found in a breach" dialog; it blocks clicks until dismissed.
 
 ## Working conventions
 
-- One branch per piece of work. Merge to `main` and push only when asked.
+- One branch per piece of work. Merge to `main` only when asked.
+- `main` is protected (since 2026-11-05): changes arrive only through a
+  pull request whose CI (`.github/workflows/ci.yml`: backend, Postgres and
+  frontend tests, build) passed on an up-to-date branch; admins included,
+  no force pushes. Flow: push the branch, `gh pr create`, wait for
+  `gh pr checks <n> --watch`, then `gh pr merge <n> --merge` when asked.
 - End commit messages with the Co-Authored-By line the harness specifies.
 - Deploy a branch to the demo box: `infra/scripts/deploy.sh <branch>`.
   It builds, migrates, restarts, then reseeds fresh demo data (wipes all
