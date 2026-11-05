@@ -1050,6 +1050,21 @@ server at first boot, most likely racing first boot's own apt. Re-run the
 two associations after a server's first boot completes, until phase 3 adds
 a proper wait.
 
+Cutover progress (2026-11-05): steps 1-7 done. Bootstrap (IAM token),
+deploy and reseed on RDS; old box stopped; CloudWatch agent re-run; launch
+policy check all ok from the new server; CPU test job `job-1001`
+(paderevski/minimal-rnn, c7g.large, jobs subnet 1a) ran 1m 58s, $0.01,
+output collected, instance powered off. Step 8 (final apply) remains.
+
+**Bug found (fix next, own branch):** job S3 folders are keyed by job id
+only (`jobs/<id>/`), and the fresh RDS database restarted ids at 49, which
+the old box had used (ids 49-72 still in the jobs bucket, 30-day expiry).
+`job-49` picked up an October `status.json`: marked completed at $0.00 and
+its instance terminated after 20 s; it would also have shown the old
+job's logs and files (possibly another student's). Worked around by
+`setval('job_id_seq', 1000)` on RDS. Fix: a per-launch S3 folder stored on
+the job and passed as a tag (adapter, `job_boot.sh`, launch templates).
+
 Rollback before step 8: start the old box and use
 `TALON_INSTANCE=<old id> infra/scripts/tunnel.sh`.
 
