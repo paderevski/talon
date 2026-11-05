@@ -22,6 +22,7 @@ import { getGithubApp } from "../services/githubApp.js";
 import { normalizeFolder } from "talon-shared/repo";
 import { parseScriptArgs } from "../utils/scriptArgs.js";
 import { attachAccessScope, canModify, hasRole, narrowScopeToOwner, scopeAllows } from "../auth/access.js";
+import { log } from "../utils/log.js";
 
 const router = Router();
 router.use(attachAccessScope);
@@ -233,9 +234,26 @@ router.post("/", async (req, res) => {
         payload: { ...payload, folder, scriptArgs: scriptArgsText },
         gitToken,
       });
+      log.info("job submitted", {
+        event: "job.submitted",
+        requestId: req.id,
+        userId: req.user.id,
+        jobId: job.id,
+        provider: "ec2",
+        instanceType: job.executionRef?.instanceType,
+        instanceId: job.executionRef?.instanceId,
+        maxRuntimeSeconds: job.maxRuntimeSeconds,
+      });
       return res.status(201).json({ message: "Job started on EC2", job });
     } catch (error) {
       const status = launchErrorStatus(error) || error?.status || 500;
+      (status >= 500 ? log.error : log.info)("job not started", {
+        event: "job.launch_failed",
+        requestId: req.id,
+        userId: req.user.id,
+        status,
+        ...(status >= 500 ? { err: error } : { error: error?.message }),
+      });
       return res.status(status).json({
         message: status === 402 ? "Not enough budget left for this job." : error?.message || "Unable to start the job",
       });
@@ -283,6 +301,15 @@ router.post("/", async (req, res) => {
     executionProvider: getExecutionProvider(),
     executionRef,
     hourlyRateCents,
+    maxRuntimeSeconds: spec.maxRuntimeSeconds,
+  });
+
+  log.info("job submitted", {
+    event: "job.submitted",
+    requestId: req.id,
+    userId: req.user.id,
+    jobId: savedJob.id,
+    provider: getExecutionProvider(),
     maxRuntimeSeconds: spec.maxRuntimeSeconds,
   });
 
@@ -482,6 +509,7 @@ router.post("/:id/cancel", async (req, res) => {
 
   try {
     const result = await cancelExecution(job.executionRef);
+    log.info("job cancel requested", { event: "job.cancel_requested", requestId: req.id, userId: req.user.id, jobId: job.id });
     return res.json({ ok: true, result });
   } catch (error) {
     return res.status(error?.status || 500).json({

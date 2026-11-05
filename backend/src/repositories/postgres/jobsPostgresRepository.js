@@ -7,6 +7,11 @@ import {
   formatSubmitted,
 } from "../../utils/jobFormat.js";
 
+// Set on the job finalize() returns when that call did the work (stored the
+// result, settled the cost). Concurrent or repeated calls for the same result
+// return the job without it. A symbol, so it never reaches API responses.
+export const justFinalized = Symbol("justFinalized");
+
 const jobSelect = `
   SELECT j.*, o.username AS owner_username, h.username AS hidden_by_username
   FROM jobs j
@@ -266,6 +271,7 @@ export function createJobsPostgresRepository({ pool } = {}) {
   // given syncKey does the work, later ones return the job unchanged, and the
   // ledger allows only one charge per job.
   async function finalize(jobId, { syncKey, status, durationSeconds, executionId = "", files = [], output = "Run output files", error = null, finalizedAt = null, neverRan = false }) {
+    let applied = false;
     await withTransaction(
       async (client) => {
         const found = await client.query(`${jobSelect} WHERE j.id = $1 FOR UPDATE OF j`, [jobId]);
@@ -324,10 +330,15 @@ export function createJobsPostgresRepository({ pool } = {}) {
            WHERE id = $1`,
           [jobId, status, durationSeconds ?? null, syncKey, costCents],
         );
+        applied = true;
       },
       { pool: db() },
     );
-    return findById(jobId);
+    const finalized = await findById(jobId);
+    if (applied && finalized) {
+      finalized[justFinalized] = true;
+    }
+    return finalized;
   }
 
   async function setHidden(jobId, { hidden, byUserId = null, reason = null }) {

@@ -1,5 +1,6 @@
 import { getPool, withTransaction } from "../db/pool.js";
 import { decryptSecret, encryptSecret } from "./credentialCrypto.js";
+import { log } from "./log.js";
 
 // Linked GitHub accounts (table github_accounts). The user's GitHub App
 // tokens are stored as one encrypted JSON value: { accessToken, refreshToken }.
@@ -39,7 +40,7 @@ function decryptRow(userId, row) {
       githubLogin: row.github_login,
     };
   } catch (error) {
-    console.warn(`[github] cannot decrypt tokens for user ${userId}: ${error.message}`);
+    log.warn("cannot decrypt stored GitHub tokens", { event: "github.token_decrypt_failed", userId, error: error.message });
     return null;
   }
 }

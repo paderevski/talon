@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { GetParametersCommand, SSMClient } from "@aws-sdk/client-ssm";
 import { splitRepoPath } from "talon-shared/repo";
 import { getGithubAccountsStore } from "../utils/githubAccountsStore.js";
+import { log } from "../utils/log.js";
 
 // Talon's GitHub App (owned by the AET-CS org). Three kinds of credential:
 //
@@ -142,7 +143,7 @@ export function createGithubApp({
     try {
       value = await loadConfig();
     } catch (error) {
-      console.warn(`[github] cannot load GitHub App settings: ${error.message}`);
+      log.warn("cannot load GitHub App settings", { event: "github.settings_failed", error: error.message });
     }
     cached = { value, at: now() };
     return value;
@@ -275,7 +276,7 @@ export function createGithubApp({
   // another Talon server disconnected, or the app was uninstalled). Forget the
   // link so the GitHub panel offers Connect again.
   async function forgetRevokedLink(userId) {
-    console.warn(`[github] token for user ${userId} was rejected by GitHub; unlinking`);
+    log.warn("GitHub rejected the stored token; unlinking", { event: "github.token_rejected", userId });
     await accounts().deleteLink(userId);
   }
 
@@ -379,7 +380,7 @@ export function createGithubApp({
           body: JSON.stringify({ access_token: tokens.accessToken }),
         });
       } catch (error) {
-        console.warn(`[github] could not revoke the grant for user ${userId}: ${error.message}`);
+        log.warn("could not revoke the GitHub grant", { event: "github.revoke_failed", userId, error: error.message });
       }
     }
     await accounts().deleteLink(userId);

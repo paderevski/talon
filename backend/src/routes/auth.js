@@ -4,6 +4,7 @@ import { publicUser } from "../auth/middleware.js";
 import { sessionCookieName } from "../auth/session.js";
 import { clearFailures, lockedSeconds, recordFailure } from "../auth/loginThrottle.js";
 import { changeOwnPassword, sendManagementError } from "../services/management.js";
+import { log } from "../utils/log.js";
 
 const router = Router();
 const usersRepository = await getUsersRepository();
@@ -18,6 +19,12 @@ function saveSession(req) {
   return new Promise((resolve, reject) => {
     req.session.save((error) => (error ? reject(error) : resolve()));
   });
+}
+
+// Fields for login events. The attempted username is capped: people sometimes
+// type a password into the username box.
+function loginFields(req, username) {
+  return { requestId: req.id, username: String(username).slice(0, 64), ip: req.ip };
 }
 
 // publicUser plus the user's remaining personal budget, in dollars.
@@ -41,6 +48,7 @@ router.post("/login", async (req, res) => {
   try {
     const waitSeconds = await lockedSeconds(username);
     if (waitSeconds > 0) {
+      log.warn("login refused: account locked", { event: "auth.login_locked", ...loginFields(req, username) });
       res.set("Retry-After", String(waitSeconds));
       return res.status(429).json({
         message: `Too many failed attempts. Try again in ${Math.ceil(waitSeconds / 60)} minute(s).`,
@@ -52,6 +60,7 @@ router.post("/login", async (req, res) => {
 
     if (!matched) {
       await recordFailure(username);
+      log.warn("login failed", { event: "auth.login_failed", ...loginFields(req, username) });
       return res.status(401).json({ message: "Invalid username or password" });
     }
 
@@ -62,14 +71,19 @@ router.post("/login", async (req, res) => {
     req.session.userId = matched.id;
     await saveSession(req);
     await usersRepository.recordLogin?.(matched.id);
+    log.info("login", { event: "auth.login", ...loginFields(req, matched.username), userId: matched.id });
 
     return res.json({ ok: true, user: await publicUserWithBudget(matched) });
-  } catch {
+  } catch (error) {
+    log.error("login error", { event: "auth.login_error", ...loginFields(req, username), err: error });
     return res.status(500).json({ message: "Unable to validate credentials" });
   }
 });
 
 router.post("/logout", (req, res) => {
+  if (req.user) {
+    log.info("logout", { event: "auth.logout", requestId: req.id, userId: req.user.id });
+  }
   req.session.destroy(() => {
     res.clearCookie(sessionCookieName);
     res.json({ ok: true });
@@ -96,6 +110,7 @@ router.post("/password", async (req, res, next) => {
       String(req.body?.newPassword ?? ""),
       req.sessionID,
     );
+    log.info("password changed", { event: "auth.password_changed", requestId: req.id, userId: req.user.id });
     return res.json({ ok: true });
   } catch (error) {
     return sendManagementError(error, res, next);

@@ -167,6 +167,8 @@ export async function startBackendForTests({ env: extraEnv = {}, reset = true } 
   return {
     port,
     baseUrl,
+    // Everything the backend has written to stdout/stderr so far.
+    output: () => bootOutput,
     stop: async () => {
       if (child.killed) {
         return;

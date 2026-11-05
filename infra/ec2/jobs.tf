@@ -7,6 +7,7 @@
 # runs the launch template with tags talon-job=<id> and talon-max-seconds=<n>
 # (plus Project=talon, Component=job). The instance (job_boot.sh) writes
 # status.json, logs/ and output/ back and powers itself off, which terminates it.
+# It also streams its boot log to CloudWatch (talon-log-group tag).
 
 variable "jobs_retention_days" {
   description = "Days before job input, logs and output expire from S3. 30 to start; class projects may need longer."
@@ -231,6 +232,17 @@ resource "aws_security_group" "job" {
   }
 }
 
+# ---------------------------------------------------------------- job boot logs
+
+# Job instances' boot logs (job_boot.sh), stream <job id>/<instance id>. The
+# same log also goes to S3 (jobs/<id>/logs/boot.log), which the app reads; this
+# copy arrives every 15 seconds, survives an instance that dies, and can be
+# searched across jobs. The student's own output (job.log) stays in S3 only.
+resource "aws_cloudwatch_log_group" "jobs" {
+  name              = "/talon/${var.environment}/jobs"
+  retention_in_days = var.log_retention_days
+}
+
 # ---------------------------------------------------------------- job role
 
 resource "aws_iam_role" "job" {
@@ -264,6 +276,15 @@ data "aws_iam_policy_document" "job_access" {
       variable = "s3:prefix"
       values   = ["jobs/*/input/*"]
     }
+  }
+
+  # Boot logs (job_boot.sh, written by root; never the student's output) to
+  # CloudWatch, one stream per job. Same caveat as above: any job could write
+  # another job's stream.
+  statement {
+    sid       = "WriteBootLogs"
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    resources = [aws_cloudwatch_log_group.jobs.arn, "${aws_cloudwatch_log_group.jobs.arn}:log-stream:*"]
   }
 
   statement {
@@ -301,6 +322,15 @@ resource "aws_launch_template" "job" {
 
   user_data = base64encode(file("${path.module}/job_boot.sh"))
 
+  lifecycle {
+    precondition {
+      # EC2 refuses user data over 16 KB (before base64). Trim comments, or
+      # switch both templates to base64gzip (cloud-init reads gzip), if this fails.
+      condition     = length(file("${path.module}/job_boot.sh")) <= 16384
+      error_message = "job_boot.sh is over EC2's 16 KB user data limit."
+    }
+  }
+
   # A power off from inside (job_boot.sh) terminates the instance. Never stop:
   # stopped instances keep billing for their volume.
   instance_initiated_shutdown_behavior = "terminate"
@@ -329,14 +359,15 @@ resource "aws_launch_template" "job" {
   tag_specifications {
     resource_type = "instance"
     tags = {
-      Name         = "${local.name}-job"
-      Project      = "talon"
-      Component    = "job"
-      Environment  = var.environment
-      Owner        = var.owner
-      ManagedBy    = "talon-web"
-      talon-bucket = aws_s3_bucket.jobs.id
-      talon-image  = "cpu"
+      Name            = "${local.name}-job"
+      Project         = "talon"
+      Component       = "job"
+      Environment     = var.environment
+      Owner           = var.owner
+      ManagedBy       = "talon-web"
+      talon-bucket    = aws_s3_bucket.jobs.id
+      talon-image     = "cpu"
+      talon-log-group = aws_cloudwatch_log_group.jobs.name
     }
   }
 
@@ -407,14 +438,15 @@ resource "aws_launch_template" "job_gpu" {
   tag_specifications {
     resource_type = "instance"
     tags = {
-      Name         = "${local.name}-job-${each.key}"
-      Project      = "talon"
-      Component    = "job"
-      Environment  = var.environment
-      Owner        = var.owner
-      ManagedBy    = "talon-web"
-      talon-bucket = aws_s3_bucket.jobs.id
-      talon-image  = each.key
+      Name            = "${local.name}-job-${each.key}"
+      Project         = "talon"
+      Component       = "job"
+      Environment     = var.environment
+      Owner           = var.owner
+      ManagedBy       = "talon-web"
+      talon-bucket    = aws_s3_bucket.jobs.id
+      talon-image     = each.key
+      talon-log-group = aws_cloudwatch_log_group.jobs.name
     }
   }
 

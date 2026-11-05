@@ -1,6 +1,9 @@
 // Postgres repository tests. Uses a throwaway database (default talon_test),
 // whose public schema is dropped and recreated on every run.
 //   npm run test:postgres --workspace backend
+// Code under test logs job events; keep the test output to errors. The
+// logger reads this when it writes, so setting it here is early enough.
+process.env.TALON_LOG_LEVEL ??= "error";
 import pg from "pg";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -11,7 +14,7 @@ import { withTransaction } from "../../src/db/pool.js";
 import { seedDemoUsers } from "../../src/db/seedDemo.js";
 import { createUsersPostgresRepository } from "../../src/repositories/postgres/usersPostgresRepository.js";
 import { createPasswordHash } from "../../src/utils/passwords.js";
-import { createJobsPostgresRepository } from "../../src/repositories/postgres/jobsPostgresRepository.js";
+import { createJobsPostgresRepository, justFinalized } from "../../src/repositories/postgres/jobsPostgresRepository.js";
 import { computeCostCents } from "../../src/utils/jobFormat.js";
 import { createGithubAccountsStore, GithubAccountInUseError } from "../../src/utils/githubAccountsStore.js";
 import { createAppJwt, createGithubApp, normalizeSlug } from "../../src/services/githubApp.js";
@@ -712,10 +715,28 @@ const tests = [
       },
       sync: async () => {},
       markLost: async () => {},
-      log: { log() {}, error() {} },
+      log: { info() {}, warn() {}, error() {} },
     });
     await reconciler.tick();
     assert(terminated.sort().join() === "i-finished,i-orphan,i-overrun,i-untagged", `terminated ${terminated.sort()}`);
+  }],
+
+  ["finalize: concurrent calls settle once and only one reports it did the work", async () => {
+    const jobs = createJobsPostgresRepository({ pool });
+    const owner = await scalar("SELECT id FROM users WHERE username = 'admin'");
+    const job = await jobs.createWithReservation({
+      ownerUserId: owner, name: "finalize-race", repo: "x/y", executionProvider: "ec2", hourlyRateCents: 360,
+      maxRuntimeSeconds: 100, reserveCents: 5, enforceBalance: false,
+    });
+    const args = { syncKey: "race-1", status: "completed", durationSeconds: 10, finalizedAt: new Date().toISOString() };
+    const results = await Promise.all([jobs.finalize(job.id, args), jobs.finalize(job.id, args)]);
+    const marked = results.filter((r) => r[justFinalized]);
+    assert(marked.length === 1, `exactly one call did the work, got ${marked.length}`);
+    assert(!JSON.stringify(results[0]).includes("justFinalized"), "the marker is not serialized");
+    const again = await jobs.finalize(job.id, args);
+    assert(!again[justFinalized], "a repeat call does nothing");
+    // Only the reservation charge: the whole 5 c was used, nothing to refund, and the repeats added nothing.
+    assert(Number(await scalar("SELECT count(*) FROM budget_ledger WHERE job_id = $1", [job.id])) === 1, "ledger settled once");
   }],
 
   ["ec2 reconciler: a job whose execution is gone is marked lost; other sync errors leave it alone", async () => {
@@ -741,12 +762,12 @@ const tests = [
         if (job.id === flaky.id) throw new Error("AWS throttled");
       },
       markLost: async (job) => { lost.push(job.id); },
-      log: { log() {}, error(message) { errors.push(message); } },
+      log: { info() {}, warn() {}, error(msg, fields) { errors.push(fields); } },
     });
     await reconciler.tick();
     assert(synced.length === 3, `a failing job must not stop the others: synced ${synced}`);
     assert(lost.length === 1 && lost[0] === gone.id, `only the 404 job is lost: ${lost}`);
-    assert(errors.length === 1 && errors[0].includes(flaky.id) && errors[0].includes("AWS throttled"), `errors ${errors}`);
+    assert(errors.length === 1 && errors[0].jobId === flaky.id && errors[0].err.message.includes("AWS throttled"), `errors ${JSON.stringify(errors)}`);
   }],
 
   ["ec2 reconciler + jobSync: a vanished instance fails the job, is billed from launch time, the rest refunded once", async () => {
@@ -778,7 +799,7 @@ const tests = [
       adapter: { async listJobInstances() { return []; }, async terminateInstance() {} },
       sync: sync.synchronizeJobFromExecution,
       markLost: sync.markJobAsExecutionLost,
-      log: { log() {}, error() {} },
+      log: { info() {}, warn() {}, error() {} },
     });
     await reconciler.tick();
     await reconciler.tick();

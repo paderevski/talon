@@ -1,4 +1,5 @@
 import pg from "pg";
+import { log } from "../utils/log.js";
 
 // Connection comes from DATABASE_URL, falling back to the standard PG*
 // environment variables / local socket defaults.
@@ -38,7 +39,7 @@ export function getPool() {
       max: Number(process.env.PG_POOL_MAX || 10),
     });
     pool.on("error", (error) => {
-      console.error(`[db] idle client error: ${error.message}`);
+      log.error("database idle client error", { event: "db.idle_client_error", error: error.message });
     });
   }
 
