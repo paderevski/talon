@@ -112,12 +112,33 @@ EOF
 fi
 /usr/local/bin/talon-load-secrets
 
+# --- server config from the repo (infra/server/configure.sh) ---
+# Logging, proxy headers, trusted proxies. Runs as root, so the script is
+# taken from the deployed commit with `git show`, never from the working tree
+# the talon user can write to. Commits without the file are skipped. Called
+# by talon-deploy after each deploy, so a server the Auto Scaling group
+# starts has its config from first boot, not only after the next deploy.sh.
+cat > /usr/local/bin/talon-configure <<'EOF'
+#!/bin/bash
+set -euo pipefail
+APP=/opt/talon
+if ! sudo -u talon git -C "$APP" cat-file -e HEAD:infra/server/configure.sh 2>/dev/null; then
+  echo "talon-configure: deployed commit has no infra/server/configure.sh; skipped"
+  exit 0
+fi
+umask 077
+sudo -u talon git -C "$APP" show HEAD:infra/server/configure.sh > /run/talon-configure.sh
+bash /run/talon-configure.sh
+EOF
+chmod 755 /usr/local/bin/talon-configure
+
 # --- deploy script (used on first boot and by infra/scripts/deploy.sh via SSM) ---
 cat > /usr/local/bin/talon-deploy <<'EOF'
 #!/bin/bash
 # Usage: talon-deploy [branch]
 # Force-syncs /opt/talon to origin/<branch>, builds, migrates (as
-# talon_migrate) and restarts.
+# talon_migrate), applies the repo's server config (talon-configure) and
+# restarts.
 set -euo pipefail
 REF="$${1:-${git_ref}}"
 APP=/opt/talon
@@ -134,6 +155,7 @@ as_talon git checkout -f -B "$REF" "origin/$REF"
 as_talon npm ci --no-audit --no-fund
 as_talon npm run build
 as_talon_env npm run db:migrate --workspace backend
+/usr/local/bin/talon-configure
 systemctl restart talon-backend
 systemctl reload nginx
 echo "Deployed: $(as_talon git log -1 --format='%h %s')"
@@ -169,8 +191,9 @@ systemctl daemon-reload
 systemctl enable talon-backend
 
 # --- nginx: static frontend + /api proxy (reached via SSM port forward) ---
-# Minimal site; infra/server/configure.sh (run by every deploy.sh) replaces it
-# with the logging and proxy-header version.
+# Minimal site; infra/server/configure.sh (run by talon-configure at the end
+# of first boot and every deploy) replaces it with the logging and
+# proxy-header version.
 cat > /etc/nginx/sites-available/talon <<'EOF'
 server {
     listen 80 default_server;
@@ -206,6 +229,11 @@ systemctl reload nginx
 # created the roles; the build is done by then, and deploy.sh finishes it.
 if ! /usr/local/bin/talon-deploy "${git_ref}"; then
   echo "talon bootstrap: first deploy did not finish (expected before infra/scripts/db-bootstrap.sh has run once)"
+  # talon-deploy stops before talon-configure; apply the config anyway if
+  # the code was checked out, so logging and proxy headers do not wait.
+  if [ -d /opt/talon/.git ]; then
+    /usr/local/bin/talon-configure || echo "talon bootstrap: server config (talon-configure) failed"
+  fi
 fi
 
 # --- CloudWatch agent (logs and metrics, monitoring.tf) ---

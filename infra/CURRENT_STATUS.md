@@ -11,10 +11,12 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
    zone, from launch template `talon-demo-web`) behind an internal ALB,
    reached through the SSM tunnel. Phases 1 and 2 are done and merged
    (2026-11-05; details under "Later: two web servers"); plan doc "Talon Web
-   Tier Plan" has the design. Before building: first boot does not run
-   `infra/server/configure.sh` (JSON logging, proxy headers, trusted
-   proxies), so servers the group replaces would lack it until a deploy;
-   check RDS `db.t4g.micro` connections against two pools of 10; raise the
+   Tier Plan" has the design. Branch `web-tier-phase3`. Done there:
+   first boot now runs `infra/server/configure.sh` (JSON logging, proxy
+   headers, trusted proxies) through `/usr/local/bin/talon-configure`, which
+   `talon-deploy` calls after migrating, so servers the group starts have it
+   without a deploy.sh (takes effect when the web server is next replaced).
+   Before building: check RDS `db.t4g.micro` connections against two pools of 10; raise the
    ALB idle timeout (~180 s) for job submit and roster import.
 1. **Job queue with launch retries** (step 5 without Spot): a launch with no
    capacity waits and retries instead of failing; also gives overnight jobs.

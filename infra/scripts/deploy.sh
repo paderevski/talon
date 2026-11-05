@@ -35,7 +35,10 @@ IDS=($ID_LIST)
 # After the deploy, apply the repo's server config (infra/server/configure.sh:
 # logging, proxy headers). It runs as root, so it is taken from the deployed
 # commit with `git show`, not from the working tree the talon user can write
-# to. Older branches without the file skip it.
+# to. Older branches without the file skip it. Servers built from the current
+# web_user_data.sh.tftpl already do this inside talon-deploy (talon-configure);
+# this second run changes nothing there and covers servers built before it.
+# Remove once no such server is left.
 CONFIGURE='if sudo -u talon git -C /opt/talon cat-file -e HEAD:infra/server/configure.sh 2>/dev/null; then sudo -u talon git -C /opt/talon show HEAD:infra/server/configure.sh > /run/talon-configure.sh && bash /run/talon-configure.sh; fi'
 
 # Wipes and reseeds the demo data (backend/src/db/seedDemo.js, replaceAll).
