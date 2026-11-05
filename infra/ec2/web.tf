@@ -1,10 +1,14 @@
-# The web server in Talon's VPC (web tier plan, phase 2): private app subnet,
-# no public address, Postgres on RDS. Phase 3 replaces the single instance
-# with an Auto Scaling group built from the same launch template.
+# Talon's web servers (web tier plan, phase 3): an Auto Scaling group of
+# var.web_server_count servers, one per zone in the private app subnets,
+# behind an internal ALB (alb.tf). No public address; Postgres on RDS. People
+# reach the ALB through infra/scripts/tunnel.sh (SSM port forward through a
+# web server).
 #
-# Replacing this instance no longer resets the data (it lives in RDS) and
-# first boot does not seed: only infra/scripts/deploy.sh reseeds.
+# Replacing a server never resets the data (it lives in RDS) and first boot
+# does not seed: only infra/scripts/deploy.sh reseeds.
 
+# The description still says "no inbound": changing it would replace the
+# group. Its one inbound rule (port 80 from the ALB) is in alb.tf.
 resource "aws_security_group" "web" {
   name        = "${local.name}-web"
   description = "Talon web servers - no inbound yet (SSM only), all outbound through NAT"
@@ -69,20 +73,23 @@ resource "aws_launch_template" "web" {
     }
   }
 
+  # Instances the Auto Scaling group launches get only these tags, not the
+  # provider's default_tags, so those are copied in (infra/scripts find web
+  # servers by Project, Environment and Component).
   tag_specifications {
     resource_type = "instance"
-    tags = {
+    tags = merge(data.aws_default_tags.current.tags, {
       Name      = "${local.name}-web"
-      Component = "web" # infra/scripts find web servers by this tag
-    }
+      Component = "web"
+    })
   }
 
   tag_specifications {
     resource_type = "volume"
-    tags = {
+    tags = merge(data.aws_default_tags.current.tags, {
       Name      = "${local.name}-web"
       Component = "web"
-    }
+    })
   }
 
   lifecycle {
@@ -92,18 +99,44 @@ resource "aws_launch_template" "web" {
   }
 }
 
-resource "aws_instance" "web" {
-  subnet_id = aws_subnet.app[var.web_availability_zones[0]].id
+data "aws_default_tags" "current" {}
 
-  # A new template version (user_data, type, disk) replaces the server.
+variable "web_server_count" {
+  description = "Web servers in the Auto Scaling group (spread over web_availability_zones)."
+  type        = number
+  default     = 2
+}
+
+resource "aws_autoscaling_group" "web" {
+  name                = "${local.name}-web"
+  min_size            = var.web_server_count
+  desired_capacity    = var.web_server_count
+  max_size            = var.web_server_count + 1 # room to launch before terminating
+  vpc_zone_identifier = [for s in aws_subnet.app : s.id]
+
   launch_template {
     id      = aws_launch_template.web.id
     version = aws_launch_template.web.latest_version
   }
 
-  tags = {
-    Name      = "${local.name}-web"
-    Component = "web"
+  # The ALB's health check (GET /api/health, which also checks the database)
+  # decides when a server is replaced. First boot builds the app and takes
+  # about 2 minutes; the grace period leaves room for a slow npm.
+  target_group_arns         = [aws_lb_target_group.web.arn]
+  health_check_type         = "ELB"
+  health_check_grace_period = 600
+  wait_for_capacity_timeout = "15m"
+
+  # A new template version (user_data, type, disk) rolls through the servers
+  # one at a time, starting a new one before stopping an old one.
+  instance_refresh {
+    strategy = "Rolling"
+    preferences {
+      min_healthy_percentage = 100
+      max_healthy_percentage = 150
+      instance_warmup        = 300
+      skip_matching          = true
+    }
   }
 
   depends_on = [
@@ -112,12 +145,4 @@ resource "aws_instance" "web" {
     aws_route_table_association.app, # first boot needs the NAT route
     aws_nat_gateway.main,
   ]
-
-  lifecycle {
-    # User data comes from the launch template. The provider records it on the
-    # instance after launch and would then plan to clear it, which it does by
-    # stopping and starting the server. A template change still replaces the
-    # server through latest_version above.
-    ignore_changes = [user_data, user_data_base64]
-  }
 }

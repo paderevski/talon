@@ -1,6 +1,11 @@
-output "instance_id" {
-  description = "The web server (web.tf). infra/scripts find it by tag; this is for reference."
-  value       = aws_instance.web.id
+output "web_asg_name" {
+  description = "The web servers' Auto Scaling group (web.tf). infra/scripts find the servers by tag."
+  value       = aws_autoscaling_group.web.name
+}
+
+output "alb_dns_name" {
+  description = "Internal ALB (alb.tf), reached through infra/scripts/tunnel.sh."
+  value       = aws_lb.web.dns_name
 }
 
 output "db_endpoint" {

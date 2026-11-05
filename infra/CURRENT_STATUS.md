@@ -11,13 +11,27 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
    zone, from launch template `talon-demo-web`) behind an internal ALB,
    reached through the SSM tunnel. Phases 1 and 2 are done and merged
    (2026-11-05; details under "Later: two web servers"); plan doc "Talon Web
-   Tier Plan" has the design. Branch `web-tier-phase3`. Done there:
-   first boot now runs `infra/server/configure.sh` (JSON logging, proxy
-   headers, trusted proxies) through `/usr/local/bin/talon-configure`, which
-   `talon-deploy` calls after migrating, so servers the group starts have it
-   without a deploy.sh (takes effect when the web server is next replaced).
-   Before building: check RDS `db.t4g.micro` connections against two pools of 10; raise the
-   ALB idle timeout (~180 s) for job submit and roster import.
+   Tier Plan" has the design. Branch `web-tier-phase3` (2026-11-05),
+   written and planned, **not applied yet** (plan: 10 add, 2 change, 1
+   destroy):
+   - `web.tf`: `aws_instance.web` replaced by Auto Scaling group
+     `talon-demo-web` (`web_server_count` = 2, app subnets 1a/1b, ELB health
+     checks, 10 min grace, rolling instance refresh that launches before it
+     terminates). The launch template now copies the provider's default tags
+     (ASG-launched instances do not get them; scripts find servers by them).
+   - `alb.tf`: internal ALB `talon-demo-web` (idle timeout 180 s, drops
+     invalid headers), target group port 80, health `GET /api/health`, 30 s
+     drain; SG rules web->ALB:80 (tunnel) and ALB->web:80; alarms for
+     healthy hosts < 2 for 10 min and ALB 5xx.
+   - Disk alarm is a Metrics Insights query (fullest disk of any server).
+   - First boot runs `infra/server/configure.sh` through
+     `/usr/local/bin/talon-configure`, called by `talon-deploy`.
+   - `tunnel.sh` forwards to the ALB through a web server
+     (`AWS-StartPortForwardingSessionToRemoteHost`); `TALON_DIRECT=1` goes to
+     one server's nginx. Outputs: `web_asg_name`, `alb_dns_name`.
+   - RDS connections checked: `max_connections` 79, two pools of 10 fit.
+   Apply has a few minutes of downtime (old server destroyed while the group's
+   servers boot `main`). Then the phase 3 checks below.
 1. **Job queue with launch retries** (step 5 without Spot): a launch with no
    capacity waits and retries instead of failing; also gives overnight jobs.
    Plan it together with "Limiting launch exposure" below: the near-term
