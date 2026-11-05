@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchAdminRoster } from "../api/client";
-import { formatDollars } from "../utils/format";
+import { formatClassName, formatDollars } from "../utils/format";
 
 const emptyRoster = {
   stats: {
@@ -70,27 +70,19 @@ export default function AdminRosterPanel({ authUser, refreshKey = 0 }) {
 
       {!isLoading ? (
         <>
-          <div className="results-grid">
-            <div className="result-card">
-              <div className="result-job-name">Users</div>
-              <div className="result-meta-value mono-sm">{roster.stats.userCount}</div>
-            </div>
-            <div className="result-card">
-              <div className="result-job-name">Teachers</div>
-              <div className="result-meta-value mono-sm">{roster.stats.teacherCount}</div>
-            </div>
-            <div className="result-card">
-              <div className="result-job-name">Students</div>
-              <div className="result-meta-value mono-sm">{roster.stats.studentCount}</div>
-            </div>
-            <div className="result-card">
-              <div className="result-job-name">Admins</div>
-              <div className="result-meta-value mono-sm">{roster.stats.adminCount}</div>
-            </div>
-            <div className="result-card">
-              <div className="result-job-name">Classes</div>
-              <div className="result-meta-value mono-sm">{roster.stats.classCount}</div>
-            </div>
+          <div className="results-grid stat-row">
+            {[
+              { label: "Users", count: roster.stats.userCount, href: "#users" },
+              { label: "Teachers", count: roster.stats.teacherCount, href: "#users/teachers" },
+              { label: "Students", count: roster.stats.studentCount, href: "#users/students" },
+              { label: "Admins", count: roster.stats.adminCount, href: "#users/admins" },
+              { label: "Classes", count: roster.stats.classCount, href: "#classes" },
+            ].map((stat) => (
+              <a key={stat.label} className="result-card stat-card-link" href={stat.href}>
+                <div className="result-job-name">{stat.label}</div>
+                <div className="result-meta-value mono-sm">{stat.count}</div>
+              </a>
+            ))}
           </div>
 
           <div className="panel-head subhead">
@@ -98,9 +90,9 @@ export default function AdminRosterPanel({ authUser, refreshKey = 0 }) {
           </div>
           <div className="results-grid">
             {roster.classes.map((classItem) => (
-              <article key={`${classItem.teacherUsername}-${classItem.className}`} className="result-card">
+              <article key={classItem.id} className="result-card">
                 <div className="result-card-head">
-                  <div className="result-job-name">{classItem.className}</div>
+                  <div className="result-job-name">{formatClassName(classItem.className, classItem.block)}</div>
                   <span className="status-pill queued">
                     <span className="sdot" />
                     {classItem.students.length} student{classItem.students.length === 1 ? "" : "s"}

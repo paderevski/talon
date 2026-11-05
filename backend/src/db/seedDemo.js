@@ -134,7 +134,10 @@ async function seedStudentJobs(client, { studentId, accountId, spentCents }) {
   );
 }
 
-export async function seedDemoUsers(pool) {
+// replaceAll: also wipe users that are not demo users (deploy.sh does this on
+// the demo box, whose data is disposable). Without it, any non-demo user
+// makes the seed refuse, so a local database with real work is safe.
+export async function seedDemoUsers(pool, { replaceAll = false } = {}) {
   assertDemoSeedAllowed();
   const teachers = [...teacherSeeds, legacyTeacher];
   const demoUsernames = allDemoUsernames(teachers);
@@ -145,7 +148,7 @@ export async function seedDemoUsers(pool) {
         "SELECT username FROM users WHERE NOT (lower(username) = ANY($1::text[])) LIMIT 5",
         [demoUsernames],
       );
-      if (nonDemo.rows.length > 0) {
+      if (nonDemo.rows.length > 0 && !replaceAll) {
         throw new Error(
           `Refusing to seed: database has non-demo users (${nonDemo.rows
             .map((row) => row.username)
@@ -172,15 +175,12 @@ export async function seedDemoUsers(pool) {
           createdBy: adminId,
         });
 
+        // Each demo teacher has one class, in its own block.
         const classResult = await client.query(
-          "INSERT INTO classes (name, term) VALUES ($1, '2026-27') RETURNING id",
-          [teacherSeed.className],
+          "INSERT INTO classes (name, term, block, teacher_id) VALUES ($1, '2026-27', $2, $3) RETURNING id",
+          [teacherSeed.className, String(teachers.indexOf(teacherSeed) + 1), teacherId],
         );
         const classId = classResult.rows[0].id;
-        await client.query(
-          "INSERT INTO class_members (class_id, user_id, member_role) VALUES ($1, $2, 'teacher')",
-          [classId, teacherId],
-        );
 
         for (const studentSeed of teacherSeed.students) {
           const studentId = await insertUser(client, {
@@ -188,7 +188,7 @@ export async function seedDemoUsers(pool) {
             roles: ["student"],
           });
           await client.query(
-            "INSERT INTO class_members (class_id, user_id, member_role) VALUES ($1, $2, 'student')",
+            "INSERT INTO class_members (class_id, user_id) VALUES ($1, $2)",
             [classId, studentId],
           );
 

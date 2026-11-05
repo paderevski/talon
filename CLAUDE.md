@@ -48,7 +48,9 @@ found in a breach" dialog; it blocks clicks until dismissed.
 - One branch per piece of work. Merge to `main` and push only when asked.
 - End commit messages with the Co-Authored-By line the harness specifies.
 - Deploy a branch to the demo box: `infra/scripts/deploy.sh <branch>`.
-  It builds, migrates, and restarts. Changing `infra/ec2/user_data.sh.tftpl`
+  It builds, migrates, restarts, then reseeds fresh demo data (wipes all
+  users, classes, jobs; the box's data is disposable). `--keep-data` skips
+  the reseed. Changing `infra/ec2/user_data.sh.tftpl`
   replaces the instance (database reset; backups exist in S3).
 - Money is integer cents in the ledger and dollars in API responses.
   Jobs/results are scoped by the signed-in user (server side); the client

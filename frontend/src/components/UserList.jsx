@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import BudgetCell from "./BudgetCell";
+import { formatClassName } from "../utils/format";
 
 // "Ada Lovelace" sorts as "lovelace ada", so lists read alphabetically by last name.
 function nameKey(user) {
@@ -79,18 +80,6 @@ export default function UserList({
 
   return (
     <section className="panel admin-section" id={id}>
-      <div className="panel-head">
-        <h2 className="panel-title">
-          {title}
-          <span className="panel-count">
-            {isFiltered ? `${rows.length} of ${users.length}` : users.length}
-          </span>
-        </h2>
-        <button type="button" className="btn btn-primary btn-sm" onClick={() => onAdd(kind)}>
-          Add {kind}
-        </button>
-      </div>
-
       <div className="list-controls">
         <input
           className="form-input"
@@ -110,11 +99,22 @@ export default function UserList({
             <option value="none">No class</option>
             {classes.map((classItem) => (
               <option key={classItem.id} value={String(classItem.id)}>
-                {classItem.name}
+                {formatClassName(classItem.name, classItem.block)}
+                {classItem.teacher ? ` (${classItem.teacher.fullName})` : ""}
               </option>
             ))}
           </select>
         ) : null}
+        <div className="list-controls-end">
+          {isFiltered ? (
+            <span className="list-match-count" aria-live="polite">
+              {rows.length} of {users.length}
+            </span>
+          ) : null}
+          <button type="button" className="btn btn-primary btn-sm" onClick={() => onAdd(kind)}>
+            Add {kind}
+          </button>
+        </div>
       </div>
 
       <div className="table-card table-scroll-region">
@@ -146,7 +146,7 @@ export default function UserList({
                     {user.status === "disabled" ? <div className="form-hint">Disabled</div> : null}
                   </td>
                   {kind !== "admin" ? (
-                    <td>{user.classes.map((classItem) => classItem.name).join(", ") || "—"}</td>
+                    <td>{user.classes.map((classItem) => formatClassName(classItem.name, classItem.block)).join(", ") || "—"}</td>
                   ) : null}
                   {hasBudget ? (
                     <td>

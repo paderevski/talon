@@ -142,6 +142,15 @@ const tests = [
     assert(refused, "Expected seed to refuse");
   }],
 
+  ["seed with replaceAll wipes non-demo users and seeds sections (deploy.sh default)", async () => {
+    await pool.query("INSERT INTO users (username, display_name) VALUES ('real.person@lcps.org', 'Real Person')");
+    await seedDemoUsers(pool, { replaceAll: true });
+    assert((await scalar("SELECT COUNT(*)::int FROM users WHERE username = 'real.person@lcps.org'")) === 0,
+      "Expected the non-demo user to be wiped");
+    const unblocked = await scalar("SELECT COUNT(*)::int FROM classes WHERE block IS NULL OR teacher_id IS NULL");
+    assert(unblocked === 0, `Expected every seeded class to have a block and a teacher, ${unblocked} do not`);
+  }],
+
   ["login: correct password returns user with id and roles", async () => {
     const user = await repo.findByCredentials("jane_smith", "talon123");
     assert(user, "Expected jane_smith to log in");
@@ -244,8 +253,7 @@ const tests = [
     const teacherId = await scalar("SELECT id FROM users WHERE username = 'teacher_grace'");
     const studentIds = (await pool.query(`
       SELECT m.user_id FROM class_members m
-      JOIN class_members t ON t.class_id = m.class_id AND t.user_id = $1
-      WHERE m.member_role = 'student'
+      JOIN classes c ON c.id = m.class_id AND c.teacher_id = $1
     `, [teacherId])).rows.map((row) => row.user_id);
 
     // Ten parallel $5 transfers; exactly floor(pool / $5) may succeed.
@@ -1300,8 +1308,11 @@ const tests = [
   ["teacher roster: one section per class, students listed under each", async () => {
     const teacherId = await scalar("SELECT id FROM users WHERE username = 'teacher_ada'");
     const studentId = await scalar("SELECT id FROM users WHERE username = 'student_a1'");
-    const classId = await scalar("INSERT INTO classes (name, term) VALUES ('Second Period Robotics', '2026-27') RETURNING id");
-    await pool.query("INSERT INTO class_members (class_id, user_id, member_role) VALUES ($1, $2, 'teacher'), ($1, $3, 'student')", [classId, teacherId, studentId]);
+    const classId = await scalar(
+      "INSERT INTO classes (name, term, block, teacher_id) VALUES ('Second Period Robotics', '2026-27', 'R2', $1) RETURNING id",
+      [teacherId],
+    );
+    await pool.query("INSERT INTO class_members (class_id, user_id) VALUES ($1, $2)", [classId, studentId]);
 
     const roster = await repo.getTeacherRoster("teacher_ada");
     assert(roster.classes.length === 2, `Expected 2 classes, got ${roster.classes.length}`);

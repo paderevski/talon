@@ -95,11 +95,10 @@ export function createUsersPostgresRepository({ pool = getPool() } = {}) {
     const result = await pool.query(
       `
         SELECT DISTINCT s.username
-        FROM class_members tm
-        JOIN classes c ON c.id = tm.class_id AND c.archived_at IS NULL
-        JOIN class_members sm ON sm.class_id = tm.class_id AND sm.member_role = 'student'
+        FROM classes c
+        JOIN class_members sm ON sm.class_id = c.id
         JOIN users s ON s.id = sm.user_id
-        WHERE tm.user_id = $1 AND tm.member_role = 'teacher'
+        WHERE c.teacher_id = $1 AND c.archived_at IS NULL
       `,
       [userId],
     );
@@ -122,29 +121,23 @@ export function createUsersPostgresRepository({ pool = getPool() } = {}) {
       await Promise.all([
         pool.query(`${userSelect} ORDER BY u.display_name, u.username`),
         pool.query(`
-          SELECT c.id, c.name, t.username AS teacher_username, t.display_name AS teacher_name
+          SELECT c.id, c.name, c.block, t.username AS teacher_username, t.display_name AS teacher_name
           FROM classes c
-          LEFT JOIN LATERAL (
-            SELECT u.username, u.display_name
-            FROM class_members m JOIN users u ON u.id = m.user_id
-            WHERE m.class_id = c.id AND m.member_role = 'teacher'
-            ORDER BY m.added_at, u.username
-            LIMIT 1
-          ) t ON true
+          LEFT JOIN users t ON t.id = c.teacher_id
           WHERE c.archived_at IS NULL
-          ORDER BY c.name, c.id
+          ORDER BY lower(c.name), lower(c.block), c.id
         `),
         pool.query(`
-          SELECT m.class_id, u.username
-          FROM class_members m JOIN users u ON u.id = m.user_id
-          WHERE m.member_role = 'teacher'
-          ORDER BY m.added_at, u.username
+          SELECT c.id AS class_id, t.username
+          FROM classes c JOIN users t ON t.id = c.teacher_id
+          WHERE c.archived_at IS NULL
+          ORDER BY c.created_at, c.id
         `),
         pool.query(`
           SELECT s.username, s.display_name, m.class_id, a.balance_cents, credited.credited_cents
           FROM users s
           JOIN user_roles r ON r.user_id = s.id AND r.role = 'student'
-          LEFT JOIN class_members m ON m.user_id = s.id AND m.member_role = 'student'
+          LEFT JOIN class_members m ON m.user_id = s.id
           ${personalBudgetJoin}
           ORDER BY s.display_name, s.username
         `),
@@ -159,6 +152,7 @@ export function createUsersPostgresRepository({ pool = getPool() } = {}) {
         {
           id: Number(row.id),
           className: row.name,
+          block: row.block,
           teacherUsername: row.teacher_username ?? "",
           teacherFullName: row.teacher_name ?? "",
           students: [],
@@ -236,22 +230,21 @@ export function createUsersPostgresRepository({ pool = getPool() } = {}) {
     const [classesResult, studentsResult, poolResult] = await Promise.all([
       pool.query(
         `
-          SELECT c.id, c.name
-          FROM class_members m JOIN classes c ON c.id = m.class_id
-          WHERE m.user_id = $1 AND m.member_role = 'teacher' AND c.archived_at IS NULL
-          ORDER BY m.added_at, c.id
+          SELECT c.id, c.name, c.block
+          FROM classes c
+          WHERE c.teacher_id = $1 AND c.archived_at IS NULL
+          ORDER BY lower(c.block), lower(c.name), c.id
         `,
         [teacher.id],
       ),
       pool.query(
         `
           SELECT c.id AS class_id, s.username, s.display_name, a.balance_cents, credited.credited_cents
-          FROM class_members tm
-          JOIN class_members sm ON sm.class_id = tm.class_id AND sm.member_role = 'student'
-          JOIN classes c ON c.id = tm.class_id AND c.archived_at IS NULL
+          FROM classes c
+          JOIN class_members sm ON sm.class_id = c.id
           JOIN users s ON s.id = sm.user_id
           ${personalBudgetJoin}
-          WHERE tm.user_id = $1 AND tm.member_role = 'teacher'
+          WHERE c.teacher_id = $1 AND c.archived_at IS NULL
           ORDER BY s.display_name, s.username
         `,
         [teacher.id],
@@ -273,6 +266,7 @@ export function createUsersPostgresRepository({ pool = getPool() } = {}) {
     const classes = classesResult.rows.map((row) => ({
       id: Number(row.id),
       className: row.name,
+      block: row.block,
       students: studentsResult.rows
         .filter((student) => Number(student.class_id) === Number(row.id))
         .map(mapStudent),

@@ -12,7 +12,15 @@ import UserList from "./UserList";
 const allRoles = ["student", "teacher", "admin"];
 const emptyForm = { username: "", fullName: "", email: "", roles: ["student"] };
 
-export default function AdminUsersPanel({ users, classes, authUser, onChanged }) {
+// Tabs on the Users view, addressed as #users/<id>.
+const userTabs = [
+  { id: "students", title: "Students", kind: "student" },
+  { id: "teachers", title: "Teachers", kind: "teacher" },
+  { id: "admins", title: "Admins", kind: "admin" },
+];
+
+export default function AdminUsersPanel({ users, classes, authUser, onChanged, tab }) {
+  const activeTab = userTabs.find((candidate) => candidate.id === tab) || userTabs[0];
   const [form, setForm] = useState(emptyForm);
   const [editing, setEditing] = useState(null); // user being edited, or null when adding
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -134,6 +142,10 @@ export default function AdminUsersPanel({ users, classes, authUser, onChanged })
 
   return (
     <>
+      <div className="panel-head panel-head-tabbed">
+        <h2 className="panel-title">Users</h2>
+      </div>
+
       <div className="admin-section">
       {credentials ? (
         <CredentialsNotice {...credentials} onDismiss={() => setCredentials(null)} />
@@ -233,9 +245,29 @@ export default function AdminUsersPanel({ users, classes, authUser, onChanged })
 
       </div>
 
-      <UserList id="admin-students" title="Students" kind="student" users={users.filter((user) => user.roles.includes("student"))} {...shared} />
-      <UserList id="admin-teachers" title="Teachers" kind="teacher" users={users.filter((user) => user.roles.includes("teacher"))} {...shared} />
-      <UserList id="admin-admins" title="Admins" kind="admin" users={users.filter((user) => user.roles.includes("admin"))} {...shared} />
+      <div className="view-tabs" role="tablist" aria-label="User type">
+        {userTabs.map((candidate) => (
+          <a
+            key={candidate.id}
+            href={`#users/${candidate.id}`}
+            role="tab"
+            aria-selected={candidate.id === activeTab.id}
+            className={`view-tab${candidate.id === activeTab.id ? " active" : ""}`}
+          >
+            {candidate.title}
+            <span className="view-tab-count">{users.filter((user) => user.roles.includes(candidate.kind)).length}</span>
+          </a>
+        ))}
+      </div>
+
+      <UserList
+        key={activeTab.id}
+        id={`admin-${activeTab.id}`}
+        title={activeTab.title}
+        kind={activeTab.kind}
+        users={users.filter((user) => user.roles.includes(activeTab.kind))}
+        {...shared}
+      />
     </>
   );
 }

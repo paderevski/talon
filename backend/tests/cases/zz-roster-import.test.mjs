@@ -83,7 +83,7 @@ export async function run({ baseUrl }) {
   const classes = (await (await admin.fetch(`${baseUrl}/api/admin/classes`)).json()).classes;
   const importClass = classes.filter((c) => c.name === "Import Class");
   assert(importClass.length === 1, "Expected exactly one Import Class (case-insensitive match)");
-  assert(importClass[0].teachers.length === 1 && importClass[0].students.length === 3, "Expected 1 teacher and 3 students in the class");
+  assert(importClass[0].teacher?.username === "imp_teacher" && importClass[0].students.length === 3, "Expected 1 teacher and 3 students in the class");
 
   // Running it again is safe: nobody new, passwords unchanged
   const again = await post(admin, baseUrl, { csv: csv.replace(/,\$5\.50|,25$/gm, ","), dryRun: false });
