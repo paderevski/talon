@@ -17,8 +17,9 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 2. **Baked CPU AMI** (boot stops installing the AWS CLI and pip each time).
 3. Leave downloaded data (`data/`, `.cache/`, `.talonignore`) out of
    "changed files".
-4. Test g6e.2xlarge on the box when it has capacity; decide when to open GPU
-   machines to students (`EC2_GPU_ADMIN_ONLY=false`, set on the box).
+4. Test g6e.2xlarge on the box when it has capacity. GPU machines are open
+   to students once the `ec2_gpu_admin_only = false` default (2026-11-04) is
+   applied; the apply replaces the web instance.
 5. Not code: ask LCPS IT for the `talon.lcps.org` DNS records and the Entra
    App Registration (lead time); decide exposure and subnet for ALB/WAF.
 
@@ -601,9 +602,10 @@ done (below); the adapter and everything after it are not built yet.
    (student documentation). A missing S3 permission for `changed/` was
    found and fixed during testing.
 4. **GPU (merged to `main` 2026-11-04; decided 2026-11-03).** Left: test
-   g6e.2xlarge on the box when it has capacity; open GPU to students
-   (`EC2_GPU_ADMIN_ONLY=false` in `/etc/talon/talon.env`, set on the box, not
-   through user_data, which would replace the instance).
+   g6e.2xlarge on the box when it has capacity; GPU opened to students
+   2026-11-04 (Terraform variable `ec2_gpu_admin_only`, default `false`, written into
+   `/etc/talon/talon.env` at first boot like `ec2_jobs_enabled`; changing it
+   replaces the web instance, which is fine since demo data is disposable).
    Checked that day in the LCPS account: G and P on-demand quotas 768 vCPUs
    each; on-demand prices g4dn.xlarge $0.526/h, g4dn.2xlarge $0.752/h,
    g6.xlarge $0.805/h, g7e.2xlarge $3.363/h (1x RTX PRO 6000, 96 GB);
