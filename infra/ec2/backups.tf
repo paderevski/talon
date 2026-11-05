@@ -1,8 +1,9 @@
-# Database backups: nightly pg_dump files in a private, versioned, KMS-encrypted
-# S3 bucket. The instance can write and read dumps but cannot delete them; only
-# the lifecycle rules below expire objects. The scripts that make the dumps live
-# in the repo (infra/backup/) and read the bucket name from SSM, so they do not
-# care whether Postgres is local, on another server, or RDS.
+# RETIRED (web tier phase 2, 2026-11-05): the old box's nightly pg_dump files.
+# The database is on RDS now, with its own automated backups and
+# point-in-time restore (rds.tf); nothing writes here any more and no server
+# can read it. The bucket, its key and its lifecycle rules stay so the
+# existing dumps expire on schedule (daily after backup_daily_retention_days,
+# monthly after backup_monthly_retention_days); remove this file after that.
 
 variable "backup_daily_retention_days" {
   description = "Days to keep nightly dumps (daily/ prefix)."
@@ -132,51 +133,6 @@ resource "aws_s3_bucket_policy" "backups" {
   bucket     = aws_s3_bucket.backups.id
   policy     = data.aws_iam_policy_document.backups_bucket.json
   depends_on = [aws_s3_bucket_public_access_block.backups]
-}
-
-# The scripts find the bucket here, so nothing about it is baked into user_data.
-resource "aws_ssm_parameter" "backup_bucket" {
-  name  = "${local.secrets_prefix}/backup-bucket"
-  type  = "String"
-  value = aws_s3_bucket.backups.id
-}
-
-# Instance permissions: write and read dumps, never delete or change bucket config.
-data "aws_iam_policy_document" "backup_access" {
-  statement {
-    sid       = "WriteAndReadDumps"
-    actions   = ["s3:PutObject", "s3:GetObject"]
-    resources = ["${aws_s3_bucket.backups.arn}/daily/*", "${aws_s3_bucket.backups.arn}/monthly/*"]
-  }
-
-  statement {
-    sid       = "ListDumps"
-    actions   = ["s3:ListBucket"]
-    resources = [aws_s3_bucket.backups.arn]
-  }
-
-  statement {
-    sid       = "UseBackupKeyViaS3Only"
-    actions   = ["kms:Decrypt", "kms:GenerateDataKey"]
-    resources = [aws_kms_key.backups.arn]
-    condition {
-      test     = "StringEquals"
-      variable = "kms:ViaService"
-      values   = ["s3.${var.aws_region}.amazonaws.com"]
-    }
-  }
-
-  statement {
-    sid       = "ReadBackupBucketName"
-    actions   = ["ssm:GetParameter"]
-    resources = [aws_ssm_parameter.backup_bucket.arn]
-  }
-}
-
-resource "aws_iam_role_policy" "backup_access" {
-  name   = "${local.name}-backup-access"
-  role   = aws_iam_role.instance.id
-  policy = data.aws_iam_policy_document.backup_access.json
 }
 
 output "backup_bucket" {

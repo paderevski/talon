@@ -57,7 +57,7 @@ infra/scripts/tunnel.sh          # then open http://localhost:8080
 infra/scripts/deploy.sh          # deploy origin/main (push first), then reseed demo data
 infra/scripts/deploy.sh B --keep-data   # deploy branch B without reseeding
 infra/scripts/shell.sh [id]      # shell on a web server (lists the others)
-infra/scripts/backup.sh status   # newest backups (also: now, restore-test, install)
+infra/scripts/db-bootstrap.sh    # RDS roles and grants (needs db_bootstrap = true)
 ```
 
 The scripts find web servers by tag (`Project=talon`, `Component=web`,
@@ -142,8 +142,8 @@ to the browser), so one `requestId` finds both sides of a request.
   because the box is reachable through the SSM tunnel and nothing else; see
   "Going public".
 - Plain HTTP on port 80 inside the tunnel (no TLS yet; the ALB adds it).
-- Changing `user_data.sh.tftpl` replaces the instance (database is reset;
-  restore from a backup by hand if it matters).
+- Changing `web_user_data.sh.tftpl` replaces the web server (about 10
+  minutes to rebuild; the data in RDS stays).
 - The local job runner executes `git clone` / `python3` directly on the host
   as the `talon` user, so jobs are not isolated. It passes only PATH, HOME and
   locale (not the server's environment) and sets `AWS_EC2_METADATA_DISABLED`,
@@ -180,6 +180,9 @@ Ordered so each item makes the next one easier. Items 1-8 and 12 are done;
    `/etc/talon/backup.env`, so a separate Postgres server or RDS only needs
    `BACKUP_DATABASE_URL` (and `RESTORE_ADMIN_URL`). Helpers:
    `infra/scripts/backup.sh status|now|restore-test|install`.)_
+   _Retired 2026-11-05 with the old box: RDS automated backups replace it;
+   the scripts, alarms and server access are gone, and the bucket stays
+   until its dumps expire (`backups.tf`)._
    CloudWatch alarms (`alarms.tf`): no successful backup in 36 hours, and
    a failed weekly restore test, both to SNS topic `talon-demo-alerts`. The
    alert email is set (`alert_email` in `terraform.tfvars`, gitignored) and
@@ -1079,9 +1082,11 @@ showed only its own `output.txt` (old snapshot download: 404). Counter
 restored to 1002.
 
 
-After the cutover: delete `user_data.sh.tftpl`, `infra/backup/`,
-`backup.sh` and the old-box code in `main.tf`; the backups bucket stays
-until its copies expire.
+After the cutover: ~~delete `user_data.sh.tftpl`, `infra/backup/`,
+`backup.sh` and the old-box code in `main.tf`~~ (done on branch
+`infra-cleanup`, 2026-11-05, with the first-boot fixes: nginx reloaded,
+CloudWatch agent installed and started by first boot itself); the backups
+bucket stays until its copies expire.
 
 ## History
 
