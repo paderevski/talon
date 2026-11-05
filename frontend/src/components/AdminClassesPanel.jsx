@@ -5,7 +5,7 @@ import {
   removeAdminClassMember,
   updateAdminClass,
 } from "../api/client";
-import { formatDollars } from "../utils/format";
+import { formatBlock, formatDollars } from "../utils/format";
 
 function MemberAdder({ label, role, candidates, onAdd, disabled }) {
   const [userId, setUserId] = useState("");
@@ -43,11 +43,12 @@ function MemberAdder({ label, role, candidates, onAdd, disabled }) {
 // Everything you can change about one class: members, name/term, archive.
 // Kept separate from the table so the drill-down style can change freely.
 function ClassMembers({ classItem, users, run, isBusy }) {
-  const [isRenaming, setIsRenaming] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState(classItem.name);
   const [term, setTerm] = useState(classItem.term || "");
+  const [block, setBlock] = useState(classItem.block || "");
 
-  const memberIds = new Set([...classItem.teachers, ...classItem.students].map((member) => member.id));
+  const memberIds = new Set(classItem.students.map((member) => member.id));
   const usersWithRole = (role) =>
     users.filter((user) => user.status === "active" && user.roles.includes(role) && !memberIds.has(user.id));
 
@@ -78,36 +79,35 @@ function ClassMembers({ classItem, users, run, isBusy }) {
   return (
     <div className="class-detail">
       <div className="class-detail-col">
-        <h3 className="class-detail-title">Teachers</h3>
-        <table>
-          <tbody>
-            {classItem.teachers.map((teacher) => memberRow(teacher))}
-            {classItem.teachers.length === 0 ? (
-              <tr><td className="form-hint">No teacher yet.</td></tr>
-            ) : null}
-          </tbody>
-        </table>
-        <MemberAdder
-          label="Add a teacher..."
-          role="teacher"
-          candidates={usersWithRole("teacher")}
-          disabled={isBusy}
-          onAdd={(userId, role) => run(() => addAdminClassMember(classItem.id, userId, role), "Teacher added")}
-        />
+        <h3 className="class-detail-title">Teacher</h3>
+        {classItem.teacher ? (
+          <table>
+            <tbody>{memberRow(classItem.teacher)}</tbody>
+          </table>
+        ) : (
+          <MemberAdder
+            label="Assign a teacher..."
+            role="teacher"
+            candidates={usersWithRole("teacher")}
+            disabled={isBusy}
+            onAdd={(userId, role) => run(() => addAdminClassMember(classItem.id, userId, role), "Teacher assigned")}
+          />
+        )}
 
         <h3 className="class-detail-title">Class</h3>
-        {isRenaming ? (
+        {isEditing ? (
           <div className="class-member-add">
             <input className="form-input" aria-label="Class name" value={name} onChange={(event) => setName(event.target.value)} />
+            <input className="form-input class-block-input" aria-label="Block" placeholder="Block" value={block} onChange={(event) => setBlock(event.target.value)} />
             <input className="form-input" aria-label="Term" placeholder="Term" value={term} onChange={(event) => setTerm(event.target.value)} />
             <button
               type="button"
               className="btn btn-primary btn-sm"
-              disabled={isBusy || !name.trim()}
+              disabled={isBusy || !name.trim() || !block.trim()}
               onClick={async () => {
-                const saved = await run(() => updateAdminClass(classItem.id, { name, term }), `Saved ${name}`);
+                const saved = await run(() => updateAdminClass(classItem.id, { name, term, block }), `Saved ${name}`);
                 if (saved) {
-                  setIsRenaming(false);
+                  setIsEditing(false);
                 }
               }}
             >
@@ -116,15 +116,15 @@ function ClassMembers({ classItem, users, run, isBusy }) {
           </div>
         ) : null}
         <div className="form-actions">
-          <button type="button" className="btn btn-secondary btn-sm" onClick={() => setIsRenaming((current) => !current)}>
-            {isRenaming ? "Cancel rename" : "Rename"}
+          <button type="button" className="btn btn-secondary btn-sm" onClick={() => setIsEditing((current) => !current)}>
+            {isEditing ? "Cancel" : "Edit name, block, term"}
           </button>
           <button
             type="button"
             className="btn btn-secondary btn-sm"
             disabled={isBusy}
             onClick={() => {
-              if (window.confirm(`Archive ${classItem.name}? Its teachers will stop seeing it.`)) {
+              if (window.confirm(`Archive ${classItem.name}? Its teacher will stop seeing it.`)) {
                 run(() => updateAdminClass(classItem.id, { archived: true }), `Archived ${classItem.name}`);
               }
             }}
@@ -162,34 +162,32 @@ const textCompare = (a, b) => a.localeCompare(b, undefined, { sensitivity: "base
 
 const sorters = {
   className: (a, b) => textCompare(a.classItem.name, b.classItem.name),
+  block: (a, b) => textCompare(a.classItem.block || "\uffff", b.classItem.block || "\uffff"),
   term: (a, b) => textCompare(a.classItem.term || "", b.classItem.term || ""),
   teacher: (a, b) => textCompare(a.teacher?.fullName || "￿", b.teacher?.fullName || "￿"),
   students: (a, b) => a.classItem.students.length - b.classItem.students.length,
   remaining: (a, b) => a.remaining - b.remaining,
 };
 
-// One row per (class, teacher). A class without a teacher still gets one row.
+// One row per class (a section: name + teacher + block).
 function toRows(classes) {
-  return classes.flatMap((classItem) => {
-    const remaining = classItem.students.reduce((sum, student) => sum + (student.balance || 0), 0);
-    const teachers = classItem.teachers.length ? classItem.teachers : [null];
-    return teachers.map((teacher) => ({
-      key: `${classItem.id}:${teacher?.id ?? "none"}`,
-      classItem,
-      teacher,
-      remaining,
-    }));
-  });
+  return classes.map((classItem) => ({
+    key: String(classItem.id),
+    classItem,
+    teacher: classItem.teacher,
+    remaining: classItem.students.reduce((sum, student) => sum + (student.balance || 0), 0),
+  }));
 }
 
 export default function AdminClassesPanel({ classes, users, onChanged }) {
-  const [form, setForm] = useState({ name: "", term: "", teacherId: "" });
+  const [form, setForm] = useState({ name: "", block: "", term: "", teacherId: "" });
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
   const [search, setSearch] = useState("");
   const [termFilter, setTermFilter] = useState("all");
+  const [blockFilter, setBlockFilter] = useState("all");
   const [teacherFilter, setTeacherFilter] = useState("all");
   const [sort, setSort] = useState({ key: "className", dir: 1 });
   const [openKey, setOpenKey] = useState(null);
@@ -214,11 +212,11 @@ export default function AdminClassesPanel({ classes, users, onChanged }) {
   async function onCreate(event) {
     event.preventDefault();
     const created = await run(
-      () => createAdminClass({ name: form.name, term: form.term, teacherId: form.teacherId || undefined }),
+      () => createAdminClass({ name: form.name, block: form.block, term: form.term, teacherId: form.teacherId || undefined }),
       `Created ${form.name}`,
     );
     if (created) {
-      setForm({ name: "", term: "", teacherId: "" });
+      setForm({ name: "", block: "", term: "", teacherId: "" });
       setIsFormOpen(false);
     }
   }
@@ -227,6 +225,10 @@ export default function AdminClassesPanel({ classes, users, onChanged }) {
   const allRows = useMemo(() => toRows(classes), [classes]);
   const terms = useMemo(
     () => [...new Set(classes.map((classItem) => classItem.term || ""))].sort(textCompare),
+    [classes],
+  );
+  const blocks = useMemo(
+    () => [...new Set(classes.map((classItem) => classItem.block || ""))].sort(textCompare),
     [classes],
   );
   const rowTeachers = useMemo(() => {
@@ -239,6 +241,7 @@ export default function AdminClassesPanel({ classes, users, onChanged }) {
     const needle = search.trim().toLowerCase();
     return allRows
       .filter((row) => termFilter === "all" || (row.classItem.term || "") === termFilter)
+      .filter((row) => blockFilter === "all" || (row.classItem.block || "") === blockFilter)
       .filter((row) => {
         if (teacherFilter === "all") return true;
         if (teacherFilter === "none") return !row.teacher;
@@ -251,10 +254,10 @@ export default function AdminClassesPanel({ classes, users, onChanged }) {
             value.toLowerCase().includes(needle),
           ),
       )
-      .sort((a, b) => sort.dir * sorters[sort.key](a, b) || sorters.className(a, b) || sorters.teacher(a, b));
-  }, [allRows, search, termFilter, teacherFilter, sort]);
+      .sort((a, b) => sort.dir * sorters[sort.key](a, b) || sorters.className(a, b) || sorters.block(a, b) || sorters.teacher(a, b));
+  }, [allRows, search, termFilter, blockFilter, teacherFilter, sort]);
 
-  const isFiltered = search || termFilter !== "all" || teacherFilter !== "all";
+  const isFiltered = search || termFilter !== "all" || blockFilter !== "all" || teacherFilter !== "all";
 
   function sortBy(key) {
     setSort((current) => ({ key, dir: current.key === key ? -current.dir : 1 }));
@@ -293,6 +296,17 @@ export default function AdminClassesPanel({ classes, users, onChanged }) {
               required
               autoFocus
               onChange={(event) => setForm({ ...form, name: event.target.value })}
+            />
+          </div>
+          <div className="form-group">
+            <label className="form-label" htmlFor="class-block">Block</label>
+            <input
+              id="class-block"
+              className="form-input"
+              placeholder="5"
+              value={form.block}
+              required
+              onChange={(event) => setForm({ ...form, block: event.target.value })}
             />
           </div>
           <div className="form-group">
@@ -340,6 +354,12 @@ export default function AdminClassesPanel({ classes, users, onChanged }) {
           value={search}
           onChange={(event) => setSearch(event.target.value)}
         />
+        <select className="form-select" aria-label="Filter by block" value={blockFilter} onChange={(event) => setBlockFilter(event.target.value)}>
+          <option value="all">All blocks</option>
+          {blocks.map((block) => (
+            <option key={block} value={block}>{formatBlock(block) || "No block"}</option>
+          ))}
+        </select>
         <select className="form-select" aria-label="Filter by term" value={termFilter} onChange={(event) => setTermFilter(event.target.value)}>
           <option value="all">All terms</option>
           {terms.map((term) => (
@@ -372,6 +392,7 @@ export default function AdminClassesPanel({ classes, users, onChanged }) {
           <thead>
             <tr>
               {header("className", "Class")}
+              {header("block", "Block")}
               {header("term", "Term")}
               {header("teacher", "Teacher")}
               {header("students", "Students", "cell-num")}
@@ -386,6 +407,7 @@ export default function AdminClassesPanel({ classes, users, onChanged }) {
                 <Fragment key={row.key}>
                   <tr className={isOpen ? "row-open" : undefined}>
                     <td className="cell-strong">{row.classItem.name}</td>
+                    <td>{formatBlock(row.classItem.block) || <span className="form-hint">No block</span>}</td>
                     <td className="mono-sm">{row.classItem.term || "—"}</td>
                     <td>
                       {row.teacher ? (
@@ -412,7 +434,7 @@ export default function AdminClassesPanel({ classes, users, onChanged }) {
                   </tr>
                   {isOpen ? (
                     <tr className="row-detail">
-                      <td colSpan={6}>
+                      <td colSpan={7}>
                         <ClassMembers classItem={row.classItem} users={users} run={run} isBusy={isBusy} />
                       </td>
                     </tr>
@@ -422,7 +444,7 @@ export default function AdminClassesPanel({ classes, users, onChanged }) {
             })}
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={6} className="form-hint">
+                <td colSpan={7} className="form-hint">
                   {allRows.length === 0 ? "No classes yet." : "Nothing matches these filters."}
                 </td>
               </tr>

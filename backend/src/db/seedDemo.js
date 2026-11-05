@@ -172,15 +172,12 @@ export async function seedDemoUsers(pool) {
           createdBy: adminId,
         });
 
+        // Each demo teacher has one class, in its own block.
         const classResult = await client.query(
-          "INSERT INTO classes (name, term) VALUES ($1, '2026-27') RETURNING id",
-          [teacherSeed.className],
+          "INSERT INTO classes (name, term, block, teacher_id) VALUES ($1, '2026-27', $2, $3) RETURNING id",
+          [teacherSeed.className, String(teachers.indexOf(teacherSeed) + 1), teacherId],
         );
         const classId = classResult.rows[0].id;
-        await client.query(
-          "INSERT INTO class_members (class_id, user_id, member_role) VALUES ($1, $2, 'teacher')",
-          [classId, teacherId],
-        );
 
         for (const studentSeed of teacherSeed.students) {
           const studentId = await insertUser(client, {
@@ -188,7 +185,7 @@ export async function seedDemoUsers(pool) {
             roles: ["student"],
           });
           await client.query(
-            "INSERT INTO class_members (class_id, user_id, member_role) VALUES ($1, $2, 'student')",
+            "INSERT INTO class_members (class_id, user_id) VALUES ($1, $2)",
             [classId, studentId],
           );
 

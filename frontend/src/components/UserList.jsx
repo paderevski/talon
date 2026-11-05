@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import BudgetCell from "./BudgetCell";
+import { formatClassName } from "../utils/format";
 
 // "Ada Lovelace" sorts as "lovelace ada", so lists read alphabetically by last name.
 function nameKey(user) {
@@ -98,7 +99,8 @@ export default function UserList({
             <option value="none">No class</option>
             {classes.map((classItem) => (
               <option key={classItem.id} value={String(classItem.id)}>
-                {classItem.name}
+                {formatClassName(classItem.name, classItem.block)}
+                {classItem.teacher ? ` (${classItem.teacher.fullName})` : ""}
               </option>
             ))}
           </select>
@@ -144,7 +146,7 @@ export default function UserList({
                     {user.status === "disabled" ? <div className="form-hint">Disabled</div> : null}
                   </td>
                   {kind !== "admin" ? (
-                    <td>{user.classes.map((classItem) => classItem.name).join(", ") || "—"}</td>
+                    <td>{user.classes.map((classItem) => formatClassName(classItem.name, classItem.block)).join(", ") || "—"}</td>
                   ) : null}
                   {hasBudget ? (
                     <td>

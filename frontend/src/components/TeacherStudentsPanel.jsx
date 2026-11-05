@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { allocateStudentBudget, fetchTeacherRoster } from "../api/client";
-import { formatDollars } from "../utils/format";
+import { formatClassName, formatDollars } from "../utils/format";
 
 const emptyRoster = {
   teacher: {
@@ -54,7 +54,7 @@ export function ClassTables({ classes, onOpenStudentView, onAllocate }) {
   return classes.map((classItem) => (
     <div key={classItem.id ?? classItem.className}>
       <div className="panel-head subhead">
-        <h3 className="panel-title">{classItem.className}</h3>
+        <h3 className="panel-title">{formatClassName(classItem.className, classItem.block)}</h3>
         <span className="status-pill queued">
           <span className="sdot" />
           {classItem.students.length} student{classItem.students.length === 1 ? "" : "s"}

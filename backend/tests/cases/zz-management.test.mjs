@@ -77,6 +77,7 @@ export async function run({ baseUrl }) {
   const created = await send(admin, baseUrl, "POST", "/api/admin/classes", {
     name: "Mgmt Class",
     term: "2026-27",
+    block: "M1",
     teacherId: teacher.payload.id,
   });
   assert(created.status === 201, `Expected class created, got ${created.status}`);
@@ -92,6 +93,35 @@ export async function run({ baseUrl }) {
     memberRole: "student",
   });
   assert(added.status === 201, `Expected member added, got ${added.status}`);
+
+  // A class is one section (name + teacher + block); scheduling rules hold.
+  const createSection = (body) => send(admin, baseUrl, "POST", "/api/admin/classes", { term: "2026-27", ...body });
+  const enrol = (id) =>
+    send(admin, baseUrl, "POST", `/api/admin/classes/${id}/members`, { userId: pupil.payload.id, memberRole: "student" });
+  assert((await createSection({ name: "No Block" })).status === 400, "Expected a class without a block to 400");
+  const teacherClash = await createSection({ name: "Other Course", block: "m1", teacherId: teacher.payload.id });
+  assert(teacherClash.status === 409 && /teacher already teaches/.test(teacherClash.payload.message),
+    `Expected one class per teacher per block (case-insensitive), got ${teacherClash.status}`);
+  const sameBlock = await createSection({ name: "Other Course", block: "M1" });
+  assert(sameBlock.status === 201, "Expected another teacher's (unassigned) class in the same block");
+  const blockClash = await enrol(sameBlock.payload.id);
+  assert(blockClash.status === 409 && /two classes in block M1/.test(blockClash.payload.message),
+    `Expected a student in one class per block, got ${blockClash.status}`);
+  const otherSection = await createSection({ name: "Mgmt Class", block: "M2" });
+  assert(otherSection.status === 201, "Expected a second section of the same course in another block");
+  const courseClash = await enrol(otherSection.payload.id);
+  assert(courseClash.status === 409 && /another section of Mgmt Class/.test(courseClash.payload.message),
+    `Expected a student in one section per course, got ${courseClash.status}`);
+  const duplicateSection = await createSection({ name: "mgmt class", block: "M2" });
+  assert(duplicateSection.status === 409, `Expected a duplicate (name, teacher, block) to 409, got ${duplicateSection.status}`);
+  const secondTeacher = await send(admin, baseUrl, "POST", `/api/admin/classes/${classId}/members`, {
+    userId: listed.payload.users.find((user) => user.username === "teacher_ada").id,
+    memberRole: "teacher",
+  });
+  assert(secondTeacher.status === 409, `Expected a second teacher on one class to 409, got ${secondTeacher.status}`);
+  for (const extra of [sameBlock, otherSection]) {
+    await send(admin, baseUrl, "PATCH", `/api/admin/classes/${extra.payload.id}`, { archived: true });
+  }
 
   const blocked = await send(admin, baseUrl, "PATCH", `/api/admin/users/${teacher.payload.id}`, {
     roles: ["student"],

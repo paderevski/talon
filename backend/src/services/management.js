@@ -114,10 +114,13 @@ export async function listUsers({ pool = getPool() } = {}) {
            pool.balance_cents AS pool_cents,
            (SELECT g.github_login FROM github_accounts g WHERE g.user_id = u.id) AS github_login,
            COALESCE((
-             SELECT json_agg(json_build_object('id', c.id, 'name', c.name, 'memberRole', m.member_role)
-                             ORDER BY c.name)
-             FROM class_members m JOIN classes c ON c.id = m.class_id AND c.archived_at IS NULL
-             WHERE m.user_id = u.id
+             SELECT json_agg(json_build_object('id', c.id, 'name', c.name, 'block', c.block,
+                                               'memberRole', CASE WHEN c.teacher_id = u.id THEN 'teacher' ELSE 'student' END)
+                             ORDER BY lower(c.name), lower(c.block))
+             FROM classes c
+             WHERE c.archived_at IS NULL
+               AND (c.teacher_id = u.id
+                    OR EXISTS (SELECT 1 FROM class_members m WHERE m.class_id = c.id AND m.user_id = u.id))
            ), '[]'::json) AS classes
     FROM users u
     LEFT JOIN budget_accounts personal ON personal.owner_user_id = u.id AND personal.kind = 'personal'
@@ -223,9 +226,11 @@ export async function updateUser(userId, input, actor) {
             continue;
           }
           const memberships = await client.query(
-            `SELECT 1 FROM class_members m JOIN classes c ON c.id = m.class_id AND c.archived_at IS NULL
-             WHERE m.user_id = $1 AND m.member_role = $2 LIMIT 1`,
-            [userId, role],
+            role === "teacher"
+              ? "SELECT 1 FROM classes c WHERE c.teacher_id = $1 AND c.archived_at IS NULL LIMIT 1"
+              : `SELECT 1 FROM class_members m JOIN classes c ON c.id = m.class_id AND c.archived_at IS NULL
+                 WHERE m.user_id = $1 LIMIT 1`,
+            [userId],
           );
           if (memberships.rows.length > 0) {
             throw new ManagementError(
@@ -303,16 +308,21 @@ export async function changeOwnPassword(userId, currentPassword, newPassword, ke
 }
 
 // ---- Classes -----------------------------------------------------------
+// A class is one section: course name + teacher + block, with its own
+// student roster (class_members). The database enforces the scheduling rules
+// (migration 009); violations surface as 409s via sendManagementError.
 
 export async function listClasses({ includeArchived = false, pool = getPool() } = {}) {
   const [classes, members] = await Promise.all([
     pool.query(
-      `SELECT id, name, term, archived_at FROM classes
-       ${includeArchived ? "" : "WHERE archived_at IS NULL"} ORDER BY lower(name), id`,
+      `SELECT c.id, c.name, c.term, c.block, c.archived_at,
+              t.id AS teacher_id, t.username AS teacher_username, t.display_name AS teacher_name
+       FROM classes c LEFT JOIN users t ON t.id = c.teacher_id
+       ${includeArchived ? "" : "WHERE c.archived_at IS NULL"}
+       ORDER BY lower(c.name), lower(c.block), lower(t.display_name), c.id`,
     ),
     pool.query(`
-      SELECT m.class_id, m.member_role, u.id AS user_id, u.username, u.display_name,
-             a.balance_cents
+      SELECT m.class_id, u.id AS user_id, u.username, u.display_name, a.balance_cents
       FROM class_members m
       JOIN users u ON u.id = m.user_id
       LEFT JOIN budget_accounts a ON a.owner_user_id = u.id AND a.kind = 'personal'
@@ -320,23 +330,24 @@ export async function listClasses({ includeArchived = false, pool = getPool() } 
     `),
   ]);
 
-  return classes.rows.map((row) => {
-    const classMembers = members.rows.filter((member) => Number(member.class_id) === Number(row.id));
-    const shape = (member) => ({
-      id: member.user_id,
-      username: member.username,
-      fullName: member.display_name,
-      balance: centsToDollars(member.balance_cents ?? 0),
-    });
-    return {
-      id: Number(row.id),
-      name: row.name,
-      term: row.term,
-      archived: row.archived_at !== null,
-      teachers: classMembers.filter((member) => member.member_role === "teacher").map(shape),
-      students: classMembers.filter((member) => member.member_role === "student").map(shape),
-    };
-  });
+  return classes.rows.map((row) => ({
+    id: Number(row.id),
+    name: row.name,
+    term: row.term,
+    block: row.block,
+    archived: row.archived_at !== null,
+    teacher: row.teacher_id
+      ? { id: row.teacher_id, username: row.teacher_username, fullName: row.teacher_name }
+      : null,
+    students: members.rows
+      .filter((member) => Number(member.class_id) === Number(row.id))
+      .map((member) => ({
+        id: member.user_id,
+        username: member.username,
+        fullName: member.display_name,
+        balance: centsToDollars(member.balance_cents ?? 0),
+      })),
+  }));
 }
 
 async function assertUserHasRole(client, userId, role) {
@@ -349,65 +360,92 @@ async function assertUserHasRole(client, userId, role) {
   }
 }
 
+async function assertTeacher(client, userId) {
+  const user = await client.query("SELECT 1 FROM users WHERE id = $1", [userId]);
+  if (user.rows.length === 0) {
+    throw new ManagementError("User not found", 404);
+  }
+  await assertUserHasRole(client, userId, "teacher");
+}
+
+function cleanBlock(value) {
+  return cleanText(value, 20);
+}
+
 export async function createClass(input) {
   const name = cleanText(input?.name, 200);
   if (!name) {
     throw new ManagementError("Class name is required");
   }
+  const block = cleanBlock(input?.block);
+  if (!block) {
+    throw new ManagementError("Block is required");
+  }
   const term = cleanText(input?.term, 50) || null;
+  const teacherId = input?.teacherId || null;
 
   return withTransaction(async (client) => {
-    const inserted = await client.query(
-      "INSERT INTO classes (name, term) VALUES ($1, $2) RETURNING id",
-      [name, term],
-    );
-    const classId = Number(inserted.rows[0].id);
-    if (input?.teacherId) {
-      await assertUserHasRole(client, input.teacherId, "teacher");
-      await client.query(
-        "INSERT INTO class_members (class_id, user_id, member_role) VALUES ($1, $2, 'teacher')",
-        [classId, input.teacherId],
-      );
+    if (teacherId) {
+      await assertTeacher(client, teacherId);
     }
-    return classId;
+    const inserted = await client.query(
+      "INSERT INTO classes (name, term, block, teacher_id) VALUES ($1, $2, $3, $4) RETURNING id",
+      [name, term, block, teacherId],
+    );
+    return Number(inserted.rows[0].id);
   });
 }
 
+// Changes any of: name, term, block, teacherId (null = unassign), archived.
 export async function updateClass(classId, input) {
-  const found = await getPool().query("SELECT id FROM classes WHERE id = $1", [classId]);
-  if (found.rows.length === 0) {
-    throw new ManagementError("Class not found", 404);
-  }
-
-  if (input.name !== undefined) {
-    const name = cleanText(input.name, 200);
-    if (!name) {
-      throw new ManagementError("Class name is required");
+  await withTransaction(async (client) => {
+    const found = await client.query("SELECT id FROM classes WHERE id = $1 FOR UPDATE", [classId]);
+    if (found.rows.length === 0) {
+      throw new ManagementError("Class not found", 404);
     }
-    await getPool().query("UPDATE classes SET name = $2 WHERE id = $1", [classId, name]);
-  }
-  if (input.term !== undefined) {
-    await getPool().query("UPDATE classes SET term = $2 WHERE id = $1", [
-      classId,
-      cleanText(input.term, 50) || null,
-    ]);
-  }
-  if (input.archived !== undefined) {
-    await getPool().query(
-      `UPDATE classes SET archived_at = ${input.archived ? "COALESCE(archived_at, now())" : "NULL"}
-       WHERE id = $1`,
-      [classId],
-    );
-  }
+
+    if (input.name !== undefined) {
+      const name = cleanText(input.name, 200);
+      if (!name) {
+        throw new ManagementError("Class name is required");
+      }
+      await client.query("UPDATE classes SET name = $2 WHERE id = $1", [classId, name]);
+    }
+    if (input.term !== undefined) {
+      await client.query("UPDATE classes SET term = $2 WHERE id = $1", [classId, cleanText(input.term, 50) || null]);
+    }
+    if (input.block !== undefined) {
+      const block = cleanBlock(input.block);
+      if (!block) {
+        throw new ManagementError("Block is required");
+      }
+      await client.query("UPDATE classes SET block = $2 WHERE id = $1", [classId, block]);
+    }
+    if (input.teacherId !== undefined) {
+      if (input.teacherId) {
+        await assertTeacher(client, input.teacherId);
+      }
+      await client.query("UPDATE classes SET teacher_id = $2 WHERE id = $1", [classId, input.teacherId || null]);
+    }
+    if (input.archived !== undefined) {
+      await client.query(
+        `UPDATE classes SET archived_at = ${input.archived ? "COALESCE(archived_at, now())" : "NULL"}
+         WHERE id = $1`,
+        [classId],
+      );
+    }
+  });
 }
 
+// memberRole "student" enrols a student; "teacher" assigns the class's one
+// teacher (409 if it already has a different one).
 export async function addClassMember(classId, userId, memberRole) {
   if (!["teacher", "student"].includes(memberRole)) {
     throw new ManagementError("Member role must be teacher or student");
   }
 
   await withTransaction(async (client) => {
-    const found = await client.query("SELECT archived_at FROM classes WHERE id = $1", [classId]);
+    const found = await client.query("SELECT archived_at, teacher_id FROM classes WHERE id = $1 FOR UPDATE", [classId]);
     if (found.rows.length === 0) {
       throw new ManagementError("Class not found", 404);
     }
@@ -419,19 +457,28 @@ export async function addClassMember(classId, userId, memberRole) {
       throw new ManagementError("User not found", 404);
     }
     await assertUserHasRole(client, userId, memberRole);
+
+    if (memberRole === "teacher") {
+      const current = found.rows[0].teacher_id;
+      if (current && current !== userId) {
+        throw new ManagementError("This class already has a teacher. Remove them first, or create another section.", 409);
+      }
+      await client.query("UPDATE classes SET teacher_id = $2 WHERE id = $1", [classId, userId]);
+      return;
+    }
     await client.query(
-      `INSERT INTO class_members (class_id, user_id, member_role) VALUES ($1, $2, $3)
-       ON CONFLICT (class_id, user_id) DO UPDATE SET member_role = EXCLUDED.member_role`,
-      [classId, userId, memberRole],
+      "INSERT INTO class_members (class_id, user_id) VALUES ($1, $2) ON CONFLICT (class_id, user_id) DO NOTHING",
+      [classId, userId],
     );
   });
 }
 
+// Removes a student from the roster, or unassigns the teacher.
 export async function removeClassMember(classId, userId) {
-  await getPool().query("DELETE FROM class_members WHERE class_id = $1 AND user_id = $2", [
-    classId,
-    userId,
-  ]);
+  await withTransaction(async (client) => {
+    await client.query("UPDATE classes SET teacher_id = NULL WHERE id = $1 AND teacher_id = $2", [classId, userId]);
+    await client.query("DELETE FROM class_members WHERE class_id = $1 AND user_id = $2", [classId, userId]);
+  });
 }
 
 // ---- Budgets -----------------------------------------------------------
@@ -477,9 +524,8 @@ export async function allocateToStudent({ teacher, studentUsername, amount, note
   await withTransaction(async (client) => {
     const student = await client.query(
       `SELECT s.id FROM users s
-       JOIN class_members sm ON sm.user_id = s.id AND sm.member_role = 'student'
-       JOIN class_members tm ON tm.class_id = sm.class_id AND tm.member_role = 'teacher' AND tm.user_id = $2
-       JOIN classes c ON c.id = sm.class_id AND c.archived_at IS NULL
+       JOIN class_members sm ON sm.user_id = s.id
+       JOIN classes c ON c.id = sm.class_id AND c.archived_at IS NULL AND c.teacher_id = $2
        WHERE lower(s.username) = lower($1) AND s.status = 'active'
        LIMIT 1`,
       [cleanText(studentUsername, 100), teacher.id],
@@ -509,7 +555,19 @@ export async function allocateToStudent({ teacher, studentUsername, amount, note
 
 // Maps service errors to HTTP responses; anything else goes to the
 // generic error handler.
+// Scheduling rules enforced by the database (migration 009).
+const scheduleConflicts = {
+  classes_key_uniq: "That class already exists for this teacher and block",
+  classes_teacher_block_uniq: "That teacher already teaches a class in this block",
+};
+
 export function sendManagementError(error, res, next) {
+  if (error?.code === "23505" && error.constraint?.startsWith("class_members_student_")) {
+    return res.status(409).json({ message: error.message });
+  }
+  if (error?.code === "23505" && scheduleConflicts[error.constraint]) {
+    return res.status(409).json({ message: scheduleConflicts[error.constraint] });
+  }
   if (error instanceof ManagementError) {
     return res.status(error.status).json({ message: error.message, report: error.report });
   }

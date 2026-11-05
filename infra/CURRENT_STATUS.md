@@ -791,6 +791,19 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
 `/api/admin/users|classes|budget/adjustments`, `/api/teacher/allocations`,
 `/api/auth/password`; logic in `backend/src/services/management.js`. Still to do:
 
+- Class sections (migration 009, branch `class-sections`, not merged yet):
+  a class is one section, keyed by course name + teacher + block, with its
+  own roster ("Calculus" with Tom in block 5, Tom in block 6 and Greg in
+  block 5 are three classes). `classes.teacher_id` replaces teacher rows in
+  `class_members` (now students only); block is required for new classes,
+  NULL only on older ones. The database enforces, for active classes: the
+  key is unique, a teacher has one class per block, a student has one class
+  per block and one section per course (a trigger; violations are 409s
+  with a readable message). Archiving frees the slots for the next year.
+  On migrate, a class that had several teachers keeps the first; the others
+  get an empty section of their own. CSV import still matches classes by
+  name only (errors when a name has several sections); adding block and
+  teacher columns to the import is still to do.
 - Roster provisioning: only pre-provisioned users may sign in (decided).
   CSV import exists; an SIS sync is still to do.
 - Term rollover: reset budgets, return pool money to the admin (archiving
@@ -992,4 +1005,5 @@ migrations take an advisory lock (concurrent deploys are safe).
 - 2026-11-03: GitHub App sign-in replaces PATs (item 13); merged to `main`.
 - 2026-11-03: Code-source choice (GitHub / public / Drive mock-up), job folders (migration 007), admin GitHub unlink, revoked-token handling; merged to `main`.
 - 2026-11-03: Script arguments (migration 008) and a branch menu; merged to `main`.
+- 2026-11-04: Class sections (migration 009) on branch `class-sections`, not merged: a class is name + teacher + block; see Management screens.
 - `infra_2/` is the older EKS design, kept for reference only.

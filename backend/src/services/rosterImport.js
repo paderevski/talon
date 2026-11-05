@@ -15,6 +15,9 @@ import {
 //   username, name, email, role, class, budget
 // Only `username` is required. New users get a generated password; existing
 // usernames are never changed (their class assignment is still applied).
+// A class is one section (name + teacher + block). Import matches by name
+// only, so a name must be unambiguous: one active class, or none (then it is
+// created without a block). A teacher row becomes that class's teacher.
 // All-or-nothing: if any row is invalid nothing is written.
 
 export const maxImportRows = 500;
@@ -138,11 +141,19 @@ async function planImport(csv, defaultRole, pool) {
     pool.query(`SELECT u.id, lower(u.username) AS username, lower(u.email) AS email,
                        ARRAY(SELECT r.role::text FROM user_roles r WHERE r.user_id = u.id) AS roles
                 FROM users u`),
-    pool.query("SELECT id, name FROM classes WHERE archived_at IS NULL"),
+    pool.query("SELECT id, name, teacher_id FROM classes WHERE archived_at IS NULL"),
   ]);
   const usersByName = new Map(existingUsers.rows.map((row) => [row.username, row]));
   const emailOwners = new Map(existingUsers.rows.filter((row) => row.email).map((row) => [row.email, row.username]));
-  const classIdsByName = new Map(existingClasses.rows.map((row) => [row.name.trim().toLowerCase(), Number(row.id)]));
+  const sectionsByName = new Map();
+  for (const row of existingClasses.rows) {
+    const classKey = row.name.trim().toLowerCase();
+    sectionsByName.set(classKey, [...(sectionsByName.get(classKey) ?? []), row]);
+  }
+  const classIdsByName = new Map(
+    [...sectionsByName].filter(([, sections]) => sections.length === 1).map(([classKey, [row]]) => [classKey, Number(row.id)]),
+  );
+  const teacherLineByClass = new Map(); // lower class name -> line that assigns its teacher
 
   const seenUsernames = new Map();
   const seenEmails = new Map();
@@ -223,8 +234,21 @@ async function planImport(csv, defaultRole, pool) {
         }
       });
       const classKey = row.className.toLowerCase();
-      if (!classIdsByName.has(classKey) && !newClassNames.has(classKey)) {
+      const sections = sectionsByName.get(classKey) ?? [];
+      if (sections.length > 1) {
+        row.errors.push(`${row.className} has ${sections.length} sections; add this user from the Classes view`);
+      } else if (sections.length === 0 && !newClassNames.has(classKey)) {
         newClassNames.set(classKey, row.className);
+      }
+      if (row.memberRole === "teacher" && sections.length <= 1) {
+        const currentTeacher = sections[0]?.teacher_id;
+        if (currentTeacher && currentTeacher !== row.existingId) {
+          row.errors.push(`${row.className} already has a teacher`);
+        } else if (teacherLineByClass.has(classKey)) {
+          row.errors.push(`${row.className} already gets a teacher on line ${teacherLineByClass.get(classKey)}`);
+        } else {
+          teacherLineByClass.set(classKey, line);
+        }
       }
     }
 
@@ -320,11 +344,15 @@ export async function importRoster({ csv, defaultRole = "student", dryRun = true
       }
 
       if (row.className) {
-        await client.query(
-          `INSERT INTO class_members (class_id, user_id, member_role) VALUES ($1, $2, $3)
-           ON CONFLICT (class_id, user_id) DO UPDATE SET member_role = EXCLUDED.member_role`,
-          [classIds.get(row.className.toLowerCase()), userId, row.memberRole],
-        );
+        const classId = classIds.get(row.className.toLowerCase());
+        if (row.memberRole === "teacher") {
+          await client.query("UPDATE classes SET teacher_id = $2 WHERE id = $1", [classId, userId]);
+        } else {
+          await client.query(
+            "INSERT INTO class_members (class_id, user_id) VALUES ($1, $2) ON CONFLICT (class_id, user_id) DO NOTHING",
+            [classId, userId],
+          );
+        }
       }
     }
   });

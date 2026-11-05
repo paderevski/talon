@@ -7,3 +7,18 @@ export function formatDollars(value) {
 
   return amount.toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
+
+// "5" -> "Block 5"; anything else ("5A", "B5") is shown as entered.
+export function formatBlock(block) {
+  const value = String(block ?? "").trim();
+  if (!value) {
+    return "";
+  }
+  return /^\d+$/.test(value) ? `Block ${value}` : value;
+}
+
+// A class is one section: "Calculus · Block 5". Legacy classes may have no block.
+export function formatClassName(name, block) {
+  const label = formatBlock(block);
+  return label ? `${name} · ${label}` : name;
+}

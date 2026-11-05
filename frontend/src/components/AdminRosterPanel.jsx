@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchAdminRoster } from "../api/client";
-import { formatDollars } from "../utils/format";
+import { formatClassName, formatDollars } from "../utils/format";
 
 const emptyRoster = {
   stats: {
@@ -90,9 +90,9 @@ export default function AdminRosterPanel({ authUser, refreshKey = 0 }) {
           </div>
           <div className="results-grid">
             {roster.classes.map((classItem) => (
-              <article key={`${classItem.teacherUsername}-${classItem.className}`} className="result-card">
+              <article key={classItem.id} className="result-card">
                 <div className="result-card-head">
-                  <div className="result-job-name">{classItem.className}</div>
+                  <div className="result-job-name">{formatClassName(classItem.className, classItem.block)}</div>
                   <span className="status-pill queued">
                     <span className="sdot" />
                     {classItem.students.length} student{classItem.students.length === 1 ? "" : "s"}

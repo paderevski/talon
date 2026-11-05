@@ -1054,3 +1054,4 @@ button.source-placeholder:disabled { color: var(--text-muted); cursor: not-allow
 @media (max-width: 900px) {
   .class-detail { grid-template-columns: 1fr; }
 }
+.class-member-add .class-block-input { flex: 0 0 90px; }
