@@ -3,10 +3,13 @@
 //   npm run db:create-admin --workspace backend -- --username you@lcps.org --name "Your Name"
 import { randomBytes } from "node:crypto";
 import { parseArgs } from "node:util";
-import { closePool, describeDatabase, getPool, withTransaction } from "../src/db/pool.js";
+import { closePool, describeDatabase, getPool, useMigrationRole, withTransaction } from "../src/db/pool.js";
 import { runMigrations } from "../src/db/migrate.js";
 import { ensureAccount } from "../src/budget/ledger.js";
 import { createPasswordHash } from "../src/utils/passwords.js";
+
+// Schema changes and wipes run as the schema owner (DATABASE_MIGRATE_URL) when set.
+useMigrationRole();
 
 const { values } = parseArgs({
   options: {

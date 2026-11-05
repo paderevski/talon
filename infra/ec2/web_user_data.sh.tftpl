@@ -1,0 +1,208 @@
+#!/bin/bash
+# First-boot bootstrap for a Talon web server on RDS (Ubuntu 24.04, arm64).
+# Log: /var/log/talon-bootstrap.log
+#
+# Differs from user_data.sh.tftpl (the old single box) in that it installs no
+# Postgres, seeds nothing and installs no backup timers: data lives in RDS,
+# which keeps its own backups, and only infra/scripts/deploy.sh reseeds the
+# demo data. Any number of servers can boot from this without touching the
+# database's contents.
+set -euxo pipefail
+exec > >(tee -a /var/log/talon-bootstrap.log) 2>&1
+
+export DEBIAN_FRONTEND=noninteractive
+
+# --- swap (2 GB box; keeps npm/vite builds from OOMing) ---
+if [ ! -f /swapfile ]; then
+  fallocate -l 2G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
+# --- packages: Node 24 LTS, nginx, git, python3, psql (db-bootstrap.sh) ---
+apt-get update
+apt-get install -y ca-certificates curl gnupg git nginx python3 openssl postgresql-client
+curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
+apt-get install -y nodejs
+node --version
+snap install aws-cli --classic
+
+# --- service user and app directory ---
+id talon >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/talon --shell /usr/sbin/nologin talon
+install -d -o talon -g talon -m 755 /opt/talon
+install -d -o root -g talon -m 750 /etc/talon
+
+# --- RDS certificate authorities (DATABASE_URL: sslmode=verify-full) ---
+curl -fsSL "https://truststore.pki.rds.amazonaws.com/${region}/${region}-bundle.pem" -o /etc/talon/rds-ca.pem
+chmod 644 /etc/talon/rds-ca.pem
+
+# --- app secrets: SSM Parameter Store, created once, never regenerated ---
+# SESSION_SECRET and TALON_CREDENTIALS_KEY must survive instance replacement
+# (the credentials key decrypts stored GitHub tokens) and must be identical
+# on every server. Generate each one only if it does not exist yet; the
+# values never go through xtrace or the bootstrap log. There is no database
+# password: the app signs in to RDS with IAM tokens.
+export AWS_DEFAULT_REGION=${region}
+set +x
+for name in session-secret credentials-key; do
+  umask 077
+  printf '%s' "$(openssl rand -hex 32)" > /run/talon-new-secret
+  umask 022
+  out=$(/snap/bin/aws ssm put-parameter --name "${secrets_prefix}/$name" --type SecureString \
+    --key-id "${kms_alias}" --value file:///run/talon-new-secret --no-overwrite 2>&1) \
+    || echo "$out" | grep -q ParameterAlreadyExists
+  rm -f /run/talon-new-secret
+done
+set -x
+
+# Loader: copies the secrets into /etc/talon/secrets.env (root:talon 640). The
+# service runs it as root before every start, so rotating a parameter and
+# restarting talon-backend is all it takes. If SSM is unreachable it keeps the
+# last copy rather than taking the site down.
+cat > /usr/local/bin/talon-load-secrets <<'EOF'
+#!/bin/bash
+set -euo pipefail
+OUT=/etc/talon/secrets.env
+export AWS_DEFAULT_REGION=${region}
+get() { /snap/bin/aws ssm get-parameter --name "${secrets_prefix}/$1" --with-decryption --query Parameter.Value --output text; }
+if SESSION=$(get session-secret) && CRED=$(get credentials-key) && [ -n "$SESSION" ] && [ -n "$CRED" ]; then
+  umask 077
+  TMP=$(mktemp /etc/talon/.secrets.XXXXXX)
+  printf 'SESSION_SECRET=%s\nTALON_CREDENTIALS_KEY=%s\n' "$SESSION" "$CRED" > "$TMP"
+  chgrp talon "$TMP"
+  chmod 640 "$TMP"
+  mv "$TMP" "$OUT"
+elif [ -f "$OUT" ]; then
+  echo "talon-load-secrets: SSM unavailable, using cached $OUT" >&2
+else
+  echo "talon-load-secrets: cannot read secrets from SSM and there is no cached copy" >&2
+  exit 1
+fi
+EOF
+chmod 755 /usr/local/bin/talon-load-secrets
+
+# --- runtime config (non-secret) ---
+if [ ! -f /etc/talon/talon.env ]; then
+  umask 027
+  cat > /etc/talon/talon.env <<EOF
+NODE_ENV=production
+PORT=5174
+HOME=/var/lib/talon
+AWS_REGION=${region}
+# RDS over TLS with IAM sign-in (backend/src/db/pool.js). The service is
+# talon_app (rows only); migrations, the demo seed and admin scripts switch
+# to talon_migrate (schema owner) themselves.
+DATABASE_URL="${database_url}"
+DATABASE_MIGRATE_URL="${database_migrate_url}"
+DATABASE_IAM_AUTH=true
+# Master password's secret, read only by infra/server/db-bootstrap.sh while
+# Terraform's db_bootstrap = true allows it. An ARN, not the secret itself.
+RDS_MASTER_SECRET_ARN=${db_master_secret_arn}
+# Private demo (SSM tunnel only): demo users allowed. Remove before this
+# server is reachable from the internet.
+TALON_ALLOW_DEMO_SEED=true
+# Jobs on their own EC2 instances (see jobs.tf).
+EC2_JOBS_ENABLED=${ec2_jobs_enabled}
+# GPU machines: admin-only unless false (see jobs.tf, ec2_gpu_admin_only).
+EC2_GPU_ADMIN_ONLY=${ec2_gpu_admin_only}
+EOF
+  chgrp talon /etc/talon/talon.env
+  umask 022
+fi
+/usr/local/bin/talon-load-secrets
+
+# --- deploy script (used on first boot and by infra/scripts/deploy.sh via SSM) ---
+cat > /usr/local/bin/talon-deploy <<'EOF'
+#!/bin/bash
+# Usage: talon-deploy [branch]
+# Force-syncs /opt/talon to origin/<branch>, builds, migrates (as
+# talon_migrate) and restarts.
+set -euo pipefail
+REF="$${1:-${git_ref}}"
+APP=/opt/talon
+as_talon() { sudo -u talon env HOME=/var/lib/talon "$@"; }
+# Same environment the service gets (DATABASE_URL etc.).
+as_talon_env() { sudo -u talon bash -c 'set -a; . /etc/talon/talon.env; . /etc/talon/secrets.env; set +a; exec "$@"' talon-env "$@"; }
+
+if [ ! -d "$APP/.git" ]; then
+  as_talon git clone "${repo_url}" "$APP"
+fi
+cd "$APP"
+as_talon git fetch --prune origin
+as_talon git checkout -f -B "$REF" "origin/$REF"
+as_talon npm ci --no-audit --no-fund
+as_talon npm run build
+as_talon_env npm run db:migrate --workspace backend
+systemctl restart talon-backend
+systemctl reload nginx
+echo "Deployed: $(as_talon git log -1 --format='%h %s')"
+EOF
+chmod 755 /usr/local/bin/talon-deploy
+
+# --- backend service ---
+cat > /etc/systemd/system/talon-backend.service <<'EOF'
+[Unit]
+Description=Talon Backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=talon
+Group=talon
+WorkingDirectory=/opt/talon/backend
+EnvironmentFile=/etc/talon/talon.env
+EnvironmentFile=/etc/talon/secrets.env
+ExecStartPre=+/usr/local/bin/talon-load-secrets
+ExecStart=/usr/bin/node src/server.js
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable talon-backend
+
+# --- nginx: static frontend + /api proxy (reached via SSM port forward) ---
+# Minimal site; infra/server/configure.sh (run by every deploy.sh) replaces it
+# with the logging and proxy-header version.
+cat > /etc/nginx/sites-available/talon <<'EOF'
+server {
+    listen 80 default_server;
+    server_name _;
+
+    root /opt/talon/frontend/dist;
+    index index.html;
+
+    location / {
+        try_files $uri /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:5174/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+EOF
+rm -f /etc/nginx/sites-enabled/default
+ln -sf /etc/nginx/sites-available/talon /etc/nginx/sites-enabled/talon
+nginx -t
+systemctl enable nginx
+
+# --- first deploy ---
+# On a brand-new database the migration fails until db-bootstrap.sh has
+# created the roles; the build is done by then, and deploy.sh finishes it.
+if ! /usr/local/bin/talon-deploy "${git_ref}"; then
+  echo "talon bootstrap: first deploy did not finish (expected before infra/scripts/db-bootstrap.sh has run once)"
+fi
+echo "talon bootstrap complete"

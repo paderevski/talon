@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { assert, createCookieJar, login, resetTestDatabase, startBackendForTests, testDatabaseUrl, waitFor } from "../lib/harness.mjs";
 import { runMigrations } from "../../src/db/migrate.js";
-import { assertSecureDatabaseUrl, databaseTransport, withTransaction } from "../../src/db/pool.js";
+import { assertSecureDatabaseUrl, connectionConfig, databaseTransport, useMigrationRole, withTransaction } from "../../src/db/pool.js";
 import { withTryAdvisoryLock } from "../../src/db/advisoryLock.js";
 import { checkDatabase } from "../../src/db/health.js";
 import { seedDemoUsers } from "../../src/db/seedDemo.js";
@@ -821,6 +821,39 @@ const tests = [
       message = error.message;
     }
     assert(/verify-full/.test(message) && !message.includes("s3cretPW"), `expected a refusal without the password, got: ${message}`);
+  }],
+
+  ["database url: IAM sign-in config and the migration role switch", async () => {
+    const plain = connectionConfig("postgres://localhost/talon_dev", {});
+    assert(plain.connectionString === "postgres://localhost/talon_dev" && !plain.password, "without IAM the URL is passed through");
+
+    const signed = [];
+    const createSigner = (opts) => ({ getAuthToken: async () => { signed.push(opts); return "token-123"; } });
+    const iam = connectionConfig(
+      "postgres://talon_app@db.abc.us-east-1.rds.amazonaws.com:5432/talon?sslmode=verify-full",
+      { DATABASE_IAM_AUTH: "true", AWS_REGION: "us-east-1" },
+      { createSigner },
+    );
+    assert(!iam.connectionString, "IAM config must not carry a connection string (its empty password would win)");
+    assert(iam.user === "talon_app" && iam.host === "db.abc.us-east-1.rds.amazonaws.com" && iam.port === 5432 && iam.database === "talon", `parsed ${JSON.stringify(iam)}`);
+    assert(iam.ssl && iam.ssl.rejectUnauthorized !== false, "verify-full keeps certificate checks on");
+    assert((await iam.password()) === "token-123", "password comes from the signer");
+    assert(signed[0].hostname === iam.host && signed[0].port === 5432 && signed[0].username === "talon_app" && signed[0].region === "us-east-1", `signer got ${JSON.stringify(signed[0])}`);
+
+    let refused = "";
+    try {
+      connectionConfig("postgres://talon_app@localhost/talon", { DATABASE_IAM_AUTH: "true" }, { createSigner });
+    } catch (error) {
+      refused = error.message;
+    }
+    assert(/verify-full/.test(refused), `IAM without TLS must be refused, got: ${refused}`);
+
+    const env = { DATABASE_URL: "postgres://talon_app@h/talon", DATABASE_MIGRATE_URL: "postgres://talon_migrate@h/talon" };
+    useMigrationRole(env);
+    assert(env.DATABASE_URL === "postgres://talon_migrate@h/talon", "migration role switches DATABASE_URL");
+    const unset = { DATABASE_URL: "postgres://localhost/talon_dev" };
+    useMigrationRole(unset);
+    assert(unset.DATABASE_URL === "postgres://localhost/talon_dev", "no DATABASE_MIGRATE_URL: unchanged (dev, old box)");
   }],
 
   ["finalize: concurrent calls settle once and only one reports it did the work", async () => {

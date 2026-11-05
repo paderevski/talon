@@ -50,8 +50,14 @@ found in a breach" dialog; it blocks clicks until dismissed.
 - Deploy a branch to the demo box: `infra/scripts/deploy.sh <branch>`.
   It builds, migrates, restarts, then reseeds fresh demo data (wipes all
   users, classes, jobs; the box's data is disposable). `--keep-data` skips
-  the reseed. Changing `infra/ec2/user_data.sh.tftpl`
-  replaces the instance (database reset; backups exist in S3).
+  the reseed. Changing `infra/ec2/web_user_data.sh.tftpl` (the web
+  server's first boot) replaces the server; the data in RDS stays. The old
+  single box (`user_data.sh.tftpl`, local Postgres) exists only until the
+  web tier phase 2 cutover is done (`legacy_web_server` in `main.tf`).
+- The database is RDS: the service connects as `talon_app` (rows only) with
+  IAM tokens; migrations, the seed and admin scripts switch to
+  `talon_migrate` (schema owner) via `useMigrationRole()`. A new script
+  that changes the schema or wipes tables must call it.
 - Money is integer cents in the ledger and dollars in API responses.
   Jobs/results are scoped by the signed-in user (server side); the client
   must not decide visibility.

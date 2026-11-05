@@ -12,9 +12,10 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
    with `sslmode=verify-full`. Applied (`Component=web` tag) and deployed
    2026-11-05: scripts find the box by tag, `/api/health` reports the
    database, nginx and backend proxy config in place, login works through
-   the tunnel, no errors in the log. Still to do: merge. Phase 2
-   (`user_data`: seeding out of first boot, backups retired, RDS) is next;
-   see "Later: two web servers" below.
+   the tunnel, no errors in the log. Phase 2 (VPC, RDS with IAM auth and
+   split roles, new web server) is built on the same branch and tested
+   locally; next is its cutover (runbook under "Later: two web servers"),
+   then merge.
 1. **Job queue with launch retries** (step 5 without Spot): a launch with no
    capacity waits and retries instead of failing; also gives overnight jobs.
    Plan it together with "Limiting launch exposure" below: the near-term
@@ -977,13 +978,72 @@ app readiness (branch `web-tier-phase1`, 2026-11-05):
   per change.
 - Scripts find web servers by tag (see "How to use").
 
-Left for phase 2 (they touch `user_data`, which replaces the instance):
-seeding out of first boot, `talon-load-secrets` writing `PGPASSWORD`,
-the RDS CA bundle on disk, backups retired in favour of RDS backups, and
-the `talon` role's grants on RDS.
+Phase 2, network and database (same branch, 2026-11-05; code done and
+tested locally, **not applied yet**):
+
+- `network.tf`: VPC `10.20.0.0/16`; public, app and data subnets in 1a and
+  1b, jobs subnets (/20, public IP on launch) in 1a-1d; one NAT gateway in
+  1a; S3 gateway endpoint on all route tables; default security group
+  emptied.
+- `rds.tf`: Postgres 16 `db.t4g.micro`, 20 GB gp3 (autoscaling to 50),
+  encrypted, private, `rds.force_ssl = 1`, 7-day backups, IAM auth on.
+  Master user `talon_admin`, password managed by RDS in Secrets Manager.
+  The web role gets `rds-db:connect` for `talon_app` and `talon_migrate`;
+  `db_bootstrap = true` adds read access to the master secret.
+- `web.tf` + `web_user_data.sh.tftpl`: launch template and one web server
+  (`talon-demo-web`, app subnet 1a, no public IP). No local Postgres, no
+  seeding, no backup timers; RDS CA bundle at `/etc/talon/rds-ca.pem`;
+  `talon.env` has `DATABASE_URL` (talon_app), `DATABASE_MIGRATE_URL`
+  (talon_migrate), `DATABASE_IAM_AUTH=true`. Replacing it keeps the data.
+- Backend: `connectionConfig` signs IAM tokens (`@aws-sdk/rds-signer`);
+  `useMigrationRole()` in the migrate, seed and create-admin scripts.
+- `infra/server/db-bootstrap.sh` (via `infra/scripts/db-bootstrap.sh`):
+  creates the roles, database `talon` owned by `talon_migrate`, and
+  `talon_app`'s grants and default privileges. Idempotent.
+- Jobs: job security group and subnets move to the new VPC by default.
+- Old box: `legacy_web_server` (default true) keeps it, retagged
+  `Component=web-legacy` so the scripts skip it; the backup alarms follow
+  it. CloudWatch agent associations target by tag; the disk alarm watches
+  the new server.
+- Tested locally: bootstrap SQL as a non-superuser master (twice); migrate
+  and seed as `talon_migrate`; all 27 HTTP regression cases with the server
+  as `talon_app`; `talon_app` refused CREATE, TRUNCATE, DROP, ALTER; the
+  IAM password path over `verify-full` with a stand-in signer. Not testable
+  locally: real IAM tokens against RDS.
+
+**Phase 2 cutover** (you run the applies; the old box stays until step 8):
+
+1. `terraform plan`, then `terraform apply -var db_bootstrap=true`. Builds
+   the VPC, NAT, RDS (about 10 minutes) and the new web server. Its first
+   boot builds the app; the first migration fails by design (no roles yet).
+2. Wait for "talon bootstrap complete" in `/var/log/talon-bootstrap.log`
+   (`infra/scripts/shell.sh`, about 10 minutes).
+3. `infra/scripts/db-bootstrap.sh`.
+4. `infra/scripts/deploy.sh web-tier-phase1` (migrates as `talon_migrate`,
+   reseeds, applies `configure.sh`).
+5. `infra/scripts/tunnel.sh` (now the new server): `/api/health`, log in.
+6. Stop the old box (`aws ec2 stop-instances` on
+   `terraform output -raw legacy_instance_id`). Both servers run a
+   reconciler against different databases, and each would terminate the
+   other's job instances ("no job row"): no jobs while both run.
+7. Run a CPU test job end to end; `infra/scripts/check-launch-policy.sh`.
+8. `terraform apply -var db_bootstrap=false -var legacy_web_server=false`:
+   removes the old box, its Elastic IP and security group, the backup
+   alarms and the master secret access.
+
+Rollback before step 8: start the old box and use
+`TALON_INSTANCE=<old id> infra/scripts/tunnel.sh`.
+
+After the cutover: delete `user_data.sh.tftpl`, `infra/backup/`,
+`backup.sh` and the old-box code in `main.tf`; the backups bucket stays
+until its copies expire.
 
 ## History
 
+- 2026-11-05: Web tier phase 2 code (`web-tier-phase1`, not applied):
+  Talon VPC, RDS with IAM auth, `talon_migrate` / `talon_app` roles, web
+  server from a launch template without local Postgres, seeding or
+  backups; old box kept behind `legacy_web_server` for the cutover.
 - 2026-11-05: Web tier phase 1 (`web-tier-phase1`, deployed and checked):
   reconciler advisory lock, proxy headers through ALB and nginx, database
   over TLS (socket path kept), database-aware `/api/health`, scripts find

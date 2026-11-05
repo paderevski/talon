@@ -1,4 +1,6 @@
 import pg from "pg";
+import { parseIntoClientConfig } from "pg-connection-string";
+import { Signer } from "@aws-sdk/rds-signer";
 import { log } from "../utils/log.js";
 
 // Connection comes from DATABASE_URL, falling back to the standard PG*
@@ -6,11 +8,15 @@ import { log } from "../utils/log.js";
 //   dev:  DATABASE_URL=postgres://localhost/talon_dev
 //   EC2, local Postgres (peer auth over the Unix socket, no password):
 //         DATABASE_URL=postgres://talon@%2Fvar%2Frun%2Fpostgresql/talon
-//   EC2, remote Postgres (RDS) over TCP with TLS:
-//         DATABASE_URL=postgres://talon@<endpoint>:5432/talon?sslmode=verify-full&sslrootcert=/etc/talon/rds-ca.pem
-//         PGPASSWORD=<from SSM, written to secrets.env by talon-load-secrets>
-//     The password stays out of the URL so talon.env holds no secret; pg
-//     reads PGPASSWORD when the URL has none.
+//   EC2 with RDS: TLS with the certificate checked, and IAM authentication
+//   (DATABASE_IAM_AUTH=true): each new connection's password is a 15-minute
+//   token signed with the instance role, so no database password exists.
+//         DATABASE_URL=postgres://talon_app@<endpoint>:5432/talon?sslmode=verify-full&sslrootcert=/etc/talon/rds-ca.pem
+//         DATABASE_MIGRATE_URL=postgres://talon_migrate@<endpoint>:5432/talon?...  (schema owner)
+//     The service connects as talon_app (rows only); migrations, the demo
+//     seed and admin scripts call useMigrationRole() first.
+//   Any server with a password instead: PGPASSWORD (pg reads it when the URL
+//   has none), so talon.env holds no secret.
 const defaultDatabaseUrl = "postgres://localhost/talon_dev";
 const loopbackHosts = new Set(["", "localhost", "127.0.0.1", "::1", "[::1]"]);
 
@@ -70,12 +76,46 @@ export function assertSecureDatabaseUrl(url = getDatabaseUrl(), env = process.en
   }
 }
 
+// Scripts that change the schema or wipe tables (migrations, the demo seed,
+// db:create-admin) run as the schema owner when one is configured. Call
+// before the first getPool().
+export function useMigrationRole(env = process.env) {
+  const migrateUrl = String(env.DATABASE_MIGRATE_URL ?? "").trim();
+  if (migrateUrl) {
+    env.DATABASE_URL = migrateUrl;
+  }
+}
+
+const iamSigner = ({ hostname, port, username, region }) => new Signer({ hostname, port, username, region });
+
+// pg connection settings for a URL. With DATABASE_IAM_AUTH=true the password
+// is a function pg calls for every new connection; the URL is parsed into
+// fields because pg lets a connection string's (empty) password override a
+// password option.
+export function connectionConfig(url = getDatabaseUrl(), env = process.env, { createSigner = iamSigner } = {}) {
+  if (env.DATABASE_IAM_AUTH !== "true") {
+    return { connectionString: url };
+  }
+  const config = parseIntoClientConfig(url);
+  // RDS accepts IAM tokens only over TLS; the token must not leave unchecked.
+  if (config.sslmode !== "verify-full") {
+    throw new Error(`DATABASE_IAM_AUTH needs sslmode=verify-full in the URL (${describeDatabase(url)})`);
+  }
+  const signer = createSigner({
+    hostname: config.host,
+    port: Number(config.port || 5432),
+    username: config.user,
+    region: env.AWS_REGION || env.AWS_DEFAULT_REGION || "us-east-1",
+  });
+  return { ...config, password: () => signer.getAuthToken() };
+}
+
 export function getPool() {
   if (!pool) {
-    const connectionString = getDatabaseUrl();
-    assertSecureDatabaseUrl(connectionString);
+    const url = getDatabaseUrl();
+    assertSecureDatabaseUrl(url);
     pool = new pg.Pool({
-      connectionString,
+      ...connectionConfig(url),
       max: Number(process.env.PG_POOL_MAX || 10),
       // Fail instead of hanging when the database is unreachable (a remote
       // server can drop packets rather than refuse the connection).

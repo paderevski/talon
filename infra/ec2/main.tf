@@ -2,7 +2,32 @@ locals {
   name = "talon-${var.environment}"
 }
 
-# Default VPC / subnet for now. Swap for a dedicated VPC if LCPS requires one.
+# The old single box (Postgres on the instance) in the default VPC. Kept
+# only for the phase 2 cutover: it runs beside the new web server (web.tf)
+# until that is checked, then legacy_web_server = false removes it, its
+# Elastic IP and its security group. Tagged Component=web-legacy so the
+# scripts leave it alone (TALON_INSTANCE=<id> still reaches it).
+variable "legacy_web_server" {
+  description = "Keep the old single box (default VPC, local Postgres). Set false after the phase 2 cutover."
+  type        = bool
+  default     = true
+}
+
+moved {
+  from = aws_security_group.app
+  to   = aws_security_group.app[0]
+}
+
+moved {
+  from = aws_instance.app
+  to   = aws_instance.app[0]
+}
+
+moved {
+  from = aws_eip.app
+  to   = aws_eip.app[0]
+}
+
 data "aws_vpc" "default" {
   default = true
 }
@@ -20,6 +45,7 @@ data "aws_ssm_parameter" "ubuntu_ami" {
 # No ingress at all: access is only through SSM Session Manager
 # (shell and port forwarding). Egress is needed for apt, npm, GitHub, and SSM.
 resource "aws_security_group" "app" {
+  count       = var.legacy_web_server ? 1 : 0
   name        = "${local.name}-app"
   description = "Talon app - no inbound, SSM only"
   vpc_id      = data.aws_vpc.default.id
@@ -63,10 +89,11 @@ resource "aws_iam_instance_profile" "instance" {
 }
 
 resource "aws_instance" "app" {
+  count                  = var.legacy_web_server ? 1 : 0
   ami                    = data.aws_ssm_parameter.ubuntu_ami.value
   instance_type          = var.instance_type
   subnet_id              = data.aws_subnet.this.id
-  vpc_security_group_ids = [aws_security_group.app.id]
+  vpc_security_group_ids = [aws_security_group.app[0].id]
   iam_instance_profile   = aws_iam_instance_profile.instance.name
 
   user_data = templatefile("${path.module}/user_data.sh.tftpl", {
@@ -94,8 +121,8 @@ resource "aws_instance" "app" {
 
   tags = {
     Name = "${local.name}-app"
-    # infra/scripts find web servers by Project + Component + Environment.
-    Component = "web"
+    # Not "web": infra/scripts deploy to Component=web servers only.
+    Component = "web-legacy"
   }
 
   depends_on = [aws_iam_role_policy.app_secrets]
@@ -109,8 +136,9 @@ resource "aws_instance" "app" {
 # Stable public IP reserved for the planned hostname (talon.lcps.org). Nothing listens
 # publicly yet (no ingress rules).
 resource "aws_eip" "app" {
+  count    = var.legacy_web_server ? 1 : 0
   domain   = "vpc"
-  instance = aws_instance.app.id
+  instance = aws_instance.app[0].id
 
   tags = {
     Name = "${local.name}-app"

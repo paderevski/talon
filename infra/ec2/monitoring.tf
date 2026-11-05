@@ -134,9 +134,10 @@ resource "aws_ssm_association" "cw_agent_install" {
     action = "Install"
     name   = "AmazonCloudWatchAgent"
   }
+  # By tag, so new and replaced web servers get the agent too.
   targets {
-    key    = "InstanceIds"
-    values = [aws_instance.app.id]
+    key    = "tag:Component"
+    values = ["web", "web-legacy"]
   }
   wait_for_success_timeout_seconds = 600
 }
@@ -153,9 +154,10 @@ resource "aws_ssm_association" "cw_agent_config" {
     optionalConfigurationLocation = aws_ssm_parameter.cw_agent_config.name
     optionalRestart               = "yes"
   }
+  # By tag, so new and replaced web servers get the agent too.
   targets {
-    key    = "InstanceIds"
-    values = [aws_instance.app.id]
+    key    = "tag:Component"
+    values = ["web", "web-legacy"]
   }
   wait_for_success_timeout_seconds = 300
   depends_on                       = [aws_ssm_association.cw_agent_install, aws_iam_role_policy.cw_agent]
@@ -165,10 +167,10 @@ resource "aws_ssm_association" "cw_agent_config" {
 
 resource "aws_cloudwatch_metric_alarm" "server_disk" {
   alarm_name          = "${local.name}-server-disk"
-  alarm_description   = "Talon web server root disk is over 85% full (Postgres, job runs and logs live there)."
+  alarm_description   = "Talon web server root disk is over 85% full (app build, local job runs and logs live there)."
   namespace           = local.server_metrics_namespace
   metric_name         = "disk_used_percent"
-  dimensions          = { InstanceId = aws_instance.app.id }
+  dimensions          = { InstanceId = aws_instance.web.id } # phase 3: per server in the group
   statistic           = "Maximum"
   period              = 300
   evaluation_periods  = 2
