@@ -3,12 +3,14 @@
 #
 # Everything about the job comes from instance tags, so this file is static:
 #   talon-job          job id (falls back to manual-<instance id>)
+#   talon-s3-prefix    this launch's S3 folder, jobs/<id>-<random> (falls
+#                      back to jobs/<id> for launches from before it existed)
 #   talon-bucket       jobs bucket (set by the launch template)
 #   talon-max-seconds  time limit for the user's script (default 1800)
 #   talon-image        cpu or gpu (PyTorch DLAMI); set by the launch template
 #   talon-log-group    CloudWatch log group for this boot log; set by the
 #                      launch template (empty: S3 only)
-# Input (jobs/<id>/input/ in the bucket) is run.sh and, for real jobs,
+# Input (<folder>/input/ in the bucket) is run.sh and, for real jobs,
 # repo.tgz (the cloned repository, unpacked to /work/repo).
 #
 # Flow: fetch input from S3 -> run run.sh as an unprivileged user under
@@ -117,7 +119,9 @@ MAX=$(tag talon-max-seconds); MAX=${MAX:-1800}
 IMAGE=$(tag talon-image); IMAGE=${IMAGE:-cpu}
 LOG_GROUP=$(tag talon-log-group)
 INSTANCE_TYPE=$(imds meta-data/instance-type)
-PREFIX="s3://$BUCKET/jobs/$JOB"
+S3P=$(tag talon-s3-prefix)
+[[ "$S3P" =~ ^jobs/[A-Za-z0-9-]+$ ]] || S3P="jobs/$JOB"
+PREFIX="s3://$BUCKET/$S3P"
 START=$(date -u +%FT%TZ)
 echo "[talon] job $JOB on $INSTANCE_ID ($INSTANCE_TYPE, image $IMAGE), ${UPTIME_AT_START}s after kernel boot"
 

@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -200,6 +201,7 @@ export default function createEc2ExecutionAdapter({
   config = null, // { bucket, launchTemplateId, subnetIds }; default: env, then SSM
   prepareInput = cloneAndPack, // (spec) -> { workDir, archive }; replaced in tests
   now = () => Date.now(),
+  newLaunchId = () => randomBytes(16).toString("hex"), // 128 random bits; replaced in tests
 } = {}) {
   let configPromise = null;
   const getConfig = () => {
@@ -242,7 +244,16 @@ export default function createEc2ExecutionAdapter({
     return configPromise;
   };
 
-  const prefix = (ref) => `jobs/${ref.jobId}`;
+  // Each launch gets its own S3 folder, jobs/<job id>-<random>, stored on the
+  // job (executionRef.s3Prefix) and passed to the instance as the
+  // talon-s3-prefix tag. Job ids can repeat (a new database restarts them)
+  // while old folders live on for jobs_retention_days; a folder named by the
+  // id alone would hand a new job an old job's status, logs and files. The
+  // random part also keeps other jobs' folders unguessable from inside a job
+  // (the job role is shared; see jobs.tf). Jobs launched before this keep
+  // jobs/<job id>.
+  const launchPrefixPattern = /^jobs\/[A-Za-z0-9-]+$/;
+  const prefix = (ref) => (launchPrefixPattern.test(String(ref?.s3Prefix ?? "")) ? ref.s3Prefix : `jobs/${ref.jobId}`);
   let nextSubnet = 0;
 
   async function readText(bucket, key) {
@@ -318,9 +329,15 @@ export default function createEc2ExecutionAdapter({
         throw httpError("A time limit is required to launch on EC2", 500);
       }
 
+      const launchId = newLaunchId();
+      if (!/^[a-f0-9]{16,64}$/.test(launchId)) {
+        throw httpError("Could not make a launch id", 500);
+      }
+      const s3Prefix = `jobs/${jobId}-${launchId}`;
+
       const { workDir, archive } = await prepareInput(jobSpec);
       try {
-        const base = `jobs/${jobId}/input`;
+        const base = `${s3Prefix}/input`;
         await s3.send(new PutObjectCommand({ Bucket: cfg.bucket, Key: `${base}/repo.tgz`, Body: await readFile(archive) }));
         await s3.send(new PutObjectCommand({ Bucket: cfg.bucket, Key: `${base}/run.sh`, Body: buildRunScript(jobSpec.entryScript, jobSpec.environment, jobSpec.folder, jobSpec.scriptArgs || [], { image }) }));
       } finally {
@@ -331,6 +348,7 @@ export default function createEc2ExecutionAdapter({
         { Key: "Project", Value: "talon" },
         { Key: "Component", Value: "job" },
         { Key: "talon-job", Value: jobId },
+        { Key: "talon-s3-prefix", Value: s3Prefix }, // job_boot.sh reads and writes only here
         { Key: "talon-max-seconds", Value: String(maxRuntimeSeconds) },
         { Key: "talon-owner", Value: String(jobSpec.ownerUsername || "unknown").slice(0, 120) },
       ];
@@ -349,7 +367,10 @@ export default function createEc2ExecutionAdapter({
               SubnetId: subnetId,
               MinCount: 1,
               MaxCount: 1,
-              ClientToken: `talon-${jobId}-${subnetId}`.slice(0, 64), // one per attempt: a failed launch may keep its token
+              // One per attempt (a failed launch may keep its token), and per
+              // launch: a token built from a reusable job id could return an
+              // old job's instance instead of launching a new one.
+              ClientToken: `talon-${launchId}-${subnetId}`.slice(0, 64),
               TagSpecifications: [{ ResourceType: "instance", Tags: tags }],
             }),
           );
@@ -358,6 +379,7 @@ export default function createEc2ExecutionAdapter({
             provider: "ec2",
             executionId: jobId,
             jobId,
+            s3Prefix,
             instanceId: instance.InstanceId,
             instanceType,
             subnetId,
