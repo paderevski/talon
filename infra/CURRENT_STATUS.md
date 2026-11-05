@@ -1,9 +1,10 @@
 # Talon infra - current status
 
-_Last updated: 2026-11-05 (web tier phase 3 merged to `main`: two web servers in an Auto Scaling group behind an internal ALB, failover, deploy and reconciler checks pass; changed files skip hidden paths). Earlier the same day: phases 1 and 2 (Talon VPC, RDS with IAM sign-in and split roles, web server from a launch template), per-launch S3 job folders, old box and its code removed. Before that, 2026-11-04 (GPU jobs, build step 4, merged to `main`: one GPU launch template on the PyTorch DLAMI for g4dn.xlarge, g4dn.2xlarge, g6.xlarge and g6e.2xlarge, admin-only; verified on the box with g4dn; the box runs the same code from branch `gpu-jobs`). Before that, 2026-11-03 (GitHub App sign-in, code-source choice, job folders, admin GitHub unlink and script arguments). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
+_Last updated: 2026-11-05 (status doc refreshed for architecture doc v8; CI and protected `main`; zone resilience and DB failover fixes; web tier phase 3 merged to `main`: two web servers in an Auto Scaling group behind an internal ALB, failover, deploy and reconciler checks pass; changed files skip hidden paths). Earlier the same day: phases 1 and 2 (Talon VPC, RDS with IAM sign-in and split roles, web server from a launch template), per-launch S3 job folders, old box and its code removed. Before that, 2026-11-04 (GPU jobs, build step 4, merged to `main`: one GPU launch template on the PyTorch DLAMI for g4dn.xlarge, g4dn.2xlarge, g6.xlarge and g6e.2xlarge, admin-only; verified on the box with g4dn; the box runs the same code from branch `gpu-jobs`). Before that, 2026-11-03 (GitHub App sign-in, code-source choice, job folders, admin GitHub unlink and script arguments). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
 Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
-(gitignored). Architecture doc: `docs/talon-architecture-summary-v7.docx`
-(see "Gaps to production" for where it and reality differ).
+(gitignored). Architecture doc: `docs/talon-architecture-summary-v8.docx`
+(local, gitignored; 2026-11-05, describes the system as built, with where
+it differs from v7 and a short what-comes-next; v7 kept for history).
 
 ## Next up (as of 2026-11-05)
 
@@ -87,7 +88,7 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 |---|---|
 | AWS account | LCPS member account (profile `lcps`, SSO AdministratorAccess) |
 | Region | `us-east-1`, Talon VPC `10.20.0.0/16` (`network.tf`): web servers in app subnets 1a/1b behind an internal ALB (private, out via a NAT gateway in each zone), RDS Multi-AZ in data subnets 1a/1b, jobs in public jobs subnets 1a-1d |
-| Web servers | Auto Scaling group `talon-demo-web` (`web.tf`): two t4g.small, Ubuntu 24.04 arm64, one per zone, from launch template `talon-demo-web`; tagged `Component=web`. Internal ALB `talon-demo-web` (`alb.tf`), health `GET /api/health` every 10 s |
+| Web servers | Auto Scaling group `talon-demo-web` (`web.tf`): two t4g.small, Ubuntu 24.04 arm64, one per zone, from launch template `talon-demo-web`; tagged `Component=web`. Internal ALB `talon-demo-web` (`alb.tf`), health `GET /api/health/live` (app up, no database) every 10 s, unhealthy after 2 |
 | Elastic IP | None for the web servers (private). One per NAT gateway (1a, 1b) |
 | Inbound access | None. SSM Session Manager only (`tunnel.sh`: SSM port forward through a web server to the internal ALB) |
 | Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`. Postgres 16 on RDS `talon-demo` (`db.t4g.small`, Multi-AZ since 2026-11-05, TLS, IAM sign-in as `talon_app`; migrations as `talon_migrate`). `EC2_JOBS_ENABLED=true` |
@@ -163,12 +164,14 @@ to the browser), so one `requestId` finds both sides of a request.
   `admin.github_unlinked`, `security.*`.
 - Never logged: passwords, tokens, cookies, request bodies, query strings.
   Login failures do log the attempted username.
-- How it is wired: `infra/server/configure.sh` (run as root by `deploy.sh`
-  after every deploy, taken from the deployed commit) adds a systemd drop-in
+- How it is wired: `infra/server/configure.sh` (run as root by
+  `talon-configure` at first boot and after every deploy, taken from the
+  deployed commit) adds a systemd drop-in
   that sends backend output to `/var/log/talon/backend.log` (logrotate,
   14 days), the nginx `talon_json` format and the request id header. The
-  agent config (which files go to which group) is in `monitoring.tf`. A
-  replaced instance gets this on its first `deploy.sh`, not at boot.
+  agent config (which files go to which group) is in `monitoring.tf`; the
+  same script installs the agent and loads that config. A replaced instance
+  has all of this from first boot.
 
 ## Known limitations (demo mode)
 
@@ -185,14 +188,17 @@ to the browser), so one `requestId` finds both sides of a request.
   service is blocked for the student user and no secrets are on the box.
   GuardDuty is not enabled (checked 2026-11-04: no detector; Terraform has it
   behind `enable_guardduty`).
-- Nightly database backups exist, but restoring onto a new instance is manual
-  and has only been tested into a scratch database.
+- Database backups are RDS's (automated, 7 days, point-in-time restore).
+  A restore drill into a new RDS instance has not been done yet. No final
+  snapshot and no deletion protection on the demo database (`rds.tf`).
 - Demo accounts have public passwords (they are in this repo). Fine only
   because the box is reachable through the SSM tunnel and nothing else; see
   "Going public".
 - Plain HTTP on port 80 inside the tunnel (no TLS yet; the ALB adds it).
-- Changing `web_user_data.sh.tftpl` replaces the web server (about 10
-  minutes to rebuild; the data in RDS stays).
+- Changing `web_user_data.sh.tftpl` (or anything in the web launch
+  template) replaces the web servers one at a time on the next apply
+  (instance refresh, no downtime, about 12 minutes for two; data in RDS
+  stays).
 - The local job runner executes `git clone` / `python3` directly on the host
   as the `talon` user, so jobs are not isolated. It passes only PATH, HOME and
   locale (not the server's environment) and sets `AWS_EC2_METADATA_DISABLED`,
@@ -379,10 +385,11 @@ Verify CloudFront VPC origin support for EC2 before choosing it.
 ### Build list (Terraform in `infra/ec2`, new `alb.tf` / `waf.tf`)
 
 1. ACM certificate for the hostname, DNS-validated.
-2. ALB in two public subnets (default VPC has six), HTTPS:443 listener with
+2. ALB in Talon's two public subnets (1a, 1b), HTTPS:443 listener with
    the ACM cert, HTTP:80 -> 301 to HTTPS. ALB security group: 443/80 from
    the allowed ranges.
-3. Target group -> instance port 80 (nginx), health check `GET /api/health`.
+3. Target group -> instance port 80 (nginx), health check `GET /api/health/live`
+   (as on the internal ALB today).
 4. Instance security group: inbound 80 **from the ALB security group only**.
 5. WAF web ACL on the ALB: `AWSManagedRulesCommonRuleSet`,
    `AWSManagedRulesKnownBadInputsRuleSet`,
@@ -958,21 +965,23 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   but nothing reads them yet).
 - Checked 2026-11-04: CloudTrail has a multi-region trail
   (`management-events`, not an organization trail; its retention not
-  checked); GuardDuty has no detector. Not checked: Inspector; private subnet + NAT + VPC endpoints
-  for the web server (it is in a public subnet today).
+  checked); GuardDuty has no detector. Not checked: Inspector. (Web servers
+  moved to private app subnets with a NAT gateway per zone and an S3
+  endpoint, 2026-11-05.)
 
 ### 4. Operations
 
-- More alarms: ALB health, dead-letter queue depth, a budget action that
-  stops launches (Budgets only email today). Disk,
-  backend errors, unknown job instances and vCPU usage alarms exist
-  (`monitoring.tf`).
+- More alarms: a budget action that stops launches (Budgets only email
+  today); queue depth once there is a queue. Disk, backend errors, failed
+  logins, unknown job instances and vCPU usage (`monitoring.tf`) and ALB
+  healthy hosts and 5xx (`alb.tf`) alarms exist.
 - Application logs are in CloudWatch Logs (CloudWatch agent: backend JSON,
   nginx JSON access, nginx error, syslog, bootstrap; see "Logs"). Job
   instance boot logs also go to `/talon/demo/jobs` (shipped with the AWS
   CLI, no agent). SSM session logging and a CloudTrail trail are not set up.
-- CI/CD: nothing runs the test suites automatically; deploys are manual SSM
-  runs. Add tests on every push and automated deploys.
+- CI/CD: tests run on every push and pull request (done 2026-11-05, item
+  0d); deploys are still manual SSM runs. Next: automated deploys through
+  an OIDC role.
 - End-to-end restore drill onto a brand-new instance; a staging environment
   for the stakeholder demo; a load test at about 100 users; a security
   review.
@@ -980,11 +989,10 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
 
 ### 5. Documentation and cleanup
 
-- The architecture doc is out of date relative to what was built: it has
-  two roles (we have student/teacher/admin), no passwords, Secrets Manager
-  (we use SSM Parameter Store), a users table without classes or budgets,
-  and an `infra/` EKS scaffold (later `infra_2/`, removed 2026-11-05). A v8 would
-  keep reviewers from being confused.
+- ~~Architecture doc out of date~~ _(done 2026-11-05: v8 describes the
+  system as built: own VPC, RDS Multi-AZ, S3 status file instead of
+  callbacks, three roles, local passwords until Entra, shared account,
+  per-job storage; then public access and AWS Batch as next steps.)_
 - Account strategy: the doc wants a dedicated Talon sub-account with its own
   quotas. We are in LCPS's shared "Academies" account; decide if that is
   acceptable.
@@ -1155,7 +1163,8 @@ tunnel. Plan doc "Talon Web Tier Plan" has the design. Built on branch
   terminates). The launch template copies the provider's default tags
   (ASG-launched instances do not get them; scripts find servers by them).
 - `alb.tf`: internal ALB `talon-demo-web` (idle timeout 180 s, drops
-  invalid headers), target group port 80, health `GET /api/health`, 30 s
+  invalid headers), target group port 80, health `GET /api/health` (now
+  `/api/health/live`, see item 0c), 30 s
   drain; SG rules web->ALB:80 (tunnel) and ALB->web:80; alarms for
   healthy hosts < 2 for 10 min and ALB 5xx.
 - Disk alarm is a Metrics Insights query (fullest disk of any server).

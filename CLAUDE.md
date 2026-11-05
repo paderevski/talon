@@ -2,8 +2,9 @@
 
 Talon is an educational GPU/CPU job portal for the Academy of Loudoun (LCPS):
 students submit training jobs, teachers manage classes and budgets, admins
-oversee. Express + Postgres backend, React (Vite) frontend, deployed on one
-EC2 instance with Terraform. **This repo is public: never put account IDs,
+oversee. Express + Postgres backend, React (Vite) frontend, deployed with
+Terraform to AWS (two web servers behind an internal ALB, RDS Postgres,
+one EC2 instance per job). **This repo is public: never put account IDs,
 IPs, instance IDs, emails, secrets or real passwords in tracked files.**
 
 ## Where things are
@@ -21,7 +22,8 @@ IPs, instance IDs, emails, secrets or real passwords in tracked files.**
 - **`infra/CURRENT_STATUS.md` is the map**: what is running, what is done,
   what is blocked, gaps to production, EC2-jobs design notes. Read it first
   and keep it current when you change something it describes.
-- `docs/` is gitignored (local only): architecture doc v7 and the user-db plan.
+- `docs/` is gitignored (local only): architecture doc v8 (as built;
+  v7 kept for history), the AWS Batch plan and the user-db plan.
 
 ## Run it locally
 
