@@ -71,8 +71,9 @@ fi
 
 # ---------------------------------------------------------------- database
 section "Database (RDS $NAME)"
-read -r DB_STATUS DB_CLASS DB_GB DB_VER <<<"$(q rds describe-db-instances --db-instance-identifier "$NAME" \
-  --query 'DBInstances[0].[DBInstanceStatus,DBInstanceClass,AllocatedStorage,EngineVersion]')"
+read -r DB_STATUS DB_CLASS DB_GB DB_VER DB_MAZ DB_AZ DB_AZ2 <<<"$(q rds describe-db-instances --db-instance-identifier "$NAME" \
+  --query 'DBInstances[0].[DBInstanceStatus,DBInstanceClass,AllocatedStorage,EngineVersion,MultiAZ,AvailabilityZone,SecondaryAvailabilityZone]')"
+if [ "$DB_MAZ" = True ]; then DB_ZONES="Multi-AZ (primary $DB_AZ, standby ${DB_AZ2/None/in the other zone})"; else DB_ZONES="single zone ($DB_AZ)"; fi
 metric() { # namespace metric dimension-name dimension-value statistic
   q cloudwatch get-metric-statistics --namespace "$1" --metric-name "$2" --dimensions "Name=$3,Value=$4" \
     --start-time "$HOUR_AGO" --end-time "$NOW" --period 3600 --statistics "$5" --query "Datapoints[0].$5"
@@ -80,8 +81,8 @@ metric() { # namespace metric dimension-name dimension-value statistic
 CPU="$(metric AWS/RDS CPUUtilization DBInstanceIdentifier "$NAME" Average)"
 CONNS="$(metric AWS/RDS DatabaseConnections DBInstanceIdentifier "$NAME" Maximum)"
 FREE="$(metric AWS/RDS FreeStorageSpace DBInstanceIdentifier "$NAME" Minimum)"
-printf '  %s, %s, Postgres %s, %s GB; last hour: CPU %.0f%%, max %.0f connections, %.1f GB free\n' \
-  "$DB_STATUS" "$DB_CLASS" "$DB_VER" "$DB_GB" "${CPU:-0}" "${CONNS:-0}" "$(awk -v b="${FREE:-0}" 'BEGIN {print b / 1e9}')"
+printf '  %s, %s, Postgres %s, %s GB, %s\n  last hour: CPU %.0f%%, max %.0f connections, %.1f GB free\n' \
+  "$DB_STATUS" "$DB_CLASS" "$DB_VER" "$DB_GB" "$DB_ZONES" "${CPU:-0}" "${CONNS:-0}" "$(awk -v b="${FREE:-0}" 'BEGIN {print b / 1e9}')"
 PENDING="$(q rds describe-pending-maintenance-actions --filters "Name=db-instance-id,Values=$NAME" \
   --query 'PendingMaintenanceActions[].PendingMaintenanceActionDetails[].[Action,AutoAppliedAfterDate]')"
 [ -n "$PENDING" ] && echo "  pending maintenance: $PENDING"

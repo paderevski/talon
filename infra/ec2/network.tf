@@ -1,12 +1,12 @@
 # Talon's own VPC. Four tiers:
-#   public  (1a, 1b)       NAT gateway (and an internet-facing ALB when Talon goes public)
+#   public  (1a, 1b)       a NAT gateway in each (and an internet-facing ALB when Talon goes public)
 #   app     (1a, 1b)       web servers and the internal ALB; out via NAT
 #   data    (1a, 1b)       RDS; no route to the internet at all
 #   jobs    (1a-1d, /20)   job instances: own public IP, no inbound (jobs.tf)
-# One NAT gateway (in 1a) serves both app subnets: if 1a fails the web
-# servers lose outbound access until it returns, accepted for now. The S3
-# gateway endpoint (no charge) keeps S3 traffic off the NAT gateway and the
-# internet.
+# Each zone has its own NAT gateway and app route table, so a zone outage
+# leaves the other zone's web server with outbound access (job launches,
+# GitHub). The S3 gateway endpoint (no charge) keeps S3 traffic off the NAT
+# gateways and the internet.
 
 variable "vpc_cidr" {
   description = "Address range of the Talon VPC. Only matters if it is ever connected to LCPS networks; changing it rebuilds the VPC."
@@ -102,23 +102,36 @@ resource "aws_subnet" "jobs" {
 
 # ---------------------------------------------------------------- NAT
 
+# One per zone. The first zone's kept its original names (moved blocks).
 resource "aws_eip" "nat" {
-  domain = "vpc"
+  for_each = aws_subnet.public
+  domain   = "vpc"
 
   tags = {
-    Name = "${local.name}-nat"
+    Name = "${local.name}-nat-${substr(each.key, -2, 2)}"
   }
 }
 
 resource "aws_nat_gateway" "main" {
-  allocation_id = aws_eip.nat.id
-  subnet_id     = aws_subnet.public[var.web_availability_zones[0]].id
+  for_each      = aws_subnet.public
+  allocation_id = aws_eip.nat[each.key].id
+  subnet_id     = each.value.id
 
   tags = {
-    Name = local.name
+    Name = "${local.name}-${substr(each.key, -2, 2)}"
   }
 
   depends_on = [aws_internet_gateway.main]
+}
+
+moved {
+  from = aws_eip.nat
+  to   = aws_eip.nat["us-east-1a"]
+}
+
+moved {
+  from = aws_nat_gateway.main
+  to   = aws_nat_gateway.main["us-east-1a"]
 }
 
 # ---------------------------------------------------------------- routes
@@ -149,24 +162,30 @@ resource "aws_route_table_association" "jobs" {
   route_table_id = aws_route_table.public.id
 }
 
-# App: out through the NAT gateway.
+# App: out through the NAT gateway in the same zone.
 resource "aws_route_table" "app" {
-  vpc_id = aws_vpc.main.id
+  for_each = aws_subnet.app
+  vpc_id   = aws_vpc.main.id
 
   route {
     cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.main.id
+    nat_gateway_id = aws_nat_gateway.main[each.key].id
   }
 
   tags = {
-    Name = "${local.name}-app"
+    Name = "${local.name}-app-${substr(each.key, -2, 2)}"
   }
+}
+
+moved {
+  from = aws_route_table.app
+  to   = aws_route_table.app["us-east-1a"]
 }
 
 resource "aws_route_table_association" "app" {
   for_each       = aws_subnet.app
   subnet_id      = each.value.id
-  route_table_id = aws_route_table.app.id
+  route_table_id = aws_route_table.app[each.key].id
 }
 
 # Data: local traffic only (plus S3 through the endpoint).
@@ -191,7 +210,7 @@ resource "aws_vpc_endpoint" "s3" {
   vpc_id            = aws_vpc.main.id
   service_name      = "com.amazonaws.${var.aws_region}.s3"
   vpc_endpoint_type = "Gateway"
-  route_table_ids   = [aws_route_table.public.id, aws_route_table.app.id, aws_route_table.data.id]
+  route_table_ids   = concat([aws_route_table.public.id, aws_route_table.data.id], [for rt in aws_route_table.app : rt.id])
 
   tags = {
     Name = "${local.name}-s3"
