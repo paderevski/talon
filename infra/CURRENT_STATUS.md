@@ -1,6 +1,6 @@
 # Talon infra - current status
 
-_Last updated: 2026-11-05 (web tier plan phase 1, app readiness for two web servers behind an ALB with RDS, on branch `web-tier-phase1`, not merged or deployed yet). Before that, 2026-11-04 (GPU jobs, build step 4, merged to `main`: one GPU launch template on the PyTorch DLAMI for g4dn.xlarge, g4dn.2xlarge, g6.xlarge and g6e.2xlarge, admin-only; verified on the box with g4dn; the box runs the same code from branch `gpu-jobs`). Before that, 2026-11-03 (GitHub App sign-in, code-source choice, job folders, admin GitHub unlink and script arguments). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
+_Last updated: 2026-11-05 (web tier plan phase 1, app readiness for two web servers behind an ALB with RDS, on branch `web-tier-phase1`, deployed to the box and checked; not merged yet). Before that, 2026-11-04 (GPU jobs, build step 4, merged to `main`: one GPU launch template on the PyTorch DLAMI for g4dn.xlarge, g4dn.2xlarge, g6.xlarge and g6e.2xlarge, admin-only; verified on the box with g4dn; the box runs the same code from branch `gpu-jobs`). Before that, 2026-11-03 (GitHub App sign-in, code-source choice, job folders, admin GitHub unlink and script arguments). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
 Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 (gitignored). Architecture doc: `docs/talon-architecture-summary-v7.docx`
 (see "Gaps to production" for where it and reality differ).
@@ -9,9 +9,10 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 
 0. **Web tier phase 1** (branch `web-tier-phase1`): done in code and tested
    locally, including the database tests over TLS against a local Postgres
-   with `sslmode=verify-full`. Still to do: `terraform apply` (adds the
-   `Component=web` tag to the web instance, in place), deploy the branch to
-   the box, check the tunnel, health and logs, then merge. Phase 2
+   with `sslmode=verify-full`. Applied (`Component=web` tag) and deployed
+   2026-11-05: scripts find the box by tag, `/api/health` reports the
+   database, nginx and backend proxy config in place, login works through
+   the tunnel, no errors in the log. Still to do: merge. Phase 2
    (`user_data`: seeding out of first boot, backups retired, RDS) is next;
    see "Later: two web servers" below.
 1. **Job queue with launch retries** (step 5 without Spot): a launch with no
@@ -40,7 +41,7 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 | Elastic IP | Yes (no ports open; reserved for future DNS) - `terraform output public_ip` |
 | Inbound access | None. SSM Session Manager only |
 | Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`, Postgres 16 (local socket, peer auth). `EC2_JOBS_ENABLED=true` in `/etc/talon/talon.env` (written by Terraform at first boot) turns on EC2 jobs and the reconciler |
-| Deployed | `logging-structured` branch (2026-11-04; same code as `main` once merged) |
+| Deployed | `web-tier-phase1` branch (2026-11-05) |
 | Approx cost | ~$20/month (instance ~$12, EBS ~$1.60, public IPv4 ~$3.65, 2 KMS keys ~$2, alarms/S3/SNS pennies). Estimate, not read from the bill. Plus job instances (c7g/m7g/r7g, roughly 8-17 cents per hour each), billed per second while they run and charged to students' budgets |
 | Other AWS resources | S3 backups bucket (`backups.tf`), SSM parameters under `/talon/demo/`, KMS keys `alias/talon-demo-secrets` and `alias/talon-demo-backups`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), CloudWatch alarms (`alarms.tf`: 2 backup; `monitoring.tf`: disk, backend errors, unknown job instance, failed logins, GPU and standard vCPUs), CloudWatch agent on the web server (SSM State Manager; logs in `/talon/demo/{backend,syslog,nginx-access,nginx-error,bootstrap}`, 30 days; metrics in `Talon/Server`), saved Logs Insights queries `Talon/*` (`log_queries.tf`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and launch template (`jobs.tf`), 2 AWS Budgets alerts |
 | Root volume | 20 GB gp3, encrypted with the default AWS-managed EBS key (the architecture doc asks for a KMS key; not changed) |
@@ -983,7 +984,7 @@ the `talon` role's grants on RDS.
 
 ## History
 
-- 2026-11-05: Web tier phase 1 (`web-tier-phase1`, not yet deployed):
+- 2026-11-05: Web tier phase 1 (`web-tier-phase1`, deployed and checked):
   reconciler advisory lock, proxy headers through ALB and nginx, database
   over TLS (socket path kept), database-aware `/api/health`, scripts find
   web servers by tag, `deploy.sh` loops over servers and reseeds once.
