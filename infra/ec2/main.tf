@@ -8,9 +8,9 @@ locals {
 # Elastic IP and its security group. Tagged Component=web-legacy so the
 # scripts leave it alone (TALON_INSTANCE=<id> still reaches it).
 variable "legacy_web_server" {
-  description = "Keep the old single box (default VPC, local Postgres). Set false after the phase 2 cutover."
+  description = "Keep the old single box (default VPC, local Postgres). Removed in the phase 2 cutover (2026-11-05); left false until its code is deleted."
   type        = bool
-  default     = true
+  default     = false
 }
 
 moved {

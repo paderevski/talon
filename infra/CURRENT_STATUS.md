@@ -37,13 +37,13 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 | Item | Value |
 |---|---|
 | AWS account | LCPS member account (profile `lcps`, SSO AdministratorAccess) |
-| Region | `us-east-1` (default VPC, `us-east-1a`) |
-| Instance | `talon-demo-app`, t4g.small, Ubuntu 24.04 arm64 |
-| Elastic IP | Yes (no ports open; reserved for future DNS) - `terraform output public_ip` |
+| Region | `us-east-1`, Talon VPC `10.20.0.0/16` (`network.tf`): web server in app subnet 1a (private, out via one NAT gateway), RDS in data subnets 1a/1b, jobs in public jobs subnets 1a-1d |
+| Instance | `talon-demo-web`, t4g.small, Ubuntu 24.04 arm64, from launch template `talon-demo-web` (`web.tf`); tagged `Component=web` |
+| Elastic IP | None for the web server (private). One for the NAT gateway |
 | Inbound access | None. SSM Session Manager only |
-| Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`, Postgres 16 (local socket, peer auth). `EC2_JOBS_ENABLED=true` in `/etc/talon/talon.env` (written by Terraform at first boot) turns on EC2 jobs and the reconciler |
+| Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`. Postgres 16 on RDS `talon-demo` (`db.t4g.micro`, TLS, IAM sign-in as `talon_app`; migrations as `talon_migrate`). `EC2_JOBS_ENABLED=true` |
 | Deployed | `web-tier-phase1` branch (2026-11-05) |
-| Approx cost | ~$20/month (instance ~$12, EBS ~$1.60, public IPv4 ~$3.65, 2 KMS keys ~$2, alarms/S3/SNS pennies). Estimate, not read from the bill. Plus job instances (c7g/m7g/r7g, roughly 8-17 cents per hour each), billed per second while they run and charged to students' budgets |
+| Approx cost | ~$70/month estimate, not read from the bill: web instance ~$12 + EBS ~$1.60, NAT gateway ~$33 + traffic, RDS ~$14, KMS keys ~$2, alarms/S3/SNS pennies. Plus job instances, billed per second and charged to budgets |
 | Other AWS resources | S3 backups bucket (`backups.tf`), SSM parameters under `/talon/demo/`, KMS keys `alias/talon-demo-secrets` and `alias/talon-demo-backups`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), CloudWatch alarms (`alarms.tf`: 2 backup; `monitoring.tf`: disk, backend errors, unknown job instance, failed logins, GPU and standard vCPUs), CloudWatch agent on the web server (SSM State Manager; logs in `/talon/demo/{backend,syslog,nginx-access,nginx-error,bootstrap}`, 30 days; metrics in `Talon/Server`), saved Logs Insights queries `Talon/*` (`log_queries.tf`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and launch template (`jobs.tf`), 2 AWS Budgets alerts |
 | Root volume | 20 GB gp3, encrypted with the default AWS-managed EBS key (the architecture doc asks for a KMS key; not changed) |
 | OS patching | `unattended-upgrades` enabled on the box (checked) |
@@ -1054,7 +1054,10 @@ Cutover progress (2026-11-05): steps 1-7 done. Bootstrap (IAM token),
 deploy and reseed on RDS; old box stopped; CloudWatch agent re-run; launch
 policy check all ok from the new server; CPU test job `job-1001`
 (paderevski/minimal-rnn, c7g.large, jobs subnet 1a) ran 1m 58s, $0.01,
-output collected, instance powered off. Step 8 (final apply) remains.
+output collected, instance powered off. Step 8 done the same day: old
+box, its Elastic IP and security group, backup alarms and master sign-in
+removed; `legacy_web_server` now defaults to false; a plain plan shows no
+changes. **Phase 2 cutover complete.**
 
 **Bug found (fix next, own branch):** job S3 folders are keyed by job id
 only (`jobs/<id>/`), and the fresh RDS database restarted ids at 49, which
@@ -1065,8 +1068,6 @@ job's logs and files (possibly another student's). Worked around by
 `setval('job_id_seq', 1000)` on RDS. Fix: a per-launch S3 folder stored on
 the job and passed as a tag (adapter, `job_boot.sh`, launch templates).
 
-Rollback before step 8: start the old box and use
-`TALON_INSTANCE=<old id> infra/scripts/tunnel.sh`.
 
 After the cutover: delete `user_data.sh.tftpl`, `infra/backup/`,
 `backup.sh` and the old-box code in `main.tf`; the backups bucket stays
