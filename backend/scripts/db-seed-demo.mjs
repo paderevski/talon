@@ -1,6 +1,9 @@
-import { closePool, describeDatabase, getPool } from "../src/db/pool.js";
+import { closePool, describeDatabase, getPool, useMigrationRole } from "../src/db/pool.js";
 import { runMigrations } from "../src/db/migrate.js";
 import { seedDemoUsers } from "../src/db/seedDemo.js";
+
+// Schema changes and wipes run as the schema owner (DATABASE_MIGRATE_URL) when set.
+useMigrationRole();
 
 try {
   const pool = getPool();

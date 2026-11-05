@@ -1,12 +1,21 @@
 # Talon infra - current status
 
-_Last updated: 2026-11-04 (GPU jobs, build step 4, merged to `main`: one GPU launch template on the PyTorch DLAMI for g4dn.xlarge, g4dn.2xlarge, g6.xlarge and g6e.2xlarge, admin-only; verified on the box with g4dn; the box runs the same code from branch `gpu-jobs`). Before that, 2026-11-03 (GitHub App sign-in, code-source choice, job folders, admin GitHub unlink and script arguments). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
+_Last updated: 2026-11-05 (web tier plan phase 1, app readiness for two web servers behind an ALB with RDS, on branch `web-tier-phase1`, deployed to the box and checked; not merged yet). Before that, 2026-11-04 (GPU jobs, build step 4, merged to `main`: one GPU launch template on the PyTorch DLAMI for g4dn.xlarge, g4dn.2xlarge, g6.xlarge and g6e.2xlarge, admin-only; verified on the box with g4dn; the box runs the same code from branch `gpu-jobs`). Before that, 2026-11-03 (GitHub App sign-in, code-source choice, job folders, admin GitHub unlink and script arguments). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
 Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 (gitignored). Architecture doc: `docs/talon-architecture-summary-v7.docx`
 (see "Gaps to production" for where it and reality differ).
 
-## Next up (as of 2026-11-04)
+## Next up (as of 2026-11-05)
 
+0. **Web tier phase 1** (branch `web-tier-phase1`): done in code and tested
+   locally, including the database tests over TLS against a local Postgres
+   with `sslmode=verify-full`. Applied (`Component=web` tag) and deployed
+   2026-11-05: scripts find the box by tag, `/api/health` reports the
+   database, nginx and backend proxy config in place, login works through
+   the tunnel, no errors in the log. Phase 2 (VPC, RDS with IAM auth and
+   split roles, new web server) is built on the same branch and tested
+   locally; next is its cutover (runbook under "Later: two web servers"),
+   then merge.
 1. **Job queue with launch retries** (step 5 without Spot): a launch with no
    capacity waits and retries instead of failing; also gives overnight jobs.
    Plan it together with "Limiting launch exposure" below: the near-term
@@ -28,13 +37,13 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 | Item | Value |
 |---|---|
 | AWS account | LCPS member account (profile `lcps`, SSO AdministratorAccess) |
-| Region | `us-east-1` (default VPC, `us-east-1a`) |
-| Instance | `talon-demo-app`, t4g.small, Ubuntu 24.04 arm64 |
-| Elastic IP | Yes (no ports open; reserved for future DNS) - `terraform output public_ip` |
+| Region | `us-east-1`, Talon VPC `10.20.0.0/16` (`network.tf`): web server in app subnet 1a (private, out via one NAT gateway), RDS in data subnets 1a/1b, jobs in public jobs subnets 1a-1d |
+| Instance | `talon-demo-web`, t4g.small, Ubuntu 24.04 arm64, from launch template `talon-demo-web` (`web.tf`); tagged `Component=web` |
+| Elastic IP | None for the web server (private). One for the NAT gateway |
 | Inbound access | None. SSM Session Manager only |
-| Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`, Postgres 16 (local socket, peer auth). `EC2_JOBS_ENABLED=true` in `/etc/talon/talon.env` (written by Terraform at first boot) turns on EC2 jobs and the reconciler |
-| Deployed | `logging-structured` branch (2026-11-04; same code as `main` once merged) |
-| Approx cost | ~$20/month (instance ~$12, EBS ~$1.60, public IPv4 ~$3.65, 2 KMS keys ~$2, alarms/S3/SNS pennies). Estimate, not read from the bill. Plus job instances (c7g/m7g/r7g, roughly 8-17 cents per hour each), billed per second while they run and charged to students' budgets |
+| Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`. Postgres 16 on RDS `talon-demo` (`db.t4g.micro`, TLS, IAM sign-in as `talon_app`; migrations as `talon_migrate`). `EC2_JOBS_ENABLED=true` |
+| Deployed | `web-tier-phase1` branch (2026-11-05) |
+| Approx cost | ~$70/month estimate, not read from the bill: web instance ~$12 + EBS ~$1.60, NAT gateway ~$33 + traffic, RDS ~$14, KMS keys ~$2, alarms/S3/SNS pennies. Plus job instances, billed per second and charged to budgets |
 | Other AWS resources | S3 backups bucket (`backups.tf`), SSM parameters under `/talon/demo/`, KMS keys `alias/talon-demo-secrets` and `alias/talon-demo-backups`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), CloudWatch alarms (`alarms.tf`: 2 backup; `monitoring.tf`: disk, backend errors, unknown job instance, failed logins, GPU and standard vCPUs), CloudWatch agent on the web server (SSM State Manager; logs in `/talon/demo/{backend,syslog,nginx-access,nginx-error,bootstrap}`, 30 days; metrics in `Talon/Server`), saved Logs Insights queries `Talon/*` (`log_queries.tf`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and launch template (`jobs.tf`), 2 AWS Budgets alerts |
 | Root volume | 20 GB gp3, encrypted with the default AWS-managed EBS key (the architecture doc asks for a KMS key; not changed) |
 | OS patching | `unattended-upgrades` enabled on the box (checked) |
@@ -47,9 +56,15 @@ aws sso login --profile lcps     # when credentials expire (usually daily)
 infra/scripts/tunnel.sh          # then open http://localhost:8080
 infra/scripts/deploy.sh          # deploy origin/main (push first), then reseed demo data
 infra/scripts/deploy.sh B --keep-data   # deploy branch B without reseeding
-infra/scripts/shell.sh           # shell on the box
+infra/scripts/shell.sh [id]      # shell on a web server (lists the others)
 infra/scripts/backup.sh status   # newest backups (also: now, restore-test, install)
 ```
+
+The scripts find web servers by tag (`Project=talon`, `Component=web`,
+`Environment=$TALON_ENV`, default `demo`; `common.sh`). Until the tag is
+applied they fall back to `terraform output instance_id`. `deploy.sh` deploys
+to each server in turn and reseeds once at the end; `TALON_INSTANCE=<id>`
+picks the server for `tunnel.sh`, `shell.sh` and `check-launch-policy.sh`.
 
 Demo login: see the main README.
 
@@ -326,12 +341,11 @@ Verify CloudFront VPC origin support for EC2 before choosing it.
 
 ### App / box changes that must ship with it
 
-- **X-Forwarded-Proto through two proxies.** Chain is ALB (TLS) -> nginx
-  (HTTP) -> Node. nginx currently sends `X-Forwarded-Proto $scheme`, which
-  is `http` behind the ALB, so Express would think the request is HTTP and
-  **refuse to set `Secure` session cookies (login silently fails)**. Pass
-  the ALB's header through (`$http_x_forwarded_proto`) and set Express
-  `trust proxy` to cover both hops.
+- ~~X-Forwarded-Proto through two proxies~~ (web tier phase 1, branch
+  `web-tier-phase1`): `configure.sh` makes nginx pass on the ALB's
+  `X-Forwarded-Proto` for requests from inside the VPC (`$scheme`
+  otherwise), and sets `TALON_TRUSTED_PROXIES=loopback,<VPC range>` (read
+  from instance metadata) so Express skips both hops.
 - `SESSION_COOKIE_SECURE=true` in `/etc/talon/talon.env`.
 - ~~Per-account login throttling~~ (done, item 2).
 - **No demo users on a reachable server.** Their passwords are public in
@@ -944,8 +958,131 @@ Not needed for load. If wanted for availability:
 Already compatible: sessions are in Postgres (no sticky sessions needed);
 migrations take an advisory lock (concurrent deploys are safe).
 
+The current plan for this is the "Talon Web Tier Plan" doc (4 phases: app
+readiness; VPC + RDS; second server + internal ALB; going public). Phase 1,
+app readiness (branch `web-tier-phase1`, 2026-11-05):
+
+- Reconciler: each tick takes `pg_try_advisory_lock` (id 727275,
+  `backend/src/db/advisoryLock.js`) on its own connection; other servers
+  skip that tick.
+- Proxy headers: see "App / box changes" under Going public.
+- Database over TCP/TLS: `DATABASE_URL=postgres://talon@<host>:5432/talon?sslmode=verify-full&sslrootcert=<RDS CA bundle>`
+  with the password in `PGPASSWORD` (from `secrets.env`, never in the
+  URL). With `NODE_ENV=production` the backend refuses a remote host
+  without `verify-full`. The local socket URL (peer auth) still works and
+  is what the box uses until phase 2. Pool: 10 s connect timeout,
+  keepalive.
+- `/api/health` runs `SELECT 1` (2 s limit) and answers 503
+  `{"ok":false,"database":"unavailable"}` when the database is down;
+  `health.database_failed` / `health.database_recovered` are logged once
+  per change.
+- Scripts find web servers by tag (see "How to use").
+
+Phase 2, network and database (same branch, 2026-11-05; code done and
+tested locally, **not applied yet**):
+
+- `network.tf`: VPC `10.20.0.0/16`; public, app and data subnets in 1a and
+  1b, jobs subnets (/20, public IP on launch) in 1a-1d; one NAT gateway in
+  1a; S3 gateway endpoint on all route tables; default security group
+  emptied.
+- `rds.tf`: Postgres 16 `db.t4g.micro`, 20 GB gp3 (autoscaling to 50),
+  encrypted, private, `rds.force_ssl = 1`, 7-day backups, IAM auth on.
+  Master user `talon_admin`, password managed by RDS in Secrets Manager.
+  The web role gets `rds-db:connect` for `talon_app` and `talon_migrate`;
+  `db_bootstrap = true` adds read access to the master secret.
+- `web.tf` + `web_user_data.sh.tftpl`: launch template and one web server
+  (`talon-demo-web`, app subnet 1a, no public IP). No local Postgres, no
+  seeding, no backup timers; RDS CA bundle at `/etc/talon/rds-ca.pem`;
+  `talon.env` has `DATABASE_URL` (talon_app), `DATABASE_MIGRATE_URL`
+  (talon_migrate), `DATABASE_IAM_AUTH=true`. Replacing it keeps the data.
+- Backend: `connectionConfig` signs IAM tokens (`@aws-sdk/rds-signer`);
+  `useMigrationRole()` in the migrate, seed and create-admin scripts.
+- `infra/server/db-bootstrap.sh` (via `infra/scripts/db-bootstrap.sh`):
+  creates the roles, database `talon` owned by `talon_migrate`, and
+  `talon_app`'s grants and default privileges. Idempotent.
+- Jobs: job security group and subnets move to the new VPC by default.
+- Old box: `legacy_web_server` (default true) keeps it, retagged
+  `Component=web-legacy` so the scripts skip it; the backup alarms follow
+  it. CloudWatch agent associations target by tag; the disk alarm watches
+  the new server.
+- Tested locally: bootstrap SQL as a non-superuser master (twice); migrate
+  and seed as `talon_migrate`; all 27 HTTP regression cases with the server
+  as `talon_app`; `talon_app` refused CREATE, TRUNCATE, DROP, ALTER; the
+  IAM password path over `verify-full` with a stand-in signer. Not testable
+  locally: real IAM tokens against RDS.
+
+**Phase 2 cutover** (you run the applies; the old box stays until step 8):
+
+1. `terraform plan`, then `terraform apply -var db_bootstrap=true`. Builds
+   the VPC, NAT, RDS (about 10 minutes) and the new web server. Its first
+   boot builds the app; the first migration fails by design (no roles yet).
+2. Wait for "talon bootstrap complete" in `/var/log/talon-bootstrap.log`
+   (`infra/scripts/shell.sh`, about 10 minutes).
+3. `infra/scripts/db-bootstrap.sh`. It takes its SQL from the deployed
+   commit, and first boot builds `git_ref` (default `main`): until phase 2
+   is merged, run `deploy.sh web-tier-phase1 --keep-data` once first (it
+   checks out and builds the branch, then fails at the migration, which is
+   expected without roles). Until a deploy succeeds, nginx still serves its
+   default site (404): first boot does not reload it.
+4. `infra/scripts/deploy.sh web-tier-phase1` (migrates as `talon_migrate`,
+   reseeds, applies `configure.sh`).
+5. `infra/scripts/tunnel.sh` (now the new server): `/api/health`, log in.
+6. Stop the old box (`aws ec2 stop-instances` on
+   `terraform output -raw legacy_instance_id`). Both servers run a
+   reconciler against different databases, and each would terminate the
+   other's job instances ("no job row"): no jobs while both run.
+7. Run a CPU test job end to end; `infra/scripts/check-launch-policy.sh`.
+8. `terraform apply -var db_bootstrap=false -var legacy_web_server=false`:
+   removes the old box, its Elastic IP and security group, the backup
+   alarms and the master secret access.
+
+Found in the cutover (2026-11-05): the bootstrap makes the master
+(`talon_admin`) a member of `talon_migrate`, which is in `rds_iam`; RDS's
+`pg_hba` rule `+rds_iam` matches indirect members, so from then on the
+master's password is refused ("PAM authentication failed") and it signs in
+with an IAM token. `db_bootstrap = true` therefore also allows
+`rds-db:connect` as `talon_admin`, and `db-bootstrap.sh` tries a token
+first (the Secrets Manager password only works on a brand-new database).
+To restore password sign-in: `REVOKE talon_migrate FROM talon_admin`.
+
+Also found: the CloudWatch agent install (State Manager) failed on the new
+server at first boot, most likely racing first boot's own apt. Re-run the
+two associations after a server's first boot completes, until phase 3 adds
+a proper wait.
+
+Cutover progress (2026-11-05): steps 1-7 done. Bootstrap (IAM token),
+deploy and reseed on RDS; old box stopped; CloudWatch agent re-run; launch
+policy check all ok from the new server; CPU test job `job-1001`
+(paderevski/minimal-rnn, c7g.large, jobs subnet 1a) ran 1m 58s, $0.01,
+output collected, instance powered off. Step 8 done the same day: old
+box, its Elastic IP and security group, backup alarms and master sign-in
+removed; `legacy_web_server` now defaults to false; a plain plan shows no
+changes. **Phase 2 cutover complete.**
+
+**Bug found (fix next, own branch):** job S3 folders are keyed by job id
+only (`jobs/<id>/`), and the fresh RDS database restarted ids at 49, which
+the old box had used (ids 49-72 still in the jobs bucket, 30-day expiry).
+`job-49` picked up an October `status.json`: marked completed at $0.00 and
+its instance terminated after 20 s; it would also have shown the old
+job's logs and files (possibly another student's). Worked around by
+`setval('job_id_seq', 1000)` on RDS. Fix: a per-launch S3 folder stored on
+the job and passed as a tag (adapter, `job_boot.sh`, launch templates).
+
+
+After the cutover: delete `user_data.sh.tftpl`, `infra/backup/`,
+`backup.sh` and the old-box code in `main.tf`; the backups bucket stays
+until its copies expire.
+
 ## History
 
+- 2026-11-05: Web tier phase 2 code (`web-tier-phase1`, not applied):
+  Talon VPC, RDS with IAM auth, `talon_migrate` / `talon_app` roles, web
+  server from a launch template without local Postgres, seeding or
+  backups; old box kept behind `legacy_web_server` for the cutover.
+- 2026-11-05: Web tier phase 1 (`web-tier-phase1`, deployed and checked):
+  reconciler advisory lock, proxy headers through ALB and nginx, database
+  over TLS (socket path kept), database-aware `/api/health`, scripts find
+  web servers by tag, `deploy.sh` loops over servers and reseeds once.
 - 2026-11-04: Logging (`logging-structured`). Backend JSON logs with stable
   event names and request ids in `/talon/demo/backend`; nginx JSON access log
   sharing the request id; job instance boot logs in `/talon/demo/jobs` with

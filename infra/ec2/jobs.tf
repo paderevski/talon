@@ -16,13 +16,13 @@ variable "jobs_retention_days" {
 }
 
 variable "ec2_jobs_enabled" {
-  description = "Write EC2_JOBS_ENABLED into the web server's config at first boot. Changing it replaces the web instance (user_data), which resets the database."
+  description = "Write EC2_JOBS_ENABLED into the web server's config at first boot. Changing it replaces the web server (user_data); the data in RDS stays."
   type        = bool
   default     = true
 }
 
 variable "ec2_gpu_admin_only" {
-  description = "Write EC2_GPU_ADMIN_ONLY into the web server's config at first boot: true keeps GPU machines admin-only, false offers them to students. Changing it replaces the web instance (user_data), which resets the database."
+  description = "Write EC2_GPU_ADMIN_ONLY into the web server's config at first boot: true keeps GPU machines admin-only, false offers them to students. Changing it replaces the web server (user_data); the data in RDS stays."
   type        = bool
   default     = false
 }
@@ -74,19 +74,19 @@ variable "job_root_volume_gb" {
 }
 
 variable "job_vpc_id" {
-  description = "VPC for job instances. Empty: the default VPC."
+  description = "VPC for job instances. Empty: Talon's VPC (network.tf)."
   type        = string
   default     = ""
 }
 
 variable "job_subnet_ids" {
-  description = "Subnets the web server may launch jobs into. Empty: the default subnet of each zone in job_availability_zones (set this when job_vpc_id is not the default VPC). Must give instances a route to the internet (public IP or NAT)."
+  description = "Subnets the web server may launch jobs into. Empty: the jobs subnets of Talon's VPC (network.tf), one per zone in job_availability_zones. Must give instances a route to the internet (public IP or NAT)."
   type        = list(string)
   default     = []
 }
 
 variable "job_availability_zones" {
-  description = "Zones whose default subnets take jobs when job_subnet_ids is empty. A launch moves to the next zone when one has no capacity or does not offer the type (us-east-1e offers none of the job types)."
+  description = "Zones that get a jobs subnet in Talon's VPC (network.tf). A launch moves to the next zone when one has no capacity or does not offer the type (us-east-1e offers none of the job types)."
   type        = list(string)
   default     = ["us-east-1a", "us-east-1b", "us-east-1c", "us-east-1d"]
 }
@@ -103,17 +103,10 @@ variable "daily_budget_usd" {
   default     = 10
 }
 
-data "aws_subnet" "job" {
-  for_each          = length(var.job_subnet_ids) > 0 ? toset([]) : toset(var.job_availability_zones)
-  vpc_id            = data.aws_vpc.default.id
-  availability_zone = each.value
-  default_for_az    = true
-}
-
 locals {
   jobs_bucket_name = "${local.name}-jobs-${data.aws_caller_identity.current.account_id}"
-  job_vpc_id       = var.job_vpc_id != "" ? var.job_vpc_id : data.aws_vpc.default.id
-  job_subnet_ids   = length(var.job_subnet_ids) > 0 ? var.job_subnet_ids : [for az in var.job_availability_zones : data.aws_subnet.job[az].id]
+  job_vpc_id       = var.job_vpc_id != "" ? var.job_vpc_id : aws_vpc.main.id
+  job_subnet_ids   = length(var.job_subnet_ids) > 0 ? var.job_subnet_ids : [for az in var.job_availability_zones : aws_subnet.jobs[az].id]
   account_id       = data.aws_caller_identity.current.account_id
 }
 
@@ -235,6 +228,12 @@ resource "aws_security_group" "job" {
 
   tags = {
     Name = "${local.name}-job"
+  }
+
+  # Moving to another VPC replaces the group: make the new one first so the
+  # launch templates switch over before the old one is deleted.
+  lifecycle {
+    create_before_destroy = true
   }
 }
 

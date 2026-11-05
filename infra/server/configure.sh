@@ -14,6 +14,12 @@
 #   (/var/log/nginx/access.log, CloudWatch /talon/<env>/nginx-access).
 # - nginx sends its $request_id to the backend as X-Request-Id, so an nginx
 #   line and the backend's line for the same request share requestId.
+#
+# And proxy headers, ready for a load balancer in front (web tier phase 1):
+# - nginx passes on X-Forwarded-Proto when the request came from inside the
+#   VPC (the ALB), instead of overwriting it with its own "http".
+# - the backend trusts loopback plus the VPC range as proxies
+#   (TALON_TRUSTED_PROXIES), so req.ip is the client, not the ALB.
 set -euo pipefail
 
 changed_backend=false
@@ -64,6 +70,30 @@ install_file /etc/logrotate.d/talon-backend 644 <<'EOF' || true
 }
 EOF
 
+# --- VPC range: the only place a load balancer can connect from --------------
+# Read from instance metadata (IMDSv2). Empty if that fails: then only
+# loopback is trusted, which is the old behaviour and safe.
+imds() {
+  local token
+  token="$(curl -sf -m 2 -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')" || return 1
+  curl -sf -m 2 -H "X-aws-ec2-metadata-token: $token" "http://169.254.169.254/latest/meta-data/$1"
+}
+VPC_CIDR="$(imds "network/interfaces/macs/$(imds mac)/vpc-ipv4-cidr-block" 2>/dev/null || true)"
+if ! [[ "$VPC_CIDR" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$ ]]; then
+  echo "configure: could not read the VPC range from instance metadata; trusting loopback only" >&2
+  VPC_CIDR=""
+fi
+
+if install_file /etc/systemd/system/talon-backend.service.d/proxy.conf 644 <<EOF
+# From infra/server/configure.sh. Proxies whose X-Forwarded-* headers the
+# backend believes: nginx (loopback) and the load balancer (this VPC).
+[Service]
+Environment=TALON_TRUSTED_PROXIES=loopback${VPC_CIDR:+,$VPC_CIDR}
+EOF
+then
+  changed_backend=true
+fi
+
 # --- nginx: JSON access log, request id to the backend -----------------------
 # $uri has no query string (the GitHub callback carries an OAuth code there).
 # No referer either, for the same reason.
@@ -80,8 +110,31 @@ then
   changed_nginx=true
 fi
 
-# Same site as user_data.sh.tftpl writes, plus the JSON access log and the
-# request id header. Keep the two in step until user_data next changes.
+# X-Forwarded-Proto for the backend: the ALB's value when the request came
+# from inside the VPC (only the ALB can connect from there once the web
+# security group admits it), nginx's own $scheme otherwise (the SSM tunnel
+# arrives on loopback, so a tunnel client cannot claim https).
+GEO_VPC_LINE=""
+[ -n "$VPC_CIDR" ] && GEO_VPC_LINE="    $VPC_CIDR 1;"
+if { cat <<'EOF'; echo "$GEO_VPC_LINE"; cat <<'EOF2'; } | install_file /etc/nginx/conf.d/talon-proxy.conf 644
+# From infra/server/configure.sh.
+geo $talon_from_vpc {
+    default 0;
+EOF
+}
+
+map "$talon_from_vpc:$http_x_forwarded_proto" $talon_forwarded_proto {
+    default $scheme;
+    "~^1:(?<talon_proto>https?)$" $talon_proto;
+}
+EOF2
+then
+  changed_nginx=true
+fi
+
+# Same site as user_data.sh.tftpl writes, plus the JSON access log, the
+# request id header and the forwarded protocol. Keep the two in step until
+# user_data next changes.
 SITE=/etc/nginx/sites-available/talon
 cp -p "$SITE" "$SITE.bak" 2>/dev/null || true
 if install_file "$SITE" 644 <<'EOF'
@@ -105,7 +158,7 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Proto $talon_forwarded_proto;
         proxy_set_header X-Request-Id $request_id;
     }
 }
@@ -120,7 +173,7 @@ if $changed_nginx; then
   else
     echo "configure: nginx config test failed; restoring the previous site" >&2
     [ -f "$SITE.bak" ] && mv "$SITE.bak" "$SITE"
-    rm -f /etc/nginx/conf.d/talon-logging.conf
+    rm -f /etc/nginx/conf.d/talon-logging.conf /etc/nginx/conf.d/talon-proxy.conf
     nginx -t && systemctl reload nginx
     exit 1
   fi

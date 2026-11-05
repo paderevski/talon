@@ -7,8 +7,15 @@ import { log as defaultLog } from "../utils/log.js";
 //   2. terminates job instances that should not be running: no job row for
 //      them, the job is already finished, or it is past its time limit.
 // A finished instance left running keeps billing, so this is not optional.
-// One backend runs it today; two would both do the same idempotent work.
-export function createEc2Reconciler({ jobsRepository, adapter, sync, markLost, now = () => Date.now(), log = defaultLog }) {
+//
+// Every web server schedules it, but only one should run a tick at a time:
+// the work is idempotent, yet two copies double the EC2 and S3 calls and the
+// termination log lines. `exclusive(fn)` provides that (server.js passes a
+// Postgres advisory lock); it resolves { skipped: true } when another server
+// holds the lock. Without it, every tick runs.
+const runAlways = async (fn) => ({ skipped: false, result: await fn() });
+
+export function createEc2Reconciler({ jobsRepository, adapter, sync, markLost, exclusive = runAlways, now = () => Date.now(), log = defaultLog }) {
   const isFinal = (job) => job.status === "completed" || job.status === "failed" || Boolean(job.resultSyncKey);
 
   async function tick() {
@@ -60,11 +67,21 @@ export function createEc2Reconciler({ jobsRepository, adapter, sync, markLost, n
     return { terminated };
   }
 
+  // One scheduled tick: skipped when another server holds the lock.
+  async function runOnce() {
+    const outcome = await exclusive(tick);
+    if (outcome.skipped) {
+      log.debug?.("reconciler tick skipped: another server holds the lock", { event: "ec2.reconcile_skipped" });
+    }
+    return outcome;
+  }
+
   let timer = null;
   let running = false;
 
   return {
     tick,
+    runOnce,
     start(intervalMs = 45_000) {
       timer = setInterval(async () => {
         if (running) {
@@ -72,7 +89,7 @@ export function createEc2Reconciler({ jobsRepository, adapter, sync, markLost, n
         }
         running = true;
         try {
-          await tick();
+          await runOnce();
         } catch (error) {
           log.error("reconciler tick failed", { event: "ec2.reconcile_failed", err: error });
         } finally {

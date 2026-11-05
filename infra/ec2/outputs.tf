@@ -1,10 +1,15 @@
 output "instance_id" {
-  value = aws_instance.app.id
+  description = "The web server (web.tf). infra/scripts find it by tag; this is for reference."
+  value       = aws_instance.web.id
 }
 
-output "public_ip" {
-  description = "Elastic IP (no ports open yet; reserved for future DNS)."
-  value       = aws_eip.app.public_ip
+output "legacy_instance_id" {
+  description = "The old single box, until legacy_web_server = false."
+  value       = one(aws_instance.app[*].id)
+}
+
+output "db_endpoint" {
+  value = aws_db_instance.main.address
 }
 
 output "tunnel_command" {

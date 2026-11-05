@@ -21,9 +21,12 @@ resource "aws_sns_topic_subscription" "alerts_email" {
   endpoint  = var.alert_email
 }
 
+# Only while the old box (legacy_web_server, main.tf) runs pg_dump: RDS
+# keeps its own automated backups, so these go with it.
 # No successful nightly backup for 36 hours (six 6-hour windows in a row with
 # no heartbeat; a missing datapoint counts as a failure).
 resource "aws_cloudwatch_metric_alarm" "backup_missing" {
+  count               = var.legacy_web_server ? 1 : 0
   alarm_name          = "${local.name}-backup-missing"
   alarm_description   = "No successful Talon database backup in 36 hours. Check: infra/scripts/backup.sh status, then journalctl -u talon-backup on the server."
   namespace           = "Talon/Backup"
@@ -41,6 +44,7 @@ resource "aws_cloudwatch_metric_alarm" "backup_missing" {
 
 # The weekly test restore reported a failure.
 resource "aws_cloudwatch_metric_alarm" "restore_test_failed" {
+  count               = var.legacy_web_server ? 1 : 0
   alarm_name          = "${local.name}-restore-test-failed"
   alarm_description   = "The weekly Talon test restore failed: the newest backup may be unusable. Check: infra/scripts/backup.sh restore-test."
   namespace           = "Talon/Backup"
@@ -72,4 +76,14 @@ resource "aws_iam_role_policy" "publish_metrics" {
   name   = "${local.name}-publish-metrics"
   role   = aws_iam_role.instance.id
   policy = data.aws_iam_policy_document.publish_metrics.json
+}
+
+moved {
+  from = aws_cloudwatch_metric_alarm.backup_missing
+  to   = aws_cloudwatch_metric_alarm.backup_missing[0]
+}
+
+moved {
+  from = aws_cloudwatch_metric_alarm.restore_test_failed
+  to   = aws_cloudwatch_metric_alarm.restore_test_failed[0]
 }

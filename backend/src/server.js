@@ -15,6 +15,10 @@ import { markJobAsExecutionLost, synchronizeJobFromExecution } from "./services/
 import { createEc2Reconciler } from "./services/ec2Reconciler.js";
 import { getJobsRepository } from "./repositories/jobsRepository.js";
 import { log } from "./utils/log.js";
+import { getPool } from "./db/pool.js";
+import { checkDatabase } from "./db/health.js";
+import { lockIds, withTryAdvisoryLock } from "./db/advisoryLock.js";
+import { trustedProxies } from "./utils/trustedProxies.js";
 import { requestLogger } from "./utils/requestLog.js";
 
 const app = express();
@@ -23,14 +27,35 @@ const port = Number(process.env.PORT || 5174);
 // Set TALON_BIND_HOST=0.0.0.0 only if something off-box must reach it directly.
 const bindHost = String(process.env.TALON_BIND_HOST || "127.0.0.1").trim();
 
-// nginx terminates client connections in front of us (needed for secure cookies).
-app.set("trust proxy", 1);
+// Proxies whose X-Forwarded-* headers we believe: nginx on loopback, and in
+// the VPC the load balancer in front of it (TALON_TRUSTED_PROXIES, set by
+// infra/server/configure.sh). req.ip (login throttling, logs) is the first
+// address in X-Forwarded-For that is not one of these; req.secure follows
+// the X-Forwarded-Proto nginx passes on.
+app.set("trust proxy", trustedProxies());
 app.use(requestLogger());
 // No CORS: the frontend is same-origin (Vite proxy in dev, nginx in prod).
 app.use(express.json({ limit: "512kb" })); // roster imports are the large bodies
 
-app.get("/api/health", (_, res) => {
-  res.json({ ok: true, service: "talon-backend" });
+// The load balancer's health check: 503 when this server cannot reach the
+// database, so traffic goes to a server that can. No error details in the
+// response (it is unauthenticated); the log has them, once per change.
+let databaseWasHealthy = true;
+app.get("/api/health", async (_, res) => {
+  const database = await checkDatabase(getPool());
+  if (database.ok !== databaseWasHealthy) {
+    databaseWasHealthy = database.ok;
+    if (database.ok) {
+      log.info("health: database reachable again", { event: "health.database_recovered" });
+    } else {
+      log.error("health: database unreachable", { event: "health.database_failed", err: database.error });
+    }
+  }
+  res.status(database.ok ? 200 : 503).json({
+    ok: database.ok,
+    service: "talon-backend",
+    database: database.ok ? "ok" : "unavailable",
+  });
 });
 
 app.use("/api", createSessionMiddleware(), attachUser);
@@ -68,6 +93,8 @@ if (ec2JobsEnabled()) {
     adapter: getEc2Adapter(),
     sync: synchronizeJobFromExecution,
     markLost: markJobAsExecutionLost,
+    // One web server at a time runs a tick; the others skip it.
+    exclusive: (fn) => withTryAdvisoryLock(getPool(), lockIds.ec2Reconciler, fn),
     log,
   }).start(Number(process.env.EC2_RECONCILE_INTERVAL_MS || 45_000));
   log.info("EC2 jobs enabled: reconciler started", { event: "server.reconciler_started" });

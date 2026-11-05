@@ -11,4 +11,5 @@ export async function run({ baseUrl }) {
 
   const payload = await response.json();
   assert(payload?.ok === true, "Expected health payload to contain ok=true");
+  assert(payload?.database === "ok", `Expected database=ok, got ${payload?.database}`);
 }

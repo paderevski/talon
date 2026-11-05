@@ -21,10 +21,12 @@
     "@aws-sdk/client-ec2": "^3.1158.0",
     "@aws-sdk/client-s3": "^3.1158.0",
     "@aws-sdk/client-ssm": "^3.1158.0",
+    "@aws-sdk/rds-signer": "^3.1162.0",
     "connect-pg-simple": "^10.0.0",
     "express": "^4.21.2",
     "express-session": "^1.19.0",
     "pg": "^8.23.1",
+    "pg-connection-string": "^2.14.1",
     "talon-shared": "0.1.0"
   },
   "devDependencies": {

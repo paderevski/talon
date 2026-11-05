@@ -4,11 +4,17 @@
 #   infra/scripts/backup.sh now           run a backup on the server right now
 #   infra/scripts/backup.sh restore-test  restore the newest dump into a scratch DB and check it
 #   infra/scripts/backup.sh install       (re)install the scripts and timers from the deployed repo
+#
+# Only the old single box (legacy_web_server in main.tf, local Postgres) runs
+# these backups. Web servers on RDS have none: RDS keeps automated backups
+# with point-in-time restore. Retire this script with the old box; `status`
+# keeps working until the bucket's copies expire.
 source "$(dirname "$0")/common.sh"
 
 run_on_box() {
   local ID CMD_ID STATUS
-  ID="$(instance_id)"
+  ID="${TALON_INSTANCE:-$(terraform -chdir="$INFRA_DIR/ec2" output -raw legacy_instance_id 2>/dev/null || true)}"
+  [ -n "$ID" ] && [ "$ID" != "null" ] || { echo "No old box (legacy_instance_id): database backups are RDS's now." >&2; exit 1; }
   CMD_ID="$(aws ssm send-command --instance-ids "$ID" --document-name AWS-RunShellScript \
     --comment "talon backup $1" \
     --parameters "{\"commands\":[\"$2\"],\"executionTimeout\":[\"900\"]}" \
