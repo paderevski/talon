@@ -1,22 +1,22 @@
 #!/bin/bash
-# First-boot bootstrap for a Talon web server on RDS (Ubuntu 24.04, arm64).
-# Log: /var/log/talon-bootstrap.log
+# First-boot bootstrap for a Talon web server (Ubuntu 24.04, arm64), one of
+# the Auto Scaling group's (web.tf). Log: /var/log/talon-bootstrap.log
 #
-# No Postgres, no seeding, no backup timers: data lives in RDS, which keeps
-# its own backups, and only infra/scripts/deploy.sh reseeds the demo data.
-# Any number of servers can boot from this without touching the database's
-# contents.
+# Installs packages, the service user, secrets loader, config and the
+# talon-deploy / talon-configure tools, then deploys git_ref. talon-configure
+# (infra/server/configure.sh) sets up nginx's site, logging and the
+# CloudWatch agent. Never touches the database's contents: only
+# infra/scripts/deploy.sh reseeds the demo data.
 set -euxo pipefail
 exec > >(tee -a /var/log/talon-bootstrap.log) 2>&1
 
 export DEBIAN_FRONTEND=noninteractive
 
-# Wait for the dpkg lock instead of failing on it. SSM State Manager starts
-# the CloudWatch agent install (monitoring.tf) as soon as the server
-# registers, which is while this script is still using apt; without this,
-# whichever loses the race fails (a group server's first boot died on
-# `apt-get install` this way, 2026-11-05). Applies to every apt call here,
-# including the NodeSource setup script's.
+# Wait for the dpkg lock instead of failing on it: on a fresh Ubuntu boot,
+# apt-daily/unattended-upgrades can hold it, and before the CloudWatch agent
+# moved into configure.sh an SSM install raced this script for it (a server's
+# first boot died on `apt-get install` that way, 2026-11-05). Applies to every
+# apt call here and in configure.sh, including the NodeSource setup script's.
 echo 'DPkg::Lock::Timeout "600";' > /etc/apt/apt.conf.d/99talon-lock-timeout
 
 # --- swap (2 GB box; keeps npm/vite builds from OOMing) ---
@@ -114,6 +114,8 @@ TALON_ALLOW_DEMO_SEED=true
 EC2_JOBS_ENABLED=${ec2_jobs_enabled}
 # GPU machines: admin-only unless false (see jobs.tf, ec2_gpu_admin_only).
 EC2_GPU_ADMIN_ONLY=${ec2_gpu_admin_only}
+# CloudWatch agent config (monitoring.tf), loaded by infra/server/configure.sh.
+CW_AGENT_CONFIG_PARAM=${cw_agent_param}
 EOF
   chgrp talon /etc/talon/talon.env
   umask 022
@@ -198,43 +200,14 @@ EOF
 systemctl daemon-reload
 systemctl enable talon-backend
 
-# --- nginx: static frontend + /api proxy (reached via SSM port forward) ---
-# Minimal site; infra/server/configure.sh (run by talon-configure at the end
-# of first boot and every deploy) replaces it with the logging and
-# proxy-header version.
-cat > /etc/nginx/sites-available/talon <<'EOF'
-server {
-    listen 80 default_server;
-    server_name _;
-
-    root /opt/talon/frontend/dist;
-    index index.html;
-
-    location / {
-        try_files $uri /index.html;
-    }
-
-    location /api/ {
-        proxy_pass http://127.0.0.1:5174/api/;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-EOF
-rm -f /etc/nginx/sites-enabled/default
-ln -sf /etc/nginx/sites-available/talon /etc/nginx/sites-enabled/talon
-nginx -t
+# --- nginx: started with its default site; infra/server/configure.sh
+# (talon-configure, run by the first deploy below) installs Talon's. ---
 systemctl enable nginx
-# nginx has been running its default site since apt installed it; load ours
-# now, so the site answers even if the first deploy stops early.
-systemctl reload nginx
 
 # --- first deploy ---
 # On a brand-new database the migration fails until db-bootstrap.sh has
 # created the roles; the build is done by then, and deploy.sh finishes it.
+# talon-configure runs either way (nginx site, logging, CloudWatch agent).
 if ! /usr/local/bin/talon-deploy "${git_ref}"; then
   echo "talon bootstrap: first deploy did not finish (expected before infra/scripts/db-bootstrap.sh has run once)"
   # talon-deploy stops before talon-configure; apply the config anyway if
@@ -244,20 +217,4 @@ if ! /usr/local/bin/talon-deploy "${git_ref}"; then
   fi
 fi
 
-# --- CloudWatch agent (logs and metrics, monitoring.tf) ---
-# SSM State Manager installs and configures it too, but its first run starts
-# as soon as the server registers, while this script is still using apt, and
-# fails on the package lock. So first boot does it here, after apt is done,
-# from the same package source and config parameter. Not fatal: the server
-# works without it, only its logs and metrics go missing.
-CWA=/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl
-if [ ! -x "$CWA" ]; then
-  curl -fsSL "https://amazoncloudwatch-agent-${region}.s3.${region}.amazonaws.com/ubuntu/arm64/latest/amazon-cloudwatch-agent.deb" -o /run/amazon-cloudwatch-agent.deb \
-    && apt-get install -y -o DPkg::Lock::Timeout=300 /run/amazon-cloudwatch-agent.deb \
-    || echo "talon bootstrap: CloudWatch agent install failed"
-  rm -f /run/amazon-cloudwatch-agent.deb
-fi
-if [ -x "$CWA" ]; then
-  "$CWA" -a fetch-config -m ec2 -s -c "ssm:${cw_agent_param}" || echo "talon bootstrap: CloudWatch agent config failed"
-fi
 echo "talon bootstrap complete"

@@ -18,7 +18,7 @@ variable "backup_monthly_retention_days" {
 }
 
 locals {
-  backup_bucket_name = "${local.name}-backups-${data.aws_caller_identity.current.account_id}"
+  backup_bucket_name = "${local.name}-backups-${local.account_id}"
 }
 
 resource "aws_kms_key" "backups" {
@@ -33,7 +33,8 @@ resource "aws_kms_alias" "backups" {
 }
 
 resource "aws_s3_bucket" "backups" {
-  bucket = local.backup_bucket_name
+  bucket        = local.backup_bucket_name
+  force_destroy = true # step 1 of removing this file: lets the next apply delete it with its dumps
 }
 
 resource "aws_s3_bucket_public_access_block" "backups" {

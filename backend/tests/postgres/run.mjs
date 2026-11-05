@@ -1135,11 +1135,14 @@ const tests = [
     try { await adapter.openOutputFile(first, "secret.txt"); } catch (e) { missing = e.message; }
     assert(/not found/i.test(missing), `old file readable: ${missing}`);
 
-    // A job launched before this change (no s3Prefix) still reads its own id folder.
-    const legacy = { jobId: "job-49", instanceId: "i-old", maxRuntimeSeconds: 600, launchedAt: "2026-10-27T23:00:00Z" };
-    assert((await adapter.getLogs(legacy)).lines[0] === "someone else's log", "legacy ref must keep jobs/<id>");
-    // A malformed stored folder falls back to the id folder rather than reading elsewhere.
-    assert((await adapter.getLogs({ ...legacy, s3Prefix: "jobs/../other" })).lines[0] === "someone else's log", "bad s3Prefix not rejected");
+    // A ref without its own folder, or with a malformed one, is refused: never
+    // the bare id folder (another job's), never anywhere else.
+    const noFolder = { jobId: "job-49", instanceId: "i-old", maxRuntimeSeconds: 600, launchedAt: "2026-10-27T23:00:00Z" };
+    for (const ref of [noFolder, { ...noFolder, s3Prefix: "jobs/../other" }]) {
+      let refused = "";
+      try { await adapter.getLogs(ref); } catch (e) { refused = e.message; }
+      assert(/no valid S3 folder/.test(refused), `ref without a valid folder was read: ${JSON.stringify(ref)} ${refused}`);
+    }
   }],
 
   ["ec2 adapter: moves on when a zone does not offer the type, rotates the first subnet, stops on other errors", async () => {
@@ -1305,7 +1308,7 @@ const tests = [
     const aws = makeFakeAws({ instance: { state: "pending" } });
     let clock = Date.parse("2026-01-01T00:01:00Z");
     const adapter = createEc2ExecutionAdapter({ ec2: aws.ec2, s3: aws.s3, config: { bucket: "b", launchTemplateId: "lt", subnetIds: ["s"] }, now: () => clock });
-    const ref = { provider: "ec2", jobId: "job-9", executionId: "job-9", instanceId: "i-abc", maxRuntimeSeconds: 600, submittedAt: "2026-01-01T00:00:00Z", launchedAt: "2026-01-01T00:00:00Z" };
+    const ref = { provider: "ec2", jobId: "job-9", executionId: "job-9", s3Prefix: "jobs/job-9", instanceId: "i-abc", maxRuntimeSeconds: 600, submittedAt: "2026-01-01T00:00:00Z", launchedAt: "2026-01-01T00:00:00Z" };
 
     assert((await adapter.getStatus(ref)).state === "queued", "pending instance is queued");
     aws.setInstance({ state: "running" });
@@ -1354,7 +1357,7 @@ const tests = [
   ["ec2 adapter: downloads honor the source and cannot escape the job prefix", async () => {
     const aws = makeFakeAws();
     const adapter = createEc2ExecutionAdapter({ ec2: aws.ec2, s3: aws.s3, config: { bucket: "b", launchTemplateId: "lt", subnetIds: ["s"] } });
-    const ref = { provider: "ec2", jobId: "job-9", instanceId: "i-abc" };
+    const ref = { provider: "ec2", jobId: "job-9", s3Prefix: "jobs/job-9", instanceId: "i-abc" };
     aws.objects.set("jobs/job-9/output/a.txt", "from output");
     aws.objects.set("jobs/job-9/changed/a.txt", "from repo");
     assert((await adapter.openOutputFile(ref, "a.txt", "output_dir")).stream.text === "from output", "output_dir source");

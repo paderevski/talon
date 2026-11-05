@@ -35,7 +35,7 @@ data "aws_iam_policy_document" "github_app" {
     # By name, so the hand-made secrets are covered before they exist.
     resources = [
       for n in concat(keys(local.github_app_settings), local.github_app_secret_names) :
-      "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.secrets_prefix}/${n}"
+      "arn:aws:ssm:${var.aws_region}:${local.account_id}:parameter${local.secrets_prefix}/${n}"
     ]
   }
   # kms:Decrypt on the secrets key (via SSM only) is already granted in secrets.tf.

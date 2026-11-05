@@ -1,6 +1,6 @@
-# Talon's own VPC (web tier plan, phase 2). Four tiers:
-#   public  (1a, 1b)       NAT gateway; later an internet-facing ALB
-#   app     (1a, 1b)       web servers, later the internal ALB; out via NAT
+# Talon's own VPC. Four tiers:
+#   public  (1a, 1b)       NAT gateway (and an internet-facing ALB when Talon goes public)
+#   app     (1a, 1b)       web servers and the internal ALB; out via NAT
 #   data    (1a, 1b)       RDS; no route to the internet at all
 #   jobs    (1a-1d, /20)   job instances: own public IP, no inbound (jobs.tf)
 # One NAT gateway (in 1a) serves both app subnets: if 1a fails the web
@@ -15,7 +15,7 @@ variable "vpc_cidr" {
 }
 
 variable "web_availability_zones" {
-  description = "Zones for the public, app and data subnets (two: RDS needs a subnet group in two zones, phase 3 puts one web server in each)."
+  description = "Zones for the public, app and data subnets (two: RDS needs a subnet group in two zones, and the Auto Scaling group puts one web server in each)."
   type        = list(string)
   default     = ["us-east-1a", "us-east-1b"]
 }

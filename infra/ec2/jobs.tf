@@ -3,11 +3,13 @@
 # network rules, job instance role, launch template and the web server's
 # (tightly limited) permission to launch and terminate job instances.
 #
-# Contract with the web server: it writes jobs/<id>/input/ to the bucket, then
-# runs the launch template with tags talon-job=<id> and talon-max-seconds=<n>
-# (plus Project=talon, Component=job). The instance (job_boot.sh) writes
-# status.json, logs/ and output/ back and powers itself off, which terminates it.
-# It also streams its boot log to CloudWatch (talon-log-group tag).
+# Contract with the web server: each launch gets its own S3 folder,
+# jobs/<id>-<random>. The server writes <folder>/input/, then runs a launch
+# template with tags talon-job=<id>, talon-s3-prefix=<folder> and
+# talon-max-seconds=<n> (plus Project=talon, Component=job). The instance
+# (job_boot.sh) writes status.json, logs/, output/ and changed/ back and powers
+# itself off, which terminates it. It also streams its boot log to CloudWatch
+# (talon-log-group tag).
 
 variable "jobs_retention_days" {
   description = "Days before job input, logs and output expire from S3. 30 to start; class projects may need longer."
@@ -73,41 +75,15 @@ variable "job_root_volume_gb" {
   default = 30
 }
 
-variable "job_vpc_id" {
-  description = "VPC for job instances. Empty: Talon's VPC (network.tf)."
-  type        = string
-  default     = ""
-}
-
-variable "job_subnet_ids" {
-  description = "Subnets the web server may launch jobs into. Empty: the jobs subnets of Talon's VPC (network.tf), one per zone in job_availability_zones. Must give instances a route to the internet (public IP or NAT)."
-  type        = list(string)
-  default     = []
-}
-
 variable "job_availability_zones" {
-  description = "Zones that get a jobs subnet in Talon's VPC (network.tf). A launch moves to the next zone when one has no capacity or does not offer the type (us-east-1e offers none of the job types)."
+  description = "Zones that get a jobs subnet in Talon's VPC (network.tf); the web server launches jobs into these. A launch moves to the next zone when one has no capacity or does not offer the type (us-east-1e offers none of the job types)."
   type        = list(string)
   default     = ["us-east-1a", "us-east-1b", "us-east-1c", "us-east-1d"]
 }
 
-variable "monthly_budget_usd" {
-  description = "Account-wide monthly cost alert (emails alert_email at 80% and 100% of actual, and 100% forecast)."
-  type        = number
-  default     = 50
-}
-
-variable "daily_budget_usd" {
-  description = "Account-wide daily cost alert (emails alert_email at 100% of actual). An alarm, not a cap: billing data lags by hours."
-  type        = number
-  default     = 10
-}
-
 locals {
-  jobs_bucket_name = "${local.name}-jobs-${data.aws_caller_identity.current.account_id}"
-  job_vpc_id       = var.job_vpc_id != "" ? var.job_vpc_id : aws_vpc.main.id
-  job_subnet_ids   = length(var.job_subnet_ids) > 0 ? var.job_subnet_ids : [for az in var.job_availability_zones : aws_subnet.jobs[az].id]
-  account_id       = data.aws_caller_identity.current.account_id
+  jobs_bucket_name = "${local.name}-jobs-${local.account_id}"
+  job_subnet_ids   = [for az in var.job_availability_zones : aws_subnet.jobs[az].id]
 }
 
 # ---------------------------------------------------------------- bucket
@@ -200,7 +176,7 @@ resource "aws_s3_bucket_policy" "jobs" {
 resource "aws_security_group" "job" {
   name        = "${local.name}-job"
   description = "Talon job instances - no inbound, HTTPS and DNS out"
-  vpc_id      = local.job_vpc_id
+  vpc_id      = aws_vpc.main.id
 
   egress {
     description = "HTTPS"
@@ -229,18 +205,12 @@ resource "aws_security_group" "job" {
   tags = {
     Name = "${local.name}-job"
   }
-
-  # Moving to another VPC replaces the group: make the new one first so the
-  # launch templates switch over before the old one is deleted.
-  lifecycle {
-    create_before_destroy = true
-  }
 }
 
 # ---------------------------------------------------------------- job boot logs
 
 # Job instances' boot logs (job_boot.sh), stream <job id>/<instance id>. The
-# same log also goes to S3 (jobs/<id>/logs/boot.log), which the app reads; this
+# same log also goes to S3 (<job folder>/logs/boot.log), which the app reads; this
 # copy arrives every 15 seconds, survives an instance that dies, and can be
 # searched across jobs. The student's own output (job.log) stays in S3 only.
 resource "aws_cloudwatch_log_group" "jobs" {
@@ -265,7 +235,7 @@ resource "aws_iam_role_policy_attachment" "job_ssm_core" {
 # that escapes its sandbox could read another job's input or overwrite its
 # status, if it knows that job's folder. Folders are jobs/<id>-<128 random
 # bits> (talon-s3-prefix tag) and ListBucket needs a full folder prefix, so
-# they cannot be guessed or listed; older jobs keep guessable jobs/<id>.
+# they cannot be guessed or listed.
 # Student code does not get these credentials (metadata is blocked for its
 # user). Per-job scoped credentials are the real fix (Batch phase 0).
 data "aws_iam_policy_document" "job_access" {
@@ -391,30 +361,21 @@ resource "aws_launch_template" "job" {
 
 # GPU job template: the same contract, role, security group and boot script
 # as the CPU template, on the x86_64 PyTorch Deep Learning AMI. job_boot.sh
-# reads the talon-image tag to know which image it is on. A map, so a second
-# GPU image (for example the Base DLAMI for G7e) is one more entry.
+# reads the talon-image tag to know which image it is on.
 data "aws_ssm_parameter" "gpu_job_ami" {
-  for_each = local.gpu_templates
-  name     = each.value.ami_parameter
+  name = var.gpu_job_ami_parameter
 }
 
-locals {
-  gpu_templates = {
-    gpu = {
-      ami_parameter = var.gpu_job_ami_parameter
-      root_gb       = var.gpu_job_root_volume_gb
-      types         = var.gpu_job_instance_types
-      description   = "Talon GPU job instance (PyTorch Deep Learning AMI, Ubuntu x86_64)"
-    }
-  }
+moved {
+  from = aws_launch_template.job_gpu["gpu"]
+  to   = aws_launch_template.job_gpu
 }
 
 resource "aws_launch_template" "job_gpu" {
-  for_each               = local.gpu_templates
-  name                   = "${local.name}-job-${each.key}"
-  description            = each.value.description
-  image_id               = data.aws_ssm_parameter.gpu_job_ami[each.key].value
-  instance_type          = each.value.types[0]
+  name                   = "${local.name}-job-gpu"
+  description            = "Talon GPU job instance (PyTorch Deep Learning AMI, Ubuntu x86_64)"
+  image_id               = data.aws_ssm_parameter.gpu_job_ami.value
+  instance_type          = var.gpu_job_instance_types[0]
   vpc_security_group_ids = [aws_security_group.job.id]
   update_default_version = true
 
@@ -437,7 +398,7 @@ resource "aws_launch_template" "job_gpu" {
     device_name = "/dev/sda1"
     ebs {
       volume_type           = "gp3"
-      volume_size           = each.value.root_gb
+      volume_size           = var.gpu_job_root_volume_gb
       encrypted             = true
       delete_on_termination = true
     }
@@ -446,14 +407,14 @@ resource "aws_launch_template" "job_gpu" {
   tag_specifications {
     resource_type = "instance"
     tags = {
-      Name            = "${local.name}-job-${each.key}"
+      Name            = "${local.name}-job-gpu"
       Project         = "talon"
       Component       = "job"
       Environment     = var.environment
       Owner           = var.owner
       ManagedBy       = "talon-web"
       talon-bucket    = aws_s3_bucket.jobs.id
-      talon-image     = each.key
+      talon-image     = "gpu"
       talon-log-group = aws_cloudwatch_log_group.jobs.name
     }
   }
@@ -461,7 +422,7 @@ resource "aws_launch_template" "job_gpu" {
   tag_specifications {
     resource_type = "volume"
     tags = {
-      Name      = "${local.name}-job-${each.key}"
+      Name      = "${local.name}-job-gpu"
       Project   = "talon"
       Component = "job"
     }
@@ -470,8 +431,7 @@ resource "aws_launch_template" "job_gpu" {
 
 # ---------------------------------------------------------------- settings for the web server
 
-# The backend reads these at startup, so moving jobs to another VPC is a
-# change of variables here, not of backend configuration.
+# The backend reads these at startup.
 resource "aws_ssm_parameter" "jobs_bucket" {
   name  = "${local.secrets_prefix}/jobs-bucket"
   type  = "String"
@@ -490,12 +450,15 @@ resource "aws_ssm_parameter" "jobs_subnets" {
   value = join(",", local.job_subnet_ids)
 }
 
-# jobs-gpu-launch-template-id
+moved {
+  from = aws_ssm_parameter.jobs_gpu_launch_template["gpu"]
+  to   = aws_ssm_parameter.jobs_gpu_launch_template
+}
+
 resource "aws_ssm_parameter" "jobs_gpu_launch_template" {
-  for_each = local.gpu_templates
-  name     = "${local.secrets_prefix}/jobs-${each.key}-launch-template-id"
-  type     = "String"
-  value    = aws_launch_template.job_gpu[each.key].id
+  name  = "${local.secrets_prefix}/jobs-gpu-launch-template-id"
+  type  = "String"
+  value = aws_launch_template.job_gpu.id
 }
 
 # ---------------------------------------------------------------- web server permissions
@@ -505,17 +468,17 @@ locals {
 
   # The AMIs the job templates use (the only images the web server may launch).
   # insecure_value: AMI ids are public and readable in the plan.
-  job_ami_ids = distinct(concat(
-    [data.aws_ssm_parameter.ubuntu_ami.insecure_value],
-    [for k, _ in local.gpu_templates : data.aws_ssm_parameter.gpu_job_ami[k].insecure_value],
-  ))
-  job_max_root_gb = max(var.job_max_volume_gb, var.job_root_volume_gb, [for t in local.gpu_templates : t.root_gb]...)
+  job_ami_ids = distinct([
+    data.aws_ssm_parameter.ubuntu_ami.insecure_value,
+    data.aws_ssm_parameter.gpu_job_ami.insecure_value,
+  ])
+  job_max_root_gb = max(var.job_max_volume_gb, var.job_root_volume_gb, var.gpu_job_root_volume_gb)
 
   # Each launch template with the only instance types it may be launched as.
-  job_launch_rules = merge(
-    { cpu = { arn = aws_launch_template.job.arn, types = var.allowed_job_instance_types } },
-    { for k, t in local.gpu_templates : k => { arn = aws_launch_template.job_gpu[k].arn, types = t.types } },
-  )
+  job_launch_rules = {
+    cpu = { arn = aws_launch_template.job.arn, types = var.allowed_job_instance_types }
+    gpu = { arn = aws_launch_template.job_gpu.arn, types = var.gpu_job_instance_types }
+  }
 }
 
 data "aws_iam_policy_document" "web_launch_jobs" {
@@ -568,9 +531,9 @@ data "aws_iam_policy_document" "web_launch_jobs" {
         "${local.ec2_arn}:network-interface/*",
         "${local.ec2_arn}:security-group/${aws_security_group.job.id}",
         "${local.ec2_arn}:launch-template/${aws_launch_template.job.id}",
+        "${local.ec2_arn}:launch-template/${aws_launch_template.job_gpu.id}",
       ],
       [for id in local.job_ami_ids : "arn:aws:ec2:${var.aws_region}::image/${id}"],
-      [for k, _ in local.gpu_templates : "${local.ec2_arn}:launch-template/${aws_launch_template.job_gpu[k].id}"],
       [for s in local.job_subnet_ids : "${local.ec2_arn}:subnet/${s}"],
     )
   }
@@ -616,15 +579,8 @@ data "aws_iam_policy_document" "web_launch_jobs" {
   }
 
   statement {
-    sid = "DescribeForReconciler"
-    actions = [
-      "ec2:DescribeInstances",
-      "ec2:DescribeInstanceStatus",
-      "ec2:DescribeInstanceTypes",
-      "ec2:DescribeLaunchTemplates",
-      "ec2:DescribeLaunchTemplateVersions",
-      "ec2:DescribeSubnets",
-    ]
+    sid       = "DescribeForReconciler"
+    actions   = ["ec2:DescribeInstances"]
     resources = ["*"] # Describe calls do not support resource-level permissions
   }
 
@@ -656,8 +612,8 @@ data "aws_iam_policy_document" "web_launch_jobs" {
         aws_ssm_parameter.jobs_bucket.arn,
         aws_ssm_parameter.jobs_launch_template.arn,
         aws_ssm_parameter.jobs_subnets.arn,
+        aws_ssm_parameter.jobs_gpu_launch_template.arn,
       ],
-      [for p in aws_ssm_parameter.jobs_gpu_launch_template : p.arn],
     )
   }
 
@@ -678,80 +634,4 @@ resource "aws_iam_role_policy" "web_launch_jobs" {
   name   = "${local.name}-launch-jobs"
   role   = aws_iam_role.instance.id
   policy = data.aws_iam_policy_document.web_launch_jobs.json
-}
-
-# ---------------------------------------------------------------- budgets
-
-# Account-wide (the account is shared; cost allocation tags need the management
-# account). These alert by email and do not stop anything.
-resource "aws_budgets_budget" "monthly" {
-  count        = var.alert_email == "" ? 0 : 1
-  name         = "${local.name}-monthly"
-  budget_type  = "COST"
-  limit_amount = tostring(var.monthly_budget_usd)
-  limit_unit   = "USD"
-  time_unit    = "MONTHLY"
-
-  notification {
-    comparison_operator        = "GREATER_THAN"
-    threshold                  = 80
-    threshold_type             = "PERCENTAGE"
-    notification_type          = "ACTUAL"
-    subscriber_email_addresses = [var.alert_email]
-  }
-
-  notification {
-    comparison_operator        = "GREATER_THAN"
-    threshold                  = 100
-    threshold_type             = "PERCENTAGE"
-    notification_type          = "ACTUAL"
-    subscriber_email_addresses = [var.alert_email]
-  }
-
-  notification {
-    comparison_operator        = "GREATER_THAN"
-    threshold                  = 100
-    threshold_type             = "PERCENTAGE"
-    notification_type          = "FORECASTED"
-    subscriber_email_addresses = [var.alert_email]
-  }
-}
-
-resource "aws_budgets_budget" "daily" {
-  count        = var.alert_email == "" ? 0 : 1
-  name         = "${local.name}-daily"
-  budget_type  = "COST"
-  limit_amount = tostring(var.daily_budget_usd)
-  limit_unit   = "USD"
-  time_unit    = "DAILY"
-
-  notification {
-    comparison_operator        = "GREATER_THAN"
-    threshold                  = 100
-    threshold_type             = "PERCENTAGE"
-    notification_type          = "ACTUAL"
-    subscriber_email_addresses = [var.alert_email]
-  }
-}
-
-# ---------------------------------------------------------------- outputs
-
-output "jobs_bucket" {
-  value = aws_s3_bucket.jobs.id
-}
-
-output "job_launch_template_id" {
-  value = aws_launch_template.job.id
-}
-
-output "job_gpu_launch_template_ids" {
-  value = { for k, t in aws_launch_template.job_gpu : k => t.id }
-}
-
-output "job_security_group_id" {
-  value = aws_security_group.job.id
-}
-
-output "job_role_arn" {
-  value = aws_iam_role.job.arn
 }
