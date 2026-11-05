@@ -9,11 +9,13 @@
 #                  tables and their sequences, nothing else
 # Both sign in with IAM tokens (rds_iam): no password is set for either.
 #
-# Master sign-in: with IAM authentication on, RDS puts the master user in
-# rds_iam and refuses its password, so this signs in with an IAM token
-# (rds-db:connect, allowed while db_bootstrap = true). If that fails it falls
-# back to the password from Secrets Manager. Neither is printed, logged or
-# written to disk.
+# Master sign-in: the first block below makes the master a member of
+# talon_migrate, which is in rds_iam. RDS's pg_hba rule "+rds_iam" matches
+# indirect members, so after that the master must sign in with an IAM token
+# (rds-db:connect, allowed while db_bootstrap = true); its password works only
+# on a brand-new database. So: token first, then the Secrets Manager
+# password. Neither is printed, logged or written to disk. To restore password
+# sign-in for the master: REVOKE talon_migrate FROM talon_admin.
 set -euo pipefail
 
 set -a

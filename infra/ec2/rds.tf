@@ -153,10 +153,12 @@ resource "aws_iam_role_policy" "db_connect" {
   policy = data.aws_iam_policy_document.db_connect.json
 }
 
-# Only while db_bootstrap = true. With IAM authentication on, RDS puts the
-# master user in rds_iam (seen on 16.13: its password is refused, "PAM
-# authentication failed"), so db-bootstrap.sh signs in as the master with an
-# IAM token; the secret is the fallback if RDS ever stops doing that.
+# Only while db_bootstrap = true. db-bootstrap.sh makes the master a member
+# of talon_migrate (to create the database it owns), and talon_migrate is in
+# rds_iam; RDS's pg_hba rule "+rds_iam" matches indirect members, so from then
+# on the master's password is refused ("PAM authentication failed") and it
+# signs in with an IAM token. The secret is only read on a brand-new database,
+# before that first grant.
 data "aws_iam_policy_document" "db_master_secret" {
   statement {
     sid       = "ConnectAsMasterWithIam"

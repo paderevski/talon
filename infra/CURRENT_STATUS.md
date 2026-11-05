@@ -1036,11 +1036,19 @@ tested locally, **not applied yet**):
    removes the old box, its Elastic IP and security group, the backup
    alarms and the master secret access.
 
-Found in the cutover (2026-11-05): with IAM authentication on, RDS 16.13
-puts the master user in `rds_iam`, so its password is refused ("PAM
-authentication failed"). `db_bootstrap = true` therefore also allows
-`rds-db:connect` as `talon_admin`, and `db-bootstrap.sh` signs in with a
-token (the Secrets Manager password is only a fallback).
+Found in the cutover (2026-11-05): the bootstrap makes the master
+(`talon_admin`) a member of `talon_migrate`, which is in `rds_iam`; RDS's
+`pg_hba` rule `+rds_iam` matches indirect members, so from then on the
+master's password is refused ("PAM authentication failed") and it signs in
+with an IAM token. `db_bootstrap = true` therefore also allows
+`rds-db:connect` as `talon_admin`, and `db-bootstrap.sh` tries a token
+first (the Secrets Manager password only works on a brand-new database).
+To restore password sign-in: `REVOKE talon_migrate FROM talon_admin`.
+
+Also found: the CloudWatch agent install (State Manager) failed on the new
+server at first boot, most likely racing first boot's own apt. Re-run the
+two associations after a server's first boot completes, until phase 3 adds
+a proper wait.
 
 Rollback before step 8: start the old box and use
 `TALON_INSTANCE=<old id> infra/scripts/tunnel.sh`.
