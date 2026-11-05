@@ -111,4 +111,12 @@ resource "aws_instance" "web" {
     aws_route_table_association.app, # first boot needs the NAT route
     aws_nat_gateway.main,
   ]
+
+  lifecycle {
+    # User data comes from the launch template. The provider records it on the
+    # instance after launch and would then plan to clear it, which it does by
+    # stopping and starting the server. A template change still replaces the
+    # server through latest_version above.
+    ignore_changes = [user_data, user_data_base64]
+  }
 }
