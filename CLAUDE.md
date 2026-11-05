@@ -83,6 +83,7 @@ found in a breach" dialog; it blocks clicks until dismissed.
 - The ALB + WAF go-public work is on hold until the exposure and subnet
   decisions are made and LCPS IT adds the DNS records for the planned
   hostname `talon.lcps.org` (see CURRENT_STATUS.md).
+- Agent may run `terraform apply` after checking with user.
 
 ## Gotchas
 
