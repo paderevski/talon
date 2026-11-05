@@ -16,8 +16,9 @@
 # infra/scripts/db-bootstrap.sh, deploy, then apply with db_bootstrap = false.
 
 variable "db_instance_class" {
-  type    = string
-  default = "db.t4g.micro"
+  description = "db.t4g.small (2 GB): the micro (1 GB) ran critically low on memory during a failover restart (2026-11-05)."
+  type        = string
+  default     = "db.t4g.small"
 }
 
 variable "db_allocated_storage_gb" {
