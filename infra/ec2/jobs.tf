@@ -263,8 +263,11 @@ resource "aws_iam_role_policy_attachment" "job_ssm_core" {
 
 # The role is shared by all jobs, so it cannot be limited to one job id: a job
 # that escapes its sandbox could read another job's input or overwrite its
-# status. Student code does not get these credentials (metadata is blocked for
-# its user). Per-job scoped credentials are the follow-up.
+# status, if it knows that job's folder. Folders are jobs/<id>-<128 random
+# bits> (talon-s3-prefix tag) and ListBucket needs a full folder prefix, so
+# they cannot be guessed or listed; older jobs keep guessable jobs/<id>.
+# Student code does not get these credentials (metadata is blocked for its
+# user). Per-job scoped credentials are the real fix (Batch phase 0).
 data "aws_iam_policy_document" "job_access" {
   statement {
     sid       = "ReadInput"

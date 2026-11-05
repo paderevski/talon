@@ -1059,14 +1059,24 @@ box, its Elastic IP and security group, backup alarms and master sign-in
 removed; `legacy_web_server` now defaults to false; a plain plan shows no
 changes. **Phase 2 cutover complete.**
 
-**Bug found (fix next, own branch):** job S3 folders are keyed by job id
+**Bug found, fixed on branch `job-s3-prefix` (2026-11-05):** job S3 folders were keyed by job id
 only (`jobs/<id>/`), and the fresh RDS database restarted ids at 49, which
 the old box had used (ids 49-72 still in the jobs bucket, 30-day expiry).
 `job-49` picked up an October `status.json`: marked completed at $0.00 and
 its instance terminated after 20 s; it would also have shown the old
 job's logs and files (possibly another student's). Worked around by
-`setval('job_id_seq', 1000)` on RDS. Fix: a per-launch S3 folder stored on
-the job and passed as a tag (adapter, `job_boot.sh`, launch templates).
+`setval('job_id_seq', 1000)` on RDS. Fix: each launch gets
+`jobs/<id>-<128 random bits>`, stored as `executionRef.s3Prefix` and passed
+as the `talon-s3-prefix` tag; the launch's ClientToken uses the random part
+too (a token from a reused id could return the old instance). Older jobs
+keep `jobs/<id>`. Roll out with `terraform apply` (new job template
+versions) BEFORE deploying the app: the new boot script falls back to the
+old folder, but the old one ignores the tag. Applied and deployed 2026-11-05;
+verified on the box: `job-1002` wrote only to `jobs/job-1002-<random>/`;
+with the counter set back so a new `job-58` reused an id whose old folder
+held a succeeded status and model snapshots, the new job ran normally and
+showed only its own `output.txt` (old snapshot download: 404). Counter
+restored to 1002.
 
 
 After the cutover: delete `user_data.sh.tftpl`, `infra/backup/`,

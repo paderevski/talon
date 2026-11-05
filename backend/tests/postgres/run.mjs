@@ -1087,19 +1087,59 @@ const tests = [
         return { workDir: dir, archive: path.join(dir, "repo.tgz") };
       },
       now: () => Date.parse("2026-01-01T00:00:05Z"),
+      newLaunchId: () => "0123456789abcdef0123456789abcdef",
     });
     const ref = await adapter.start({ jobId: "job-7", repo: "a/b", branch: "main", entryScript: "train.py", maxRuntimeSeconds: 600, instanceType: "c7g.large", ownerUsername: "admin" });
-    assert(ref.instanceId === "i-abc" && ref.subnetId === "subnet-ok" && ref.executionId === "job-7", `ref ${JSON.stringify(ref)}`);
-    assert(aws.objects.get("jobs/job-7/input/repo.tgz") === "archive-bytes", "repo.tgz not uploaded");
-    assert(/exec python3 -u 'train.py'/.test(aws.objects.get("jobs/job-7/input/run.sh")), "run.sh not uploaded");
+    const folder = "jobs/job-7-0123456789abcdef0123456789abcdef";
+    assert(ref.instanceId === "i-abc" && ref.subnetId === "subnet-ok" && ref.executionId === "job-7" && ref.s3Prefix === folder, `ref ${JSON.stringify(ref)}`);
+    assert(aws.objects.get(`${folder}/input/repo.tgz`) === "archive-bytes", "repo.tgz not uploaded");
+    assert(/exec python3 -u 'train.py'/.test(aws.objects.get(`${folder}/input/run.sh`)), "run.sh not uploaded");
+    assert(![...aws.objects.keys()].some((k) => k.startsWith("jobs/job-7/")), "nothing goes to the id-only folder");
     const run = aws.calls.filter((c) => c.name === "RunInstancesCommand").at(-1).input;
     const tags = Object.fromEntries(run.TagSpecifications[0].Tags.map((t) => [t.Key, t.Value]));
-    assert(tags.Project === "talon" && tags.Component === "job" && tags["talon-job"] === "job-7" && tags["talon-max-seconds"] === "600", `tags ${JSON.stringify(tags)}`);
-    assert(run.InstanceType === "c7g.large" && run.ClientToken === "talon-job-7-subnet-ok", "type or client token wrong");
+    assert(tags.Project === "talon" && tags.Component === "job" && tags["talon-job"] === "job-7" && tags["talon-max-seconds"] === "600" && tags["talon-s3-prefix"] === folder, `tags ${JSON.stringify(tags)}`);
+    assert(run.InstanceType === "c7g.large" && run.ClientToken === "talon-0123456789abcdef0123456789abcdef-subnet-ok", `type or client token wrong: ${run.ClientToken}`);
 
     let refused = "";
     try { await adapter.start({ jobId: "job-8", instanceType: "p5.48xlarge", maxRuntimeSeconds: 60 }); } catch (e) { refused = e.message; }
     assert(/not allowed/.test(refused), `unknown type: ${refused}`);
+  }],
+
+  ["ec2 adapter: a reused job id gets its own folder and never sees an older job's status or files", async () => {
+    const aws = makeFakeAws();
+    const prepareInput = async () => {
+      const dir = await mkdtemp(path.join(os.tmpdir(), "talon-test-"));
+      await writeFile(path.join(dir, "repo.tgz"), "x");
+      return { workDir: dir, archive: path.join(dir, "repo.tgz") };
+    };
+    const adapter = createEc2ExecutionAdapter({ ec2: aws.ec2, s3: aws.s3, prepareInput, config: { bucket: "b", launchTemplateId: "lt-1", subnetIds: ["subnet-ok"] } });
+
+    // An older job-49 (another database, before per-launch folders) left its result behind.
+    aws.objects.set("jobs/job-49/status.json", JSON.stringify({ state: "succeeded", exit_code: 0, updated_at: "2026-10-27T23:09:03Z" }));
+    aws.objects.set("jobs/job-49/logs/job.log", "someone else's log\n");
+    aws.objects.set("jobs/job-49/output/secret.txt", "someone else's output");
+
+    const spec = { jobId: "job-49", repo: "a/b", entryScript: "train.py", maxRuntimeSeconds: 600, instanceType: "c7g.large" };
+    const first = await adapter.start(spec);
+    const second = await adapter.start(spec);
+    assert(/^jobs\/job-49-[a-f0-9]{32}$/.test(first.s3Prefix), `folder ${first.s3Prefix}`);
+    assert(first.s3Prefix !== second.s3Prefix, "two launches share a folder");
+    const tokens = aws.calls.filter((c) => c.name === "RunInstancesCommand").map((c) => c.input.ClientToken);
+    assert(tokens.length === 2 && tokens[0] !== tokens[1] && !tokens.some((t) => t.includes("job-49")), `client tokens ${tokens}`);
+
+    const status = await adapter.getStatus(first);
+    assert(status.state !== "completed" && !String(status.syncKey || "").startsWith("status:"), `old status leaked: ${JSON.stringify(status)}`);
+    assert((await adapter.getLogs(first)).lines.length === 0, "old log leaked");
+    assert((await adapter.listOutputFiles(first)).length === 0, "old output leaked");
+    let missing = "";
+    try { await adapter.openOutputFile(first, "secret.txt"); } catch (e) { missing = e.message; }
+    assert(/not found/i.test(missing), `old file readable: ${missing}`);
+
+    // A job launched before this change (no s3Prefix) still reads its own id folder.
+    const legacy = { jobId: "job-49", instanceId: "i-old", maxRuntimeSeconds: 600, launchedAt: "2026-10-27T23:00:00Z" };
+    assert((await adapter.getLogs(legacy)).lines[0] === "someone else's log", "legacy ref must keep jobs/<id>");
+    // A malformed stored folder falls back to the id folder rather than reading elsewhere.
+    assert((await adapter.getLogs({ ...legacy, s3Prefix: "jobs/../other" })).lines[0] === "someone else's log", "bad s3Prefix not rejected");
   }],
 
   ["ec2 adapter: moves on when a zone does not offer the type, rotates the first subnet, stops on other errors", async () => {
@@ -1150,13 +1190,13 @@ const tests = [
     const spec = (jobId, instanceType) => ({ jobId, repo: "a/b", entryScript: "train.py", maxRuntimeSeconds: 600, instanceType });
     const template = () => aws.calls.filter((c) => c.name === "RunInstancesCommand").at(-1).input.LaunchTemplate.LaunchTemplateId;
 
-    await adapter.start(spec("c1", "m7g.large"));
+    const cpuRef = await adapter.start(spec("c1", "m7g.large"));
     assert(template() === "lt-cpu", `cpu template ${template()}`);
-    assert(!aws.objects.get("jobs/c1/input/run.sh").includes("/opt/pytorch"), "cpu run.sh must not use the DLAMI python");
+    assert(!aws.objects.get(`${cpuRef.s3Prefix}/input/run.sh`).includes("/opt/pytorch"), "cpu run.sh must not use the DLAMI python");
 
-    await adapter.start(spec("g1", "g4dn.xlarge"));
+    const gpuRef = await adapter.start(spec("g1", "g4dn.xlarge"));
     assert(template() === "lt-gpu", `gpu template ${template()}`);
-    const gpuRun = aws.objects.get("jobs/g1/input/run.sh");
+    const gpuRun = aws.objects.get(`${gpuRef.s3Prefix}/input/run.sh`);
     assert(gpuRun.includes("DLAMI_PY=/opt/pytorch/bin/python3") && gpuRun.includes("talon-dlami.pth") && gpuRun.includes(". /work/venv/bin/activate"), "gpu run.sh must build a venv on the DLAMI's torch");
     assert(gpuRun.indexOf("talon-dlami.pth") < gpuRun.indexOf("REQS="), "venv must exist before requirements are installed");
 
