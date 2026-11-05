@@ -45,10 +45,17 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
    Seen once: one server's health check timed out on `SELECT 1` (2 s) for
    13 s at 18:19 UTC, no outage. The pool has no `idleTimeoutMillis` (pg
    default 10 s), so most health checks open a new TLS + IAM-token
-   connection; consider a longer idle timeout.
-   Still to do: stop the backend on one server / terminate one (ALB and
-   group recover), one reconciler per tick with a real job, a deploy updates
-   both servers and reseeds once; then merge.
+   connection; fixed on the branch (`idleTimeoutMillis` 5 min, not yet
+   deployed).
+   Failover check 2026-11-05 (backend stopped on the 1a server at 19:03:51,
+   probing through the tunnel every 2 s): the ALB marked it unhealthy at
+   19:04:35; until then about half the requests got 502 from that server's
+   nginx; none failed after. The group replaced it at 19:04:49 (ELB health),
+   the new server was healthy at 19:07:18; no alarm fired. This also covers
+   "terminate one". Health check tightened on the branch to 10 s x 2 (~20 s
+   window), **not applied yet**.
+   Still to do: apply the health check change, one reconciler per tick with
+   a real job, a deploy updates both servers and reseeds once; then merge.
 1. **Job queue with launch retries** (step 5 without Spot): a launch with no
    capacity waits and retries instead of failing; also gives overnight jobs.
    Plan it together with "Limiting launch exposure" below: the near-term
