@@ -1,6 +1,7 @@
 #!/bin/bash
 # One-screen status of Talon in AWS: web servers, load balancer, database,
-# running jobs, alarms, cost, and anything running that is not Talon's.
+# running jobs, network (VPC, subnets, NAT, endpoints), security groups,
+# IAM roles, alarms, cost, and anything running that is not Talon's.
 # Read-only. Usage: infra/scripts/status.sh [--deep] [--plan]
 #   --deep  also ask each web server (SSM) which commit it runs
 #   --plan  also run `terraform plan` to show drift (needs aws-env.sh creds
@@ -50,6 +51,24 @@ REFRESH="$(q autoscaling describe-instance-refreshes --auto-scaling-group-name "
   --query 'InstanceRefreshes[0].[Status,StartTime]')"
 [ -n "$REFRESH" ] && echo "last instance refresh: $REFRESH"
 
+# ---------------------------------------------------------------- load balancer
+section "Load balancer (ALB $NAME-web)"
+read -r LB_ARN LB_STATE LB_SCHEME LB_DNS <<<"$(q elbv2 describe-load-balancers --names "$NAME-web" \
+  --query 'LoadBalancers[0].[LoadBalancerArn,State.Code,Scheme,DNSName]')"
+if [ -n "$LB_ARN" ]; then
+  IDLE="$(q elbv2 describe-load-balancer-attributes --load-balancer-arn "$LB_ARN" \
+    --query 'Attributes[?Key==`idle_timeout.timeout_seconds`].Value|[0]')"
+  LISTENERS="$(q elbv2 describe-listeners --load-balancer-arn "$LB_ARN" --query 'Listeners[].[Protocol,Port]' | awk '{printf "%s%s:%s", sep, $1, $2; sep=", "}')"
+  read -r HC_PATH HC_INT HC_BAD <<<"$(q elbv2 describe-target-groups --target-group-arns "$TG" \
+    --query 'TargetGroups[0].[HealthCheckPath,HealthCheckIntervalSeconds,UnhealthyThresholdCount]')"
+  HEALTHY="$(awk '$2 == "healthy"' <<<"$TARGETS" | wc -l | tr -d ' ')"; TOTAL="$(sed '/^$/d' <<<"$TARGETS" | wc -l | tr -d ' ')"
+  echo "  $LB_STATE, $LB_SCHEME, listeners $LISTENERS, idle timeout ${IDLE}s"
+  echo "  targets $HEALTHY of $TOTAL healthy; health check $HC_PATH every ${HC_INT}s, unhealthy after $HC_BAD"
+  echo "  $LB_DNS"
+else
+  echo "  not found"
+fi
+
 # ---------------------------------------------------------------- database
 section "Database (RDS $NAME)"
 read -r DB_STATUS DB_CLASS DB_GB DB_VER <<<"$(q rds describe-db-instances --db-instance-identifier "$NAME" \
@@ -77,6 +96,65 @@ if [ -n "$JOBS" ]; then
 else
   echo "  none"
 fi
+
+# ---------------------------------------------------------------- network
+VPC="$(q ec2 describe-vpcs --filters "Name=tag:Name,Values=$NAME" Name=tag:Project,Values=talon --query 'Vpcs[0].[VpcId,CidrBlock,State]')"
+VPC_ID="${VPC%%[[:space:]]*}"
+section "Network (VPC $VPC_ID)"
+echo "  $(echo $VPC | cut -d' ' -f2-)"
+q ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" \
+  --query 'Subnets[].[Tags[?Key==`Tier`]|[0].Value,AvailabilityZone,CidrBlock,AvailableIpAddressCount]' | sort |
+  awk '{z = substr($2, length($2)); t[$1] = t[$1] sep[$1] z " " $3; sep[$1] = ", "; free[$1] += $4}
+       END {for (k in t) printf "  subnets %-7s %s (%d addresses free)\n", k, t[k], free[k]}' | sort
+q ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$VPC_ID" Name=state,Values=pending,available,deleting \
+  --query 'NatGateways[].[NatGatewayId,State,SubnetId,NatGatewayAddresses[0].PublicIp]' |
+  while read -r id state subnet ip; do echo "  NAT gateway $id $state, public IP $ip ($subnet)"; done
+IGW="$(q ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$VPC_ID" --query 'InternetGateways[].InternetGatewayId')"
+echo "  internet gateway ${IGW:-none}"
+q ec2 describe-vpc-endpoints --filters "Name=vpc-id,Values=$VPC_ID" --query 'VpcEndpoints[].[ServiceName,VpcEndpointType,State]' |
+  while read -r svc type state; do echo "  endpoint ${svc##*.} ($type) $state"; done
+OTHER_EIPS="$(q ec2 describe-addresses --query 'Addresses[?AssociationId==null].PublicIp')"
+[ -n "$OTHER_EIPS" ] && echo "  unattached Elastic IPs (billed): $OTHER_EIPS"
+
+# ---------------------------------------------------------------- security groups
+section "Security groups (inbound rules; every group allows all outbound unless noted)"
+SG_NAMES="$(q ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" --query 'SecurityGroups[].[GroupId,GroupName]')"
+sg_name() { awk -v i="$1" '$1 == i {print $2}' <<<"$SG_NAMES"; }
+while read -r sg_id sg_name_; do
+  [ -n "$sg_id" ] || continue
+  rules="$(q ec2 describe-security-group-rules --filters "Name=group-id,Values=$sg_id" \
+    --query 'SecurityGroupRules[].[IsEgress,IpProtocol,FromPort,ToPort,ReferencedGroupInfo.GroupId,CidrIpv4]')"
+  inbound=""; egress=""; egress_rules=0
+  while read -r is_egress proto from to ref cidr; do
+    [ -n "$is_egress" ] || continue
+    if [ "$proto" = "-1" ]; then port=all; elif [ "$from" = "$to" ]; then port="$proto/$from"; else port="$proto/$from-$to"; fi
+    if [ "$ref" != "None" ]; then src="$(sg_name "$ref")"; src="${src:-$ref}"; else src="$cidr"; fi
+    if [ "$is_egress" = "True" ]; then
+      egress_rules=$((egress_rules + 1))
+      [ "$port" = all ] && [ "$src" = "0.0.0.0/0" ] || egress="$egress${egress:+, }$port to $src"
+    else
+      inbound="$inbound${inbound:+, }$port from $src"
+    fi
+  done <<<"$rules"
+  printf '  %-18s in: %s\n' "$sg_name_" "${inbound:-none}"
+  if [ "$egress_rules" = 0 ]; then printf '  %-18s out: none\n' ""
+  elif [ -n "$egress" ]; then printf '  %-18s out only: %s\n' "" "$egress"; fi
+done <<<"$SG_NAMES"
+
+# ---------------------------------------------------------------- IAM
+section "IAM (global)"
+q iam list-roles --query "Roles[?starts_with(RoleName, \`$NAME-\`)].RoleName" | tr '\t' '\n' | sed '/^$/d' |
+while read -r role; do
+  inline="$(q iam list-role-policies --role-name "$role" --query 'PolicyNames' | tr '\t' ' ')"
+  managed="$(q iam list-attached-role-policies --role-name "$role" --query 'AttachedPolicies[].PolicyName' | tr '\t' ' ')"
+  echo "  role $role"
+  [ -n "$inline" ] && echo "    inline:  $inline"
+  [ -n "$managed" ] && echo "    managed: $managed"
+done
+PROFILES="$(q iam list-instance-profiles --query "InstanceProfiles[?starts_with(InstanceProfileName, \`$NAME-\`)].InstanceProfileName" | tr '\t' ' ')"
+echo "  instance profiles: ${PROFILES:-none}"
+SLR="$(q iam list-roles --path-prefix /aws-service-role/ --query 'Roles[?contains(RoleName, `AutoScaling`) || contains(RoleName, `ElasticLoadBalancing`) || contains(RoleName, `RDS`)].RoleName' | tr '\t' ' ')"
+echo "  service-linked roles used: ${SLR:-none}"
 
 # ---------------------------------------------------------------- alarms
 section "Alarms not OK"
