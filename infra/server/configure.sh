@@ -2,8 +2,8 @@
 # Server configuration that lives in the repo rather than in user_data (so it
 # can change without replacing the instance). Run as root by
 # /usr/local/bin/talon-configure (written by infra/ec2/web_user_data.sh.tftpl)
-# at the end of every talon-deploy, including first boot, and again by
-# infra/scripts/deploy.sh for older servers; safe to run again.
+# at the end of every talon-deploy (first boot and infra/scripts/deploy.sh);
+# safe to run again.
 #
 # Never run from the working tree: the file is extracted from the deployed
 # git commit (`git show HEAD:...`) to a root-owned path first.
