@@ -11,7 +11,7 @@ what is running, what is done and what is next.
 |---|---|
 | `network.tf` | Talon's VPC `10.20.0.0/16`: public subnets (a NAT gateway per zone), private app subnets (web servers, ALB), data subnets (RDS, no route out), jobs subnets (job instances, own public IP, no inbound); S3 gateway endpoint |
 | `web.tf` | Launch template and Auto Scaling group: two `t4g.small` web servers (Ubuntu 24.04 arm64), one per zone; no inbound except port 80 from the ALB |
-| `alb.tf` | Internal ALB in front of them (health check `GET /api/health`), its security group rules and alarms |
+| `alb.tf` | Internal ALB in front of them (health check `GET /api/health/live`), its security group rules and alarms |
 | `rds.tf` | Postgres 16 on RDS (`db.t4g.micro`, Multi-AZ, TLS, IAM sign-in; roles `talon_app` and `talon_migrate`) |
 | `jobs.tf` | Student jobs: jobs bucket, CPU and GPU job launch templates, job role, and the web servers' limited permission to launch and terminate job instances |
 | `secrets.tf`, `github.tf` | KMS key for app secrets and GitHub App settings in SSM (`/talon/<env>/`) |

@@ -37,11 +37,22 @@ app.use(requestLogger());
 // No CORS: the frontend is same-origin (Vite proxy in dev, nginx in prod).
 app.use(express.json({ limit: "512kb" })); // roster imports are the large bodies
 
-// The load balancer's health check: 503 when this server cannot reach the
-// database, so traffic goes to a server that can. No error details in the
-// response (it is unauthenticated); the log has them, once per change.
+// The load balancer's health check (alb.tf): is this server's app up? Not
+// the database: both servers share it, so a database outage is never fixed
+// by routing elsewhere, and failing this check during one would get the
+// Auto Scaling group to replace healthy servers (seen in a failover test,
+// 2026-11-05). A server whose own database connections break recovers by
+// itself (query_timeout in db/pool.js).
+app.get("/api/health/live", (_, res) => {
+  res.json({ ok: true, service: "talon-backend" });
+});
+
+// Full health, including the database: for people and scripts
+// (infra/scripts/status.sh). 503 when this server cannot reach the database.
+// No error details in the response (it is unauthenticated); the log has
+// them, once per change.
 let databaseWasHealthy = true;
-app.get("/api/health", async (_, res) => {
+async function checkDatabaseAndLog() {
   const database = await checkDatabase(getPool());
   if (database.ok !== databaseWasHealthy) {
     databaseWasHealthy = database.ok;
@@ -51,6 +62,16 @@ app.get("/api/health", async (_, res) => {
       log.error("health: database unreachable", { event: "health.database_failed", err: database.error });
     }
   }
+  return database;
+}
+// Checked in the background too, so an outage is logged (and reaches the
+// backend-errors alarm) even when nobody calls /api/health.
+if (process.env.NODE_ENV === "production") {
+  setInterval(() => checkDatabaseAndLog().catch(() => {}), 30_000).unref();
+}
+
+app.get("/api/health", async (_, res) => {
+  const database = await checkDatabaseAndLog();
   res.status(database.ok ? 200 : 503).json({
     ok: database.ok,
     service: "talon-backend",
