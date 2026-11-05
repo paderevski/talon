@@ -56,6 +56,13 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
      users saw 70 s of errors (one failover), no server replaced. RDS also
      lists a pending system update; it applies in the Sunday maintenance
      window as a failover (about a minute).
+0d. ~~**CI**~~ done 2026-11-05 (PR #1): GitHub Actions runs the backend,
+   Postgres and frontend tests and the build on every push and pull request
+   (Postgres 16 service container, no AWS access, about 70 s). `main` is
+   protected: pull requests only, the `test` check required on an
+   up-to-date branch, enforced for admins. Next (before going public):
+   deploys from GitHub through an OIDC role limited to SSM on web servers,
+   with deploy.sh's reseed off; later, `terraform plan` on infra PRs.
 1. **Job queue with launch retries** (step 5 without Spot): a launch with no
    capacity waits and retries instead of failing; also gives overnight jobs.
    Plan it together with "Limiting launch exposure" below: the near-term
