@@ -1071,7 +1071,12 @@ as the `talon-s3-prefix` tag; the launch's ClientToken uses the random part
 too (a token from a reused id could return the old instance). Older jobs
 keep `jobs/<id>`. Roll out with `terraform apply` (new job template
 versions) BEFORE deploying the app: the new boot script falls back to the
-old folder, but the old one ignores the tag.
+old folder, but the old one ignores the tag. Applied and deployed 2026-11-05;
+verified on the box: `job-1002` wrote only to `jobs/job-1002-<random>/`;
+with the counter set back so a new `job-58` reused an id whose old folder
+held a succeeded status and model snapshots, the new job ran normally and
+showed only its own `output.txt` (old snapshot download: 404). Counter
+restored to 1002.
 
 
 After the cutover: delete `user_data.sh.tftpl`, `infra/backup/`,
