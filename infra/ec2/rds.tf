@@ -1,5 +1,7 @@
-# Postgres on RDS (web tier plan, phase 2). Private (data subnets, no route
-# out), TLS required, IAM authentication for the app.
+# Postgres on RDS. Private (data subnets, no route out), TLS required, IAM
+# authentication for the app. Multi-AZ: a standby in the other zone takes
+# over in about 1-2 minutes if the primary's zone fails, and patches go to
+# the standby first, so maintenance is a short failover, not downtime.
 #
 # Credentials:
 # - Master user: password generated and stored by RDS in Secrets Manager
@@ -32,6 +34,18 @@ variable "db_max_allocated_storage_gb" {
 variable "db_backup_retention_days" {
   type    = number
   default = 7
+}
+
+variable "db_multi_az" {
+  description = "Standby database in a second zone (about double the instance and storage cost)."
+  type        = bool
+  default     = true
+}
+
+variable "db_apply_immediately" {
+  description = "Apply database changes now instead of in the Sunday maintenance window. Pass -var db_apply_immediately=true for one apply; leave false otherwise."
+  type        = bool
+  default     = false
 }
 
 variable "db_bootstrap" {
@@ -110,7 +124,7 @@ resource "aws_db_instance" "main" {
   db_subnet_group_name   = aws_db_subnet_group.main.name
   vpc_security_group_ids = [aws_security_group.db.id]
   publicly_accessible    = false
-  multi_az               = false
+  multi_az               = var.db_multi_az
   parameter_group_name   = aws_db_parameter_group.main.name
 
   backup_retention_period = var.db_backup_retention_days
@@ -119,7 +133,7 @@ resource "aws_db_instance" "main" {
   copy_tags_to_snapshot   = true
 
   auto_minor_version_upgrade = true
-  apply_immediately          = false
+  apply_immediately          = var.db_apply_immediately
 
   # Demo data: no final snapshot, no deletion protection. Revisit before real
   # students' data lives here.
