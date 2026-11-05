@@ -1,10 +1,11 @@
 # Monitoring: server logs in CloudWatch Logs, server memory/disk metrics, and
 # alarms that do not depend on the web server being honest.
 #
-# Logs and metrics: the CloudWatch agent on the web server, installed and
-# configured by SSM State Manager (no user_data change, so the instance is not
-# replaced). Its config lives in an SSM parameter; changing it re-runs the
-# configure association.
+# Logs and metrics: the CloudWatch agent on each web server. Its config lives
+# in an SSM parameter (below); infra/server/configure.sh installs the agent if
+# it is missing and loads the config when it changed, at first boot and on
+# every deploy (talon-deploy). So a config change here reaches the servers
+# with the next deploy.
 #
 # Alarms on EC2 vCPU usage (AWS/Usage) come from AWS itself, so they still fire
 # if the web server is compromised and its reconciler stopped. They are
@@ -24,9 +25,9 @@ variable "alarm_gpu_vcpus" {
 }
 
 variable "alarm_standard_vcpus" {
-  description = "Alarm when standard (A, C, D, H, I, M, R, T, Z) on-demand vCPUs in use exceed this. Default: the web server (2) plus 10 CPU jobs (EC2_MAX_JOBS_TOTAL) of up to 4 vCPUs."
+  description = "Alarm when standard (A, C, D, H, I, M, R, T, Z) on-demand vCPUs in use exceed this. Default: three web servers (2 each: two, plus one during an instance refresh) plus 10 CPU jobs (EC2_MAX_JOBS_TOTAL) of up to 4 vCPUs."
   type        = number
-  default     = 42
+  default     = 46
 }
 
 variable "enable_guardduty" {
@@ -39,9 +40,9 @@ variable "enable_guardduty" {
 
 locals {
   # Log group suffix => file on the web server. The backend writes JSON lines
-  # to its own file (systemd drop-in from infra/server/configure.sh, applied by
-  # deploy.sh); backups, deploys and the rest of the system log to journald,
-  # which rsyslog copies to /var/log/syslog. nginx access lines are JSON too.
+  # to its own file (systemd drop-in from infra/server/configure.sh); deploys
+  # and the rest of the system log to journald, which rsyslog copies to
+  # /var/log/syslog. nginx access lines are JSON too.
   server_logs = {
     backend      = "/var/log/talon/backend.log"
     syslog       = "/var/log/syslog"
@@ -123,44 +124,6 @@ resource "aws_iam_role_policy" "cw_agent" {
   name   = "${local.name}-cloudwatch-agent"
   role   = aws_iam_role.instance.id
   policy = data.aws_iam_policy_document.cw_agent.json
-}
-
-# Install the agent package, then load the config. Apply waits for each to
-# succeed, so a failure shows up in `terraform apply`.
-resource "aws_ssm_association" "cw_agent_install" {
-  association_name = "${local.name}-cloudwatch-agent-install"
-  name             = "AWS-ConfigureAWSPackage"
-  parameters = {
-    action = "Install"
-    name   = "AmazonCloudWatchAgent"
-  }
-  # By tag, so new and replaced web servers get the agent too.
-  targets {
-    key    = "tag:Component"
-    values = ["web", "web-legacy"]
-  }
-  wait_for_success_timeout_seconds = 600
-}
-
-resource "aws_ssm_association" "cw_agent_config" {
-  # The config hash in the name: a changed config updates the association,
-  # which runs it again.
-  association_name = "${local.name}-cloudwatch-agent-config-${substr(sha1(local.cw_agent_config), 0, 8)}"
-  name             = "AmazonCloudWatch-ManageAgent"
-  parameters = {
-    action                        = "configure"
-    mode                          = "ec2"
-    optionalConfigurationSource   = "ssm"
-    optionalConfigurationLocation = aws_ssm_parameter.cw_agent_config.name
-    optionalRestart               = "yes"
-  }
-  # By tag, so new and replaced web servers get the agent too.
-  targets {
-    key    = "tag:Component"
-    values = ["web", "web-legacy"]
-  }
-  wait_for_success_timeout_seconds = 300
-  depends_on                       = [aws_ssm_association.cw_agent_install, aws_iam_role_policy.cw_agent]
 }
 
 # ---------------------------------------------------------------- server alarms

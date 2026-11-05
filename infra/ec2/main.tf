@@ -1,5 +1,6 @@
 locals {
-  name = "talon-${var.environment}"
+  name       = "talon-${var.environment}"
+  account_id = var.account_id # the provider refuses any other account
 }
 
 # Ubuntu 24.04 arm64 for the web server (web.tf) and CPU job instances (jobs.tf).

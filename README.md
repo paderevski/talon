@@ -24,11 +24,10 @@ A user can hold several roles. Identity comes only from the session cookie.
   `src/repositories/postgres`, `migrations/` (numbered SQL), `tests/`
 - `frontend/` React (Vite) app: `src/App.jsx`, `components/`, `api/client.js`
 - `shared/` status and repo helpers used by both
-- `infra/` Terraform, scripts and notes for the AWS demo box (start with
+- `infra/` Terraform, scripts and notes for the AWS demo (start with
   [`infra/README.md`](infra/README.md) and
   [`infra/CURRENT_STATUS.md`](infra/CURRENT_STATUS.md), which is the map of
   what is running, what is done and what is next)
-- `infra_2/` an older EKS design, kept for reference only
 
 Money is integer cents in the ledger and dollars in API responses. Jobs and
 results are scoped by the signed-in user on the server.

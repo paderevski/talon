@@ -3,8 +3,8 @@
 #
 # Everything about the job comes from instance tags, so this file is static:
 #   talon-job          job id (falls back to manual-<instance id>)
-#   talon-s3-prefix    this launch's S3 folder, jobs/<id>-<random> (falls
-#                      back to jobs/<id> for launches from before it existed)
+#   talon-s3-prefix    this launch's S3 folder, jobs/<id>-<random>; a hand
+#                      launch without it uses jobs/manual-<instance id>
 #   talon-bucket       jobs bucket (set by the launch template)
 #   talon-max-seconds  time limit for the user's script (default 1800)
 #   talon-image        cpu or gpu (PyTorch DLAMI); set by the launch template
@@ -120,7 +120,10 @@ IMAGE=$(tag talon-image); IMAGE=${IMAGE:-cpu}
 LOG_GROUP=$(tag talon-log-group)
 INSTANCE_TYPE=$(imds meta-data/instance-type)
 S3P=$(tag talon-s3-prefix)
-[[ "$S3P" =~ ^jobs/[A-Za-z0-9-]+$ ]] || S3P="jobs/$JOB"
+[ -z "$S3P" ] && [[ "$JOB" == manual-* ]] && S3P="jobs/$JOB"
+if ! [[ "$S3P" =~ ^jobs/[A-Za-z0-9-]+$ ]]; then
+  echo "[talon] missing or bad talon-s3-prefix tag: '$S3P'"; exit 1
+fi
 PREFIX="s3://$BUCKET/$S3P"
 START=$(date -u +%FT%TZ)
 echo "[talon] job $JOB on $INSTANCE_ID ($INSTANCE_TYPE, image $IMAGE), ${UPTIME_AT_START}s after kernel boot"

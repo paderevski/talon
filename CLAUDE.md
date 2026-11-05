@@ -14,10 +14,10 @@ IPs, instance IDs, emails, secrets or real passwords in tracked files.**
 - `frontend/src/` React app: `App.jsx`, `components/`, `api/client.js`
   (all API calls), `utils/format.js` (`formatDollars`).
 - `shared/` status helpers used by both.
-- `infra/ec2` Terraform for the demo instance; `infra/state` the state
-  bucket; `infra/server` box config and DB bootstrap; `infra/scripts`
-  helper scripts.
-  `infra_2/` is an old EKS design, reference only.
+- `infra/ec2` Terraform for the demo (VPC, two web servers in an Auto
+  Scaling group behind an internal ALB, RDS, jobs); `infra/state` the state
+  bucket; `infra/server` web server config (`configure.sh`) and DB
+  bootstrap; `infra/scripts` helper scripts.
 - **`infra/CURRENT_STATUS.md` is the map**: what is running, what is done,
   what is blocked, gaps to production, EC2-jobs design notes. Read it first
   and keep it current when you change something it describes.
@@ -52,7 +52,8 @@ found in a breach" dialog; it blocks clicks until dismissed.
   It builds, migrates, restarts, then reseeds fresh demo data (wipes all
   users, classes, jobs; the box's data is disposable). `--keep-data` skips
   the reseed. Changing `infra/ec2/web_user_data.sh.tftpl` (the web
-  server's first boot) replaces the server; the data in RDS stays. Backups
+  servers' first boot) rolls new servers in one at a time on the next
+  apply (instance refresh, no downtime); the data in RDS stays. Backups
   are RDS's (7 days, point-in-time restore).
 - The database is RDS: the service connects as `talon_app` (rows only) with
   IAM tokens; migrations, the seed and admin scripts switch to
@@ -82,6 +83,7 @@ found in a breach" dialog; it blocks clicks until dismissed.
 - The ALB + WAF go-public work is on hold until the exposure and subnet
   decisions are made and LCPS IT adds the DNS records for the planned
   hostname `talon.lcps.org` (see CURRENT_STATUS.md).
+- Agent may run `terraform apply` after checking with user.
 
 ## Gotchas
 

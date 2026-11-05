@@ -46,12 +46,5 @@ check allowed "  user data override" --launch-template "LaunchTemplateId=\$LT,Ve
 exit \$FAIL
 EOF
 
-PARAMS="$(python3 -c 'import json,sys; print(json.dumps({"commands": sys.stdin.read().splitlines()}))' <<<"$REMOTE")"
-CMD_ID="$(aws ssm send-command --instance-ids "$ID" --document-name AWS-RunShellScript \
-  --comment "talon check launch policy" --parameters "$PARAMS" \
-  --query Command.CommandId --output text)"
-aws ssm wait command-executed --command-id "$CMD_ID" --instance-id "$ID" || true
-aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$ID" \
-  --query '[StandardOutputContent,StandardErrorContent]' --output text
-STATUS="$(aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$ID" --query Status --output text)"
-[ "$STATUS" = "Success" ] || { echo "Check $STATUS"; exit 1; }
+COMMANDS="$(python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().splitlines()))' <<<"$REMOTE")"
+run_ssm "$ID" "talon check launch policy" "$COMMANDS"

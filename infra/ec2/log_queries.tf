@@ -154,7 +154,7 @@ locals {
       EOQ
     }
 
-    "System log problems (backups, deploys, services)" = {
+    "System log problems (deploys, services)" = {
       groups = [local.lg.syslog]
       query  = <<-EOQ
         fields @timestamp, @message

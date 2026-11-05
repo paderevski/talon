@@ -1,6 +1,6 @@
 #!/bin/bash
-# Server configuration that lives in the repo rather than in user_data (so it
-# can change without replacing the instance). Run as root by
+# Web server configuration that lives in the repo rather than in user_data
+# (so it can change without replacing a server). Run as root by
 # /usr/local/bin/talon-configure (written by infra/ec2/web_user_data.sh.tftpl)
 # at the end of every talon-deploy (first boot and infra/scripts/deploy.sh);
 # safe to run again.
@@ -8,7 +8,9 @@
 # Never run from the working tree: the file is extracted from the deployed
 # git commit (`git show HEAD:...`) to a root-owned path first.
 #
-# What it sets up (logging):
+# What it sets up:
+# - nginx: Talon's site (static frontend, /api proxied to the backend), enabled
+#   in place of nginx's default site.
 # - talon-backend writes its JSON log lines to /var/log/talon/backend.log
 #   (CloudWatch: /talon/<env>/backend). Not in journald or syslog any more:
 #   `tail -f /var/log/talon/backend.log`, or `aws logs tail` from a laptop.
@@ -17,7 +19,12 @@
 # - nginx sends its $request_id to the backend as X-Request-Id, so an nginx
 #   line and the backend's line for the same request share requestId.
 #
-# And proxy headers, ready for a load balancer in front (web tier phase 1):
+# - CloudWatch agent: installed if missing; config loaded from the SSM
+#   parameter in CW_AGENT_CONFIG_PARAM (/etc/talon/talon.env) when it changed.
+#   Failures here are reported, never fatal (logs and metrics go missing, the
+#   site keeps working).
+#
+# And proxy headers for the internal ALB in front (alb.tf):
 # - nginx passes on X-Forwarded-Proto when the request came from inside the
 #   VPC (the ALB), instead of overwriting it with its own "http".
 # - the backend trusts loopback plus the VPC range as proxies
@@ -134,13 +141,12 @@ then
   changed_nginx=true
 fi
 
-# Same site as web_user_data.sh.tftpl writes, plus the JSON access log, the
-# request id header and the forwarded protocol. Keep the two in step until
-# user_data next changes.
+# Talon's site, with the JSON access log, the request id header and the
+# forwarded protocol, enabled in place of nginx's default site.
 SITE=/etc/nginx/sites-available/talon
 cp -p "$SITE" "$SITE.bak" 2>/dev/null || true
 if install_file "$SITE" 644 <<'EOF'
-# From infra/server/configure.sh (first written by web_user_data.sh.tftpl).
+# From infra/server/configure.sh.
 server {
     listen 80 default_server;
     server_name _;
@@ -168,13 +174,24 @@ EOF
 then
   changed_nginx=true
 fi
+if [ "$(readlink /etc/nginx/sites-enabled/talon 2>/dev/null)" != "$SITE" ] || [ -e /etc/nginx/sites-enabled/default ]; then
+  ln -sfn "$SITE" /etc/nginx/sites-enabled/talon
+  rm -f /etc/nginx/sites-enabled/default
+  echo "configure: enabled the talon site"
+  changed_nginx=true
+fi
 
 if $changed_nginx; then
   if nginx -t; then
     systemctl reload nginx
   else
     echo "configure: nginx config test failed; restoring the previous site" >&2
-    [ -f "$SITE.bak" ] && mv "$SITE.bak" "$SITE"
+    if [ -f "$SITE.bak" ]; then
+      mv "$SITE.bak" "$SITE"
+    else # first run: back to nginx's default site
+      rm -f /etc/nginx/sites-enabled/talon
+      ln -sfn /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
+    fi
     rm -f /etc/nginx/conf.d/talon-logging.conf /etc/nginx/conf.d/talon-proxy.conf
     nginx -t && systemctl reload nginx
     exit 1
@@ -187,4 +204,35 @@ if $changed_backend; then
   systemctl restart talon-backend
 fi
 
-echo "configure: done (backend changed: $changed_backend, nginx changed: $changed_nginx)"
+# --- CloudWatch agent (monitoring.tf) ----------------------------------------
+# Never fatal: a failure here costs logs and metrics, not the site.
+changed_cwa=false
+cloudwatch_agent() {
+  local param region cwa=/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl want have
+  param="$(sed -n 's/^CW_AGENT_CONFIG_PARAM=//p' /etc/talon/talon.env 2>/dev/null | tail -1)"
+  if [ -z "$param" ]; then
+    echo "configure: no CW_AGENT_CONFIG_PARAM in /etc/talon/talon.env; CloudWatch agent skipped"
+    return 0
+  fi
+  region="$(imds placement/region)" || { echo "configure: no region from instance metadata; CloudWatch agent skipped" >&2; return 1; }
+  if [ ! -x "$cwa" ]; then
+    curl -fsSL "https://amazoncloudwatch-agent-$region.s3.$region.amazonaws.com/ubuntu/arm64/latest/amazon-cloudwatch-agent.deb" \
+      -o /run/amazon-cloudwatch-agent.deb &&
+      apt-get install -y -q -o DPkg::Lock::Timeout=600 /run/amazon-cloudwatch-agent.deb >/dev/null
+    rm -f /run/amazon-cloudwatch-agent.deb
+    [ -x "$cwa" ] || { echo "configure: CloudWatch agent install failed" >&2; return 1; }
+    echo "configure: installed the CloudWatch agent"
+  fi
+  want="$(/snap/bin/aws ssm get-parameter --region "$region" --name "$param" --query Parameter.Value --output text | sha256sum)" ||
+    { echo "configure: cannot read $param" >&2; return 1; }
+  have="$(cat /etc/talon/cw-agent-config.sha256 2>/dev/null || true)"
+  if [ "$want" != "$have" ] || ! systemctl is-active --quiet amazon-cloudwatch-agent; then
+    "$cwa" -a fetch-config -m ec2 -s -c "ssm:$param" >/dev/null ||
+      { echo "configure: CloudWatch agent config failed" >&2; return 1; }
+    echo "$want" > /etc/talon/cw-agent-config.sha256
+    changed_cwa=true
+  fi
+}
+cloudwatch_agent || true
+
+echo "configure: done (backend changed: $changed_backend, nginx changed: $changed_nginx, cloudwatch agent changed: $changed_cwa)"

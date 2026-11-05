@@ -11,7 +11,3 @@ output "alb_dns_name" {
 output "db_endpoint" {
   value = aws_db_instance.main.address
 }
-
-output "tunnel_command" {
-  value = "infra/scripts/tunnel.sh   # then open http://localhost:8080"
-}

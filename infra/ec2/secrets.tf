@@ -4,8 +4,6 @@
 # so they never appear in Terraform state, and they are deliberately outside
 # Terraform so `terraform destroy` or an instance replacement cannot delete
 # them. Names: <secrets_prefix>/session-secret and <secrets_prefix>/credentials-key.
-data "aws_caller_identity" "current" {}
-
 locals {
   secrets_prefix = "/talon/${var.environment}"
   secret_names   = ["session-secret", "credentials-key"]
@@ -28,7 +26,7 @@ data "aws_iam_policy_document" "app_secrets" {
     actions = ["ssm:GetParameter", "ssm:PutParameter"]
     resources = [
       for n in local.secret_names :
-      "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.secrets_prefix}/${n}"
+      "arn:aws:ssm:${var.aws_region}:${local.account_id}:parameter${local.secrets_prefix}/${n}"
     ]
   }
 

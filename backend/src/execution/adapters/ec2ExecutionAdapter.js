@@ -250,10 +250,15 @@ export default function createEc2ExecutionAdapter({
   // while old folders live on for jobs_retention_days; a folder named by the
   // id alone would hand a new job an old job's status, logs and files. The
   // random part also keeps other jobs' folders unguessable from inside a job
-  // (the job role is shared; see jobs.tf). Jobs launched before this keep
-  // jobs/<job id>.
+  // (the job role is shared; see jobs.tf).
   const launchPrefixPattern = /^jobs\/[A-Za-z0-9-]+$/;
-  const prefix = (ref) => (launchPrefixPattern.test(String(ref?.s3Prefix ?? "")) ? ref.s3Prefix : `jobs/${ref.jobId}`);
+  const prefix = (ref) => {
+    const value = String(ref?.s3Prefix ?? "");
+    if (!launchPrefixPattern.test(value)) {
+      throw new Error(`Job ${ref?.jobId ?? "?"} has no valid S3 folder (executionRef.s3Prefix)`);
+    }
+    return value;
+  };
   let nextSubnet = 0;
 
   async function readText(bucket, key) {
