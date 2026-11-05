@@ -11,7 +11,7 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
    of two web servers (1a, 1b) behind an internal ALB, reached through the
    SSM tunnel; all checks pass. Details under "Later: two web servers",
    "Phase 3 as built". Next web tier step is going public (ALB + WAF, item 5).
-0b. ~~**Infra cleanup**~~ done 2026-11-05 (branch `infra-cleanup-2`): legacy
+0b. ~~**Infra cleanup**~~ done and merged 2026-11-05 (`infra-cleanup-2`): legacy
    code and resources removed after three design iterations. `infra_2/` (old
    EKS design) deleted; backups bucket, its KMS key and `backups.tf` removed;
    CloudWatch agent's SSM State Manager associations removed (the agent is
@@ -58,7 +58,7 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 | Elastic IP | None for the web server (private). One for the NAT gateway |
 | Inbound access | None. SSM Session Manager only (`tunnel.sh`: SSM port forward through a web server to the internal ALB) |
 | Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`. Postgres 16 on RDS `talon-demo` (`db.t4g.micro`, TLS, IAM sign-in as `talon_app`; migrations as `talon_migrate`). `EC2_JOBS_ENABLED=true` |
-| Deployed | `infra-cleanup-2` branch, by first boot (2026-11-05). Job templates v12 (CPU) / v8 (GPU) |
+| Deployed | `main` (3ca1615), by first boot (2026-11-05). Web template v6, job templates v12 (CPU) / v8 (GPU) |
 | Approx cost | ~$100/month estimate, not read from the bill: two web servers ~$24 + EBS ~$3.20, internal ALB ~$17, NAT gateway ~$33 + traffic, RDS ~$14, KMS keys ~$2, alarms/S3/SNS pennies. Plus job instances, billed per second and charged to budgets |
 | Other AWS resources | SSM parameters under `/talon/demo/`, KMS key `alias/talon-demo-secrets`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), CloudWatch alarms (`monitoring.tf`: disk, backend errors, unknown job instance, failed logins, GPU and standard vCPUs; `alb.tf`: healthy hosts, ALB 5xx), CloudWatch agent on each web server (installed and configured by `infra/server/configure.sh`; logs in `/talon/demo/{backend,syslog,nginx-access,nginx-error,bootstrap}`, 30 days; metrics in `Talon/Server`), saved Logs Insights queries `Talon/*` (`log_queries.tf`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and CPU/GPU launch templates (`jobs.tf`), 2 AWS Budgets alerts (`alarms.tf`: 150 USD a month, 10 USD a day) |
 | Root volume | 20 GB gp3, encrypted with the default AWS-managed EBS key (the architecture doc asks for a KMS key; not changed) |
