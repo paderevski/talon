@@ -1,12 +1,19 @@
 # Talon infra - current status
 
-_Last updated: 2026-11-04 (GPU jobs, build step 4, merged to `main`: one GPU launch template on the PyTorch DLAMI for g4dn.xlarge, g4dn.2xlarge, g6.xlarge and g6e.2xlarge, admin-only; verified on the box with g4dn; the box runs the same code from branch `gpu-jobs`). Before that, 2026-11-03 (GitHub App sign-in, code-source choice, job folders, admin GitHub unlink and script arguments). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
+_Last updated: 2026-11-05 (web tier plan phase 1, app readiness for two web servers behind an ALB with RDS, on branch `web-tier-phase1`, not merged or deployed yet). Before that, 2026-11-04 (GPU jobs, build step 4, merged to `main`: one GPU launch template on the PyTorch DLAMI for g4dn.xlarge, g4dn.2xlarge, g6.xlarge and g6e.2xlarge, admin-only; verified on the box with g4dn; the box runs the same code from branch `gpu-jobs`). Before that, 2026-11-03 (GitHub App sign-in, code-source choice, job folders, admin GitHub unlink and script arguments). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
 Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 (gitignored). Architecture doc: `docs/talon-architecture-summary-v7.docx`
 (see "Gaps to production" for where it and reality differ).
 
-## Next up (as of 2026-11-04)
+## Next up (as of 2026-11-05)
 
+0. **Web tier phase 1** (branch `web-tier-phase1`): done in code and tested
+   locally, including the database tests over TLS against a local Postgres
+   with `sslmode=verify-full`. Still to do: `terraform apply` (adds the
+   `Component=web` tag to the web instance, in place), deploy the branch to
+   the box, check the tunnel, health and logs, then merge. Phase 2
+   (`user_data`: seeding out of first boot, backups retired, RDS) is next;
+   see "Later: two web servers" below.
 1. **Job queue with launch retries** (step 5 without Spot): a launch with no
    capacity waits and retries instead of failing; also gives overnight jobs.
    Plan it together with "Limiting launch exposure" below: the near-term
@@ -47,9 +54,15 @@ aws sso login --profile lcps     # when credentials expire (usually daily)
 infra/scripts/tunnel.sh          # then open http://localhost:8080
 infra/scripts/deploy.sh          # deploy origin/main (push first), then reseed demo data
 infra/scripts/deploy.sh B --keep-data   # deploy branch B without reseeding
-infra/scripts/shell.sh           # shell on the box
+infra/scripts/shell.sh [id]      # shell on a web server (lists the others)
 infra/scripts/backup.sh status   # newest backups (also: now, restore-test, install)
 ```
+
+The scripts find web servers by tag (`Project=talon`, `Component=web`,
+`Environment=$TALON_ENV`, default `demo`; `common.sh`). Until the tag is
+applied they fall back to `terraform output instance_id`. `deploy.sh` deploys
+to each server in turn and reseeds once at the end; `TALON_INSTANCE=<id>`
+picks the server for `tunnel.sh`, `shell.sh` and `check-launch-policy.sh`.
 
 Demo login: see the main README.
 
@@ -326,12 +339,11 @@ Verify CloudFront VPC origin support for EC2 before choosing it.
 
 ### App / box changes that must ship with it
 
-- **X-Forwarded-Proto through two proxies.** Chain is ALB (TLS) -> nginx
-  (HTTP) -> Node. nginx currently sends `X-Forwarded-Proto $scheme`, which
-  is `http` behind the ALB, so Express would think the request is HTTP and
-  **refuse to set `Secure` session cookies (login silently fails)**. Pass
-  the ALB's header through (`$http_x_forwarded_proto`) and set Express
-  `trust proxy` to cover both hops.
+- ~~X-Forwarded-Proto through two proxies~~ (web tier phase 1, branch
+  `web-tier-phase1`): `configure.sh` makes nginx pass on the ALB's
+  `X-Forwarded-Proto` for requests from inside the VPC (`$scheme`
+  otherwise), and sets `TALON_TRUSTED_PROXIES=loopback,<VPC range>` (read
+  from instance metadata) so Express skips both hops.
 - `SESSION_COOKIE_SECURE=true` in `/etc/talon/talon.env`.
 - ~~Per-account login throttling~~ (done, item 2).
 - **No demo users on a reachable server.** Their passwords are public in
@@ -944,8 +956,37 @@ Not needed for load. If wanted for availability:
 Already compatible: sessions are in Postgres (no sticky sessions needed);
 migrations take an advisory lock (concurrent deploys are safe).
 
+The current plan for this is the "Talon Web Tier Plan" doc (4 phases: app
+readiness; VPC + RDS; second server + internal ALB; going public). Phase 1,
+app readiness (branch `web-tier-phase1`, 2026-11-05):
+
+- Reconciler: each tick takes `pg_try_advisory_lock` (id 727275,
+  `backend/src/db/advisoryLock.js`) on its own connection; other servers
+  skip that tick.
+- Proxy headers: see "App / box changes" under Going public.
+- Database over TCP/TLS: `DATABASE_URL=postgres://talon@<host>:5432/talon?sslmode=verify-full&sslrootcert=<RDS CA bundle>`
+  with the password in `PGPASSWORD` (from `secrets.env`, never in the
+  URL). With `NODE_ENV=production` the backend refuses a remote host
+  without `verify-full`. The local socket URL (peer auth) still works and
+  is what the box uses until phase 2. Pool: 10 s connect timeout,
+  keepalive.
+- `/api/health` runs `SELECT 1` (2 s limit) and answers 503
+  `{"ok":false,"database":"unavailable"}` when the database is down;
+  `health.database_failed` / `health.database_recovered` are logged once
+  per change.
+- Scripts find web servers by tag (see "How to use").
+
+Left for phase 2 (they touch `user_data`, which replaces the instance):
+seeding out of first boot, `talon-load-secrets` writing `PGPASSWORD`,
+the RDS CA bundle on disk, backups retired in favour of RDS backups, and
+the `talon` role's grants on RDS.
+
 ## History
 
+- 2026-11-05: Web tier phase 1 (`web-tier-phase1`, not yet deployed):
+  reconciler advisory lock, proxy headers through ALB and nginx, database
+  over TLS (socket path kept), database-aware `/api/health`, scripts find
+  web servers by tag, `deploy.sh` loops over servers and reseeds once.
 - 2026-11-04: Logging (`logging-structured`). Backend JSON logs with stable
   event names and request ids in `/talon/demo/backend`; nginx JSON access log
   sharing the request id; job instance boot logs in `/talon/demo/jobs` with

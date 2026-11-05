@@ -94,6 +94,8 @@ resource "aws_instance" "app" {
 
   tags = {
     Name = "${local.name}-app"
+    # infra/scripts find web servers by Project + Component + Environment.
+    Component = "web"
   }
 
   depends_on = [aws_iam_role_policy.app_secrets]

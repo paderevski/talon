@@ -8,9 +8,11 @@ import pg from "pg";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { assert, createCookieJar, login, resetTestDatabase, startBackendForTests, testDatabaseUrl } from "../lib/harness.mjs";
+import { assert, createCookieJar, login, resetTestDatabase, startBackendForTests, testDatabaseUrl, waitFor } from "../lib/harness.mjs";
 import { runMigrations } from "../../src/db/migrate.js";
-import { withTransaction } from "../../src/db/pool.js";
+import { assertSecureDatabaseUrl, databaseTransport, withTransaction } from "../../src/db/pool.js";
+import { withTryAdvisoryLock } from "../../src/db/advisoryLock.js";
+import { checkDatabase } from "../../src/db/health.js";
 import { seedDemoUsers } from "../../src/db/seedDemo.js";
 import { createUsersPostgresRepository } from "../../src/repositories/postgres/usersPostgresRepository.js";
 import { createPasswordHash } from "../../src/utils/passwords.js";
@@ -727,6 +729,98 @@ const tests = [
     });
     await reconciler.tick();
     assert(terminated.sort().join() === "i-finished,i-orphan,i-overrun,i-untagged", `terminated ${terminated.sort()}`);
+  }],
+
+  ["ec2 reconciler: only one server runs a tick (advisory lock)", async () => {
+    const lockId = 990001;
+    let ticks = 0;
+    const reconciler = createEc2Reconciler({
+      jobsRepository: { async listUnfinished() { ticks += 1; return []; }, async findById() { return null; } },
+      adapter: { async listJobInstances() { return []; }, async terminateInstance() {} },
+      sync: async () => {},
+      markLost: async () => {},
+      exclusive: (fn) => withTryAdvisoryLock(pool, lockId, fn),
+      log: { debug() {}, info() {}, warn() {}, error() {} },
+    });
+
+    // Another "server" (its own connection) holds the lock: the tick is skipped.
+    const other = new pg.Client({ connectionString: databaseUrl });
+    await other.connect();
+    try {
+      await other.query("SELECT pg_advisory_lock($1)", [lockId]);
+      const skipped = await reconciler.runOnce();
+      assert(skipped.skipped === true && ticks === 0, `expected a skipped tick, got ${JSON.stringify(skipped)} after ${ticks} tick(s)`);
+      await other.query("SELECT pg_advisory_unlock($1)", [lockId]);
+    } finally {
+      await other.end();
+    }
+
+    const ran = await reconciler.runOnce();
+    assert(ran.skipped === false && ticks === 1, `expected the tick to run, got ${JSON.stringify(ran)}`);
+
+    // The lock was released and is not left on a pooled connection.
+    const held = await scalar("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND objid = $1", [lockId]);
+    assert(Number(held) === 0, `advisory lock still held by ${held} session(s)`);
+
+    // Two at once (two servers on the same tick): exactly one runs.
+    ticks = 0;
+    let release;
+    const slow = createEc2Reconciler({
+      jobsRepository: { async listUnfinished() { ticks += 1; await new Promise((r) => { release = r; }); return []; }, async findById() { return null; } },
+      adapter: { async listJobInstances() { return []; }, async terminateInstance() {} },
+      sync: async () => {}, markLost: async () => {},
+      exclusive: (fn) => withTryAdvisoryLock(pool, lockId, fn),
+      log: { debug() {}, info() {}, warn() {}, error() {} },
+    });
+    const first = slow.runOnce();
+    await waitFor(async () => ticks === 1, { timeoutMs: 5_000, label: "first tick started" });
+    const second = await slow.runOnce();
+    release();
+    assert(second.skipped === true && (await first).skipped === false && ticks === 1, "concurrent ticks were not exclusive");
+  }],
+
+  ["health check: database up, refused and hanging", async () => {
+    assert((await checkDatabase(pool)).ok === true, "test database should be healthy");
+
+    const refused = new pg.Pool({ connectionString: "postgres://talon@127.0.0.1:1/talon", connectionTimeoutMillis: 1_000 });
+    refused.on("error", () => {});
+    try {
+      const result = await checkDatabase(refused, { timeoutMs: 2_000 });
+      assert(result.ok === false && result.error, "a refused connection is unhealthy");
+    } finally {
+      await refused.end();
+    }
+
+    const startedAt = Date.now();
+    const hanging = await checkDatabase({ query: () => new Promise(() => {}) }, { timeoutMs: 200 });
+    assert(hanging.ok === false && Date.now() - startedAt < 1_000, `a hanging database must time out quickly (${Date.now() - startedAt} ms)`);
+  }],
+
+  ["database url: transport and production TLS rule", async () => {
+    const cases = {
+      "postgres://talon@%2Fvar%2Frun%2Fpostgresql/talon": "socket",
+      "postgresql:///talon?host=/var/run/postgresql": "socket",
+      "postgres://localhost/talon_dev": "loopback",
+      "postgres://talon@127.0.0.1:5432/talon": "loopback",
+      "postgres://talon@db.abc.us-east-1.rds.amazonaws.com:5432/talon?sslmode=verify-full&sslrootcert=/etc/talon/rds-ca.pem": "tls",
+      "postgres://talon@db.abc.us-east-1.rds.amazonaws.com:5432/talon?sslmode=require": "plaintext",
+      "postgres://talon@db.abc.us-east-1.rds.amazonaws.com:5432/talon": "plaintext",
+    };
+    for (const [url, want] of Object.entries(cases)) {
+      assert(databaseTransport(url) === want, `${url}: expected ${want}, got ${databaseTransport(url)}`);
+    }
+
+    const production = { NODE_ENV: "production" };
+    assertSecureDatabaseUrl("postgres://talon@%2Fvar%2Frun%2Fpostgresql/talon", production);
+    assertSecureDatabaseUrl("postgres://talon@db.example.com/talon?sslmode=verify-full", production);
+    assertSecureDatabaseUrl("postgres://talon:pw@db.example.com/talon", { NODE_ENV: "development" });
+    let message = "";
+    try {
+      assertSecureDatabaseUrl("postgres://talon:s3cretPW@db.example.com/talon", production);
+    } catch (error) {
+      message = error.message;
+    }
+    assert(/verify-full/.test(message) && !message.includes("s3cretPW"), `expected a refusal without the password, got: ${message}`);
   }],
 
   ["finalize: concurrent calls settle once and only one reports it did the work", async () => {

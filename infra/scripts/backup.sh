@@ -8,7 +8,7 @@ source "$(dirname "$0")/common.sh"
 
 run_on_box() {
   local ID CMD_ID STATUS
-  ID="$(instance_id)"
+  ID="$(web_instance_id)"
   CMD_ID="$(aws ssm send-command --instance-ids "$ID" --document-name AWS-RunShellScript \
     --comment "talon backup $1" \
     --parameters "{\"commands\":[\"$2\"],\"executionTimeout\":[\"900\"]}" \

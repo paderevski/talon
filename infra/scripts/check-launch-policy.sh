@@ -5,7 +5,7 @@
 # Usage: infra/scripts/check-launch-policy.sh
 source "$(dirname "$0")/common.sh"
 
-ID="$(instance_id)"
+ID="$(web_instance_id)"
 PREFIX="/talon/${TALON_ENV:-demo}"
 
 # Things the server's role cannot look up itself: an AMI that is not a
