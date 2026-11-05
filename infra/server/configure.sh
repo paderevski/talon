@@ -132,13 +132,13 @@ then
   changed_nginx=true
 fi
 
-# Same site as user_data.sh.tftpl writes, plus the JSON access log, the
+# Same site as web_user_data.sh.tftpl writes, plus the JSON access log, the
 # request id header and the forwarded protocol. Keep the two in step until
 # user_data next changes.
 SITE=/etc/nginx/sites-available/talon
 cp -p "$SITE" "$SITE.bak" 2>/dev/null || true
 if install_file "$SITE" 644 <<'EOF'
-# From infra/server/configure.sh (first written by user_data.sh.tftpl).
+# From infra/server/configure.sh (first written by web_user_data.sh.tftpl).
 server {
     listen 80 default_server;
     server_name _;

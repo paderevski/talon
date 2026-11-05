@@ -2,11 +2,10 @@
 # First-boot bootstrap for a Talon web server on RDS (Ubuntu 24.04, arm64).
 # Log: /var/log/talon-bootstrap.log
 #
-# Differs from user_data.sh.tftpl (the old single box) in that it installs no
-# Postgres, seeds nothing and installs no backup timers: data lives in RDS,
-# which keeps its own backups, and only infra/scripts/deploy.sh reseeds the
-# demo data. Any number of servers can boot from this without touching the
-# database's contents.
+# No Postgres, no seeding, no backup timers: data lives in RDS, which keeps
+# its own backups, and only infra/scripts/deploy.sh reseeds the demo data.
+# Any number of servers can boot from this without touching the database's
+# contents.
 set -euxo pipefail
 exec > >(tee -a /var/log/talon-bootstrap.log) 2>&1
 
@@ -198,11 +197,31 @@ rm -f /etc/nginx/sites-enabled/default
 ln -sf /etc/nginx/sites-available/talon /etc/nginx/sites-enabled/talon
 nginx -t
 systemctl enable nginx
+# nginx has been running its default site since apt installed it; load ours
+# now, so the site answers even if the first deploy stops early.
+systemctl reload nginx
 
 # --- first deploy ---
 # On a brand-new database the migration fails until db-bootstrap.sh has
 # created the roles; the build is done by then, and deploy.sh finishes it.
 if ! /usr/local/bin/talon-deploy "${git_ref}"; then
   echo "talon bootstrap: first deploy did not finish (expected before infra/scripts/db-bootstrap.sh has run once)"
+fi
+
+# --- CloudWatch agent (logs and metrics, monitoring.tf) ---
+# SSM State Manager installs and configures it too, but its first run starts
+# as soon as the server registers, while this script is still using apt, and
+# fails on the package lock. So first boot does it here, after apt is done,
+# from the same package source and config parameter. Not fatal: the server
+# works without it, only its logs and metrics go missing.
+CWA=/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl
+if [ ! -x "$CWA" ]; then
+  curl -fsSL "https://amazoncloudwatch-agent-${region}.s3.${region}.amazonaws.com/ubuntu/arm64/latest/amazon-cloudwatch-agent.deb" -o /run/amazon-cloudwatch-agent.deb \
+    && apt-get install -y -o DPkg::Lock::Timeout=300 /run/amazon-cloudwatch-agent.deb \
+    || echo "talon bootstrap: CloudWatch agent install failed"
+  rm -f /run/amazon-cloudwatch-agent.deb
+fi
+if [ -x "$CWA" ]; then
+  "$CWA" -a fetch-config -m ec2 -s -c "ssm:${cw_agent_param}" || echo "talon bootstrap: CloudWatch agent config failed"
 fi
 echo "talon bootstrap complete"

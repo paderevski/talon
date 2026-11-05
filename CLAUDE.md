@@ -15,7 +15,8 @@ IPs, instance IDs, emails, secrets or real passwords in tracked files.**
   (all API calls), `utils/format.js` (`formatDollars`).
 - `shared/` status helpers used by both.
 - `infra/ec2` Terraform for the demo instance; `infra/state` the state
-  bucket; `infra/backup` backup scripts; `infra/scripts` helper scripts.
+  bucket; `infra/server` box config and DB bootstrap; `infra/scripts`
+  helper scripts.
   `infra_2/` is an old EKS design, reference only.
 - **`infra/CURRENT_STATUS.md` is the map**: what is running, what is done,
   what is blocked, gaps to production, EC2-jobs design notes. Read it first
@@ -51,9 +52,8 @@ found in a breach" dialog; it blocks clicks until dismissed.
   It builds, migrates, restarts, then reseeds fresh demo data (wipes all
   users, classes, jobs; the box's data is disposable). `--keep-data` skips
   the reseed. Changing `infra/ec2/web_user_data.sh.tftpl` (the web
-  server's first boot) replaces the server; the data in RDS stays. The old
-  single box (`user_data.sh.tftpl`, local Postgres) exists only until the
-  web tier phase 2 cutover is done (`legacy_web_server` in `main.tf`).
+  server's first boot) replaces the server; the data in RDS stays. Backups
+  are RDS's (7 days, point-in-time restore).
 - The database is RDS: the service connects as `talon_app` (rows only) with
   IAM tokens; migrations, the seed and admin scripts switch to
   `talon_migrate` (schema owner) via `useMigrationRole()`. A new script

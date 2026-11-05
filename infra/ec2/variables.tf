@@ -24,11 +24,6 @@ variable "owner" {
   type        = string
 }
 
-variable "availability_zone" {
-  type    = string
-  default = "us-east-1a"
-}
-
 variable "instance_type" {
   description = "Graviton (arm64) instance type."
   type        = string

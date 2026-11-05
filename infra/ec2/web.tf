@@ -49,6 +49,7 @@ resource "aws_launch_template" "web" {
     database_url         = format(local.db_url_base, local.db_app_user)
     database_migrate_url = format(local.db_url_base, local.db_mig_user)
     db_master_secret_arn = aws_db_instance.main.master_user_secret[0].secret_arn
+    cw_agent_param       = aws_ssm_parameter.cw_agent_config.name
 
     ec2_jobs_enabled   = var.ec2_jobs_enabled
     ec2_gpu_admin_only = var.ec2_gpu_admin_only
