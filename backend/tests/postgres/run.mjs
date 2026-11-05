@@ -142,6 +142,15 @@ const tests = [
     assert(refused, "Expected seed to refuse");
   }],
 
+  ["seed with replaceAll wipes non-demo users and seeds sections (deploy.sh default)", async () => {
+    await pool.query("INSERT INTO users (username, display_name) VALUES ('real.person@lcps.org', 'Real Person')");
+    await seedDemoUsers(pool, { replaceAll: true });
+    assert((await scalar("SELECT COUNT(*)::int FROM users WHERE username = 'real.person@lcps.org'")) === 0,
+      "Expected the non-demo user to be wiped");
+    const unblocked = await scalar("SELECT COUNT(*)::int FROM classes WHERE block IS NULL OR teacher_id IS NULL");
+    assert(unblocked === 0, `Expected every seeded class to have a block and a teacher, ${unblocked} do not`);
+  }],
+
   ["login: correct password returns user with id and roles", async () => {
     const user = await repo.findByCredentials("jane_smith", "talon123");
     assert(user, "Expected jane_smith to log in");

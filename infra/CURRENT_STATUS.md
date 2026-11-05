@@ -44,7 +44,8 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 ```bash
 aws sso login --profile lcps     # when credentials expire (usually daily)
 infra/scripts/tunnel.sh          # then open http://localhost:8080
-infra/scripts/deploy.sh          # deploy origin/main (push first)
+infra/scripts/deploy.sh          # deploy origin/main (push first), then reseed demo data
+infra/scripts/deploy.sh B --keep-data   # deploy branch B without reseeding
 infra/scripts/shell.sh           # shell on the box
 infra/scripts/backup.sh status   # newest backups (also: now, restore-test, install)
 ```

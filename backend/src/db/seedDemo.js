@@ -134,7 +134,10 @@ async function seedStudentJobs(client, { studentId, accountId, spentCents }) {
   );
 }
 
-export async function seedDemoUsers(pool) {
+// replaceAll: also wipe users that are not demo users (deploy.sh does this on
+// the demo box, whose data is disposable). Without it, any non-demo user
+// makes the seed refuse, so a local database with real work is safe.
+export async function seedDemoUsers(pool, { replaceAll = false } = {}) {
   assertDemoSeedAllowed();
   const teachers = [...teacherSeeds, legacyTeacher];
   const demoUsernames = allDemoUsernames(teachers);
@@ -145,7 +148,7 @@ export async function seedDemoUsers(pool) {
         "SELECT username FROM users WHERE NOT (lower(username) = ANY($1::text[])) LIMIT 5",
         [demoUsernames],
       );
-      if (nonDemo.rows.length > 0) {
+      if (nonDemo.rows.length > 0 && !replaceAll) {
         throw new Error(
           `Refusing to seed: database has non-demo users (${nonDemo.rows
             .map((row) => row.username)
