@@ -54,8 +54,15 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
    the new server was healthy at 19:07:18; no alarm fired. This also covers
    "terminate one". Health check tightened on the branch to 10 s x 2 (~20 s
    window), **not applied yet**.
-   Still to do: apply the health check change, one reconciler per tick with
-   a real job, a deploy updates both servers and reseeds once; then merge.
+   Deploy check 2026-11-05: `deploy.sh web-tier-phase3` (40 s) updated both
+   servers in turn (4ffaf1a, includes the idle timeout), migrations already
+   current, configure ran (twice per server, no changes the second time),
+   reseeded once on the first server.
+   Reconciler check: `job-1051` (paderevski/minimal-rnn `script.py`,
+   c7g.large) completed in 2 min, $0.01. Status picked up by the 1b
+   server's request sync; instance terminated once, by the 1a server's
+   reconciler; ledger has one reserve (-5c) and one refund (+4c).
+   Still to do: apply the health check change (10 s x 2), then merge.
 1. **Job queue with launch retries** (step 5 without Spot): a launch with no
    capacity waits and retries instead of failing; also gives overnight jobs.
    Plan it together with "Limiting launch exposure" below: the near-term
