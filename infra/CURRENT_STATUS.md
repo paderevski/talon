@@ -1,21 +1,21 @@
 # Talon infra - current status
 
-_Last updated: 2026-11-05 (web tier plan phase 1, app readiness for two web servers behind an ALB with RDS, on branch `web-tier-phase1`, deployed to the box and checked; not merged yet). Before that, 2026-11-04 (GPU jobs, build step 4, merged to `main`: one GPU launch template on the PyTorch DLAMI for g4dn.xlarge, g4dn.2xlarge, g6.xlarge and g6e.2xlarge, admin-only; verified on the box with g4dn; the box runs the same code from branch `gpu-jobs`). Before that, 2026-11-03 (GitHub App sign-in, code-source choice, job folders, admin GitHub unlink and script arguments). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
+_Last updated: 2026-11-05 (web tier phases 1 and 2 done and merged to `main`: Talon VPC, RDS with IAM sign-in and split roles, web server from a launch template; per-launch S3 job folders; old box and its code removed. Phase 3, a second web server and internal ALB, is next). Before that, 2026-11-04 (GPU jobs, build step 4, merged to `main`: one GPU launch template on the PyTorch DLAMI for g4dn.xlarge, g4dn.2xlarge, g6.xlarge and g6e.2xlarge, admin-only; verified on the box with g4dn; the box runs the same code from branch `gpu-jobs`). Before that, 2026-11-03 (GitHub App sign-in, code-source choice, job folders, admin GitHub unlink and script arguments). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
 Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 (gitignored). Architecture doc: `docs/talon-architecture-summary-v7.docx`
 (see "Gaps to production" for where it and reality differ).
 
 ## Next up (as of 2026-11-05)
 
-0. **Web tier phase 1** (branch `web-tier-phase1`): done in code and tested
-   locally, including the database tests over TLS against a local Postgres
-   with `sslmode=verify-full`. Applied (`Component=web` tag) and deployed
-   2026-11-05: scripts find the box by tag, `/api/health` reports the
-   database, nginx and backend proxy config in place, login works through
-   the tunnel, no errors in the log. Phase 2 (VPC, RDS with IAM auth and
-   split roles, new web server) is built on the same branch and tested
-   locally; next is its cutover (runbook under "Later: two web servers"),
-   then merge.
+0. **Web tier phase 3**: an Auto Scaling group of two web servers (one per
+   zone, from launch template `talon-demo-web`) behind an internal ALB,
+   reached through the SSM tunnel. Phases 1 and 2 are done and merged
+   (2026-11-05; details under "Later: two web servers"); plan doc "Talon Web
+   Tier Plan" has the design. Before building: first boot does not run
+   `infra/server/configure.sh` (JSON logging, proxy headers, trusted
+   proxies), so servers the group replaces would lack it until a deploy;
+   check RDS `db.t4g.micro` connections against two pools of 10; raise the
+   ALB idle timeout (~180 s) for job submit and roster import.
 1. **Job queue with launch retries** (step 5 without Spot): a launch with no
    capacity waits and retries instead of failing; also gives overnight jobs.
    Plan it together with "Limiting launch exposure" below: the near-term
@@ -42,7 +42,7 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 | Elastic IP | None for the web server (private). One for the NAT gateway |
 | Inbound access | None. SSM Session Manager only |
 | Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`. Postgres 16 on RDS `talon-demo` (`db.t4g.micro`, TLS, IAM sign-in as `talon_app`; migrations as `talon_migrate`). `EC2_JOBS_ENABLED=true` |
-| Deployed | `web-tier-phase1` branch (2026-11-05) |
+| Deployed | `infra-cleanup` branch (2026-11-05; same code as `main` 98cac53) |
 | Approx cost | ~$70/month estimate, not read from the bill: web instance ~$12 + EBS ~$1.60, NAT gateway ~$33 + traffic, RDS ~$14, KMS keys ~$2, alarms/S3/SNS pennies. Plus job instances, billed per second and charged to budgets |
 | Other AWS resources | S3 backups bucket (`backups.tf`), SSM parameters under `/talon/demo/`, KMS keys `alias/talon-demo-secrets` and `alias/talon-demo-backups`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), CloudWatch alarms (`alarms.tf`: 2 backup; `monitoring.tf`: disk, backend errors, unknown job instance, failed logins, GPU and standard vCPUs), CloudWatch agent on the web server (SSM State Manager; logs in `/talon/demo/{backend,syslog,nginx-access,nginx-error,bootstrap}`, 30 days; metrics in `Talon/Server`), saved Logs Insights queries `Talon/*` (`log_queries.tf`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and launch template (`jobs.tf`), 2 AWS Budgets alerts |
 | Root volume | 20 GB gp3, encrypted with the default AWS-managed EBS key (the architecture doc asks for a KMS key; not changed) |
@@ -981,8 +981,8 @@ app readiness (branch `web-tier-phase1`, 2026-11-05):
   per change.
 - Scripts find web servers by tag (see "How to use").
 
-Phase 2, network and database (same branch, 2026-11-05; code done and
-tested locally, **not applied yet**):
+Phase 2, network and database (2026-11-05; applied, cut over and merged to
+`main`; see "Cutover progress" below):
 
 - `network.tf`: VPC `10.20.0.0/16`; public, app and data subnets in 1a and
   1b, jobs subnets (/20, public IP on launch) in 1a-1d; one NAT gateway in
@@ -1086,10 +1086,20 @@ After the cutover: ~~delete `user_data.sh.tftpl`, `infra/backup/`,
 `backup.sh` and the old-box code in `main.tf`~~ (done on branch
 `infra-cleanup`, 2026-11-05, with the first-boot fixes: nginx reloaded,
 CloudWatch agent installed and started by first boot itself); the backups
-bucket stays until its copies expire.
+bucket stays until its copies expire. Applied the same day (web server
+replaced, launch template version 2) and merged to `main` (98cac53). The
+new server's first boot deployed `main` and served in about 2 minutes with
+no manual step; all 52 jobs kept (data in RDS); the CloudWatch agent was
+running and shipping logs and metrics without re-running the associations
+(their first runs still show Failed on the package lock, harmlessly).
 
 ## History
 
+- 2026-11-05: Web tier phases 1-2 complete and merged to `main`: cutover
+  done (old box removed), per-launch S3 job folders (`job-s3-prefix`,
+  merge f1ac0b6; fixes job-id reuse reading another job's files), old-box
+  code removed and first boot fixed (`infra-cleanup`, merge 98cac53; web
+  server replaced and verified).
 - 2026-11-05: Web tier phase 2 code (`web-tier-phase1`, not applied):
   Talon VPC, RDS with IAM auth, `talon_migrate` / `talon_app` roles, web
   server from a launch template without local Postgres, seeding or
