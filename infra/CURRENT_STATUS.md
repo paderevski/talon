@@ -12,12 +12,12 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
    reached through the SSM tunnel. Phases 1 and 2 are done and merged
    (2026-11-05; details under "Later: two web servers"); plan doc "Talon Web
    Tier Plan" has the design. Branch `web-tier-phase3` (2026-11-05),
-   written and planned, **not applied yet** (plan: 10 add, 2 change, 1
-   destroy):
+   **applied** (not merged; servers run `main`, which has no app change
+   from this branch):
    - `web.tf`: `aws_instance.web` replaced by Auto Scaling group
      `talon-demo-web` (`web_server_count` = 2, app subnets 1a/1b, ELB health
      checks, 10 min grace, rolling instance refresh that launches before it
-     terminates). The launch template now copies the provider's default tags
+     terminates). The launch template copies the provider's default tags
      (ASG-launched instances do not get them; scripts find servers by them).
    - `alb.tf`: internal ALB `talon-demo-web` (idle timeout 180 s, drops
      invalid headers), target group port 80, health `GET /api/health`, 30 s
@@ -25,13 +25,30 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
      healthy hosts < 2 for 10 min and ALB 5xx.
    - Disk alarm is a Metrics Insights query (fullest disk of any server).
    - First boot runs `infra/server/configure.sh` through
-     `/usr/local/bin/talon-configure`, called by `talon-deploy`.
+     `/usr/local/bin/talon-configure`, called by `talon-deploy`, and waits
+     for the dpkg lock (`DPkg::Lock::Timeout`): SSM State Manager's
+     CloudWatch agent install runs at registration and won the race on one
+     server, whose first boot then died on `apt-get install`.
    - `tunnel.sh` forwards to the ALB through a web server
      (`AWS-StartPortForwardingSessionToRemoteHost`); `TALON_DIRECT=1` goes to
      one server's nginx. Outputs: `web_asg_name`, `alb_dns_name`.
    - RDS connections checked: `max_connections` 79, two pools of 10 fit.
-   Apply has a few minutes of downtime (old server destroyed while the group's
-   servers boot `main`). Then the phase 3 checks below.
+   Apply notes: the first group in the account creates
+   `AWSServiceRoleForAutoScaling`; launches failed for a minute while it
+   propagated, Terraform timed out and tainted the group (`terraform untaint`,
+   then apply). The template fix rolled through with no downtime (instance
+   refresh, ~12 min for two servers; a new server is healthy ~2.5 min after
+   launch). `terraform plan`: no changes.
+   Verified 2026-11-05: both servers healthy (1a, 1b, template v4), JSON logs
+   and proxy config from first boot with no deploy.sh; tunnel through the
+   ALB; requests spread over both servers; a login session works on both.
+   Seen once: one server's health check timed out on `SELECT 1` (2 s) for
+   13 s at 18:19 UTC, no outage. The pool has no `idleTimeoutMillis` (pg
+   default 10 s), so most health checks open a new TLS + IAM-token
+   connection; consider a longer idle timeout.
+   Still to do: stop the backend on one server / terminate one (ALB and
+   group recover), one reconciler per tick with a real job, a deploy updates
+   both servers and reseeds once; then merge.
 1. **Job queue with launch retries** (step 5 without Spot): a launch with no
    capacity waits and retries instead of failing; also gives overnight jobs.
    Plan it together with "Limiting launch exposure" below: the near-term
