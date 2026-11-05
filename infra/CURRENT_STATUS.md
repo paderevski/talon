@@ -1018,7 +1018,12 @@ tested locally, **not applied yet**):
    boot builds the app; the first migration fails by design (no roles yet).
 2. Wait for "talon bootstrap complete" in `/var/log/talon-bootstrap.log`
    (`infra/scripts/shell.sh`, about 10 minutes).
-3. `infra/scripts/db-bootstrap.sh`.
+3. `infra/scripts/db-bootstrap.sh`. It takes its SQL from the deployed
+   commit, and first boot builds `git_ref` (default `main`): until phase 2
+   is merged, run `deploy.sh web-tier-phase1 --keep-data` once first (it
+   checks out and builds the branch, then fails at the migration, which is
+   expected without roles). Until a deploy succeeds, nginx still serves its
+   default site (404): first boot does not reload it.
 4. `infra/scripts/deploy.sh web-tier-phase1` (migrates as `talon_migrate`,
    reseeds, applies `configure.sh`).
 5. `infra/scripts/tunnel.sh` (now the new server): `/api/health`, log in.
@@ -1030,6 +1035,12 @@ tested locally, **not applied yet**):
 8. `terraform apply -var db_bootstrap=false -var legacy_web_server=false`:
    removes the old box, its Elastic IP and security group, the backup
    alarms and the master secret access.
+
+Found in the cutover (2026-11-05): with IAM authentication on, RDS 16.13
+puts the master user in `rds_iam`, so its password is refused ("PAM
+authentication failed"). `db_bootstrap = true` therefore also allows
+`rds-db:connect` as `talon_admin`, and `db-bootstrap.sh` signs in with a
+token (the Secrets Manager password is only a fallback).
 
 Rollback before step 8: start the old box and use
 `TALON_INSTANCE=<old id> infra/scripts/tunnel.sh`.

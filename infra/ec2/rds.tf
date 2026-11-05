@@ -150,8 +150,17 @@ resource "aws_iam_role_policy" "db_connect" {
   policy = data.aws_iam_policy_document.db_connect.json
 }
 
-# Only while db_bootstrap = true.
+# Only while db_bootstrap = true. With IAM authentication on, RDS puts the
+# master user in rds_iam (seen on 16.13: its password is refused, "PAM
+# authentication failed"), so db-bootstrap.sh signs in as the master with an
+# IAM token; the secret is the fallback if RDS ever stops doing that.
 data "aws_iam_policy_document" "db_master_secret" {
+  statement {
+    sid       = "ConnectAsMasterWithIam"
+    actions   = ["rds-db:connect"]
+    resources = ["${local.db_user_arn}/${aws_db_instance.main.username}"]
+  }
+
   statement {
     sid       = "ReadRdsMasterSecret"
     actions   = ["secretsmanager:GetSecretValue"]

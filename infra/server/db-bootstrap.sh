@@ -1,7 +1,7 @@
 #!/bin/bash
 # One-time RDS setup, safe to run again. Run as root on a web server by
 # infra/scripts/db-bootstrap.sh (taken from the deployed commit), while
-# Terraform's db_bootstrap = true lets the server read the master password.
+# Terraform's db_bootstrap = true lets the server sign in as the master.
 #
 # Creates:
 #   talon_migrate  owns database "talon" and its schema (migrations, seed)
@@ -9,31 +9,41 @@
 #                  tables and their sequences, nothing else
 # Both sign in with IAM tokens (rds_iam): no password is set for either.
 #
-# The master password is fetched into this process's environment only. It is
-# never printed, logged or written to disk.
+# Master sign-in: with IAM authentication on, RDS puts the master user in
+# rds_iam and refuses its password, so this signs in with an IAM token
+# (rds-db:connect, allowed while db_bootstrap = true). If that fails it falls
+# back to the password from Secrets Manager. Neither is printed, logged or
+# written to disk.
 set -euo pipefail
 
 set -a
 . /etc/talon/talon.env
 set +a
-: "${RDS_MASTER_SECRET_ARN:?not set in /etc/talon/talon.env}"
 : "${DATABASE_URL:?not set in /etc/talon/talon.env}"
 
 PGHOST="$(python3 -c 'import sys, urllib.parse as u; print(u.urlsplit(sys.argv[1]).hostname)' "$DATABASE_URL")"
 PGPORT="$(python3 -c 'import sys, urllib.parse as u; print(u.urlsplit(sys.argv[1]).port or 5432)' "$DATABASE_URL")"
-export PGHOST PGPORT PGSSLMODE=verify-full PGSSLROOTCERT=/etc/talon/rds-ca.pem PGCONNECT_TIMEOUT=10
+PGUSER="${RDS_MASTER_USER:-talon_admin}" # aws_db_instance.main.username in rds.tf
+export PGHOST PGPORT PGUSER PGSSLMODE=verify-full PGSSLROOTCERT=/etc/talon/rds-ca.pem PGCONNECT_TIMEOUT=10
 
-if ! SECRET="$(/snap/bin/aws secretsmanager get-secret-value --region "$AWS_REGION" \
-    --secret-id "$RDS_MASTER_SECRET_ARN" --query SecretString --output text 2>/dev/null)"; then
-  echo "db-bootstrap: cannot read the master secret. Apply Terraform with db_bootstrap = true first." >&2
-  exit 1
+PGPASSWORD="$(/snap/bin/aws rds generate-db-auth-token --region "$AWS_REGION" \
+  --hostname "$PGHOST" --port "$PGPORT" --username "$PGUSER")"
+export PGPASSWORD
+if psql -q -d postgres -Atc "SELECT 1" >/dev/null 2>&1; then
+  echo "db-bootstrap: signed in to $PGHOST as $PGUSER with an IAM token"
+else
+  echo "db-bootstrap: IAM token refused for $PGUSER; trying the master password"
+  if [ -z "${RDS_MASTER_SECRET_ARN:-}" ] || ! SECRET="$(/snap/bin/aws secretsmanager get-secret-value --region "$AWS_REGION" \
+      --secret-id "$RDS_MASTER_SECRET_ARN" --query SecretString --output text 2>/dev/null)"; then
+    echo "db-bootstrap: cannot read the master secret either. Apply Terraform with db_bootstrap = true first." >&2
+    exit 1
+  fi
+  PGPASSWORD="$(printf '%s' "$SECRET" | python3 -c 'import json, sys; print(json.load(sys.stdin)["password"])')"
+  unset SECRET
+  export PGPASSWORD
+  psql -q -d postgres -Atc "SELECT 1" >/dev/null || { echo "db-bootstrap: the master password was refused too." >&2; exit 1; }
+  echo "db-bootstrap: signed in to $PGHOST as $PGUSER with the master password"
 fi
-PGUSER="$(printf '%s' "$SECRET" | python3 -c 'import json, sys; print(json.load(sys.stdin)["username"])')"
-PGPASSWORD="$(printf '%s' "$SECRET" | python3 -c 'import json, sys; print(json.load(sys.stdin)["password"])')"
-unset SECRET
-export PGUSER PGPASSWORD
-
-echo "db-bootstrap: connecting to $PGHOST as the master user"
 
 # Roles and database (connected to the maintenance database "postgres").
 psql -v ON_ERROR_STOP=1 -q -d postgres <<'SQL'

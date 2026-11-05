@@ -4,14 +4,14 @@
 # Usage: infra/scripts/db-bootstrap.sh
 #
 # Order for a new database (web tier plan, phase 2):
-#   1. terraform apply with db_bootstrap = true (the web server may read the
-#      RDS master password)
+#   1. terraform apply with db_bootstrap = true (the web server may sign in
+#      as the RDS master user)
 #   2. infra/scripts/db-bootstrap.sh
 #   3. infra/scripts/deploy.sh <branch>   (migrates as talon_migrate, reseeds)
 #   4. terraform apply with db_bootstrap = false
 #
 # The script runs as root from the deployed commit (`git show`, like
-# configure.sh). The master password stays on the server: it is never printed.
+# configure.sh). Master credentials stay on the server: never printed.
 source "$(dirname "$0")/common.sh"
 
 ID="$(web_instance_id)"
