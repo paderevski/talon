@@ -96,6 +96,8 @@ DATABASE_URL=postgres://talon@%2Fvar%2Frun%2Fpostgresql/talon
 TALON_ALLOW_DEMO_SEED=true
 # Admin-only jobs on their own EC2 instances (see jobs.tf).
 EC2_JOBS_ENABLED=${ec2_jobs_enabled}
+# GPU machines: admin-only unless false (see jobs.tf, ec2_gpu_admin_only).
+EC2_GPU_ADMIN_ONLY=${ec2_gpu_admin_only}
 EOF
   chgrp talon /etc/talon/talon.env
   umask 022

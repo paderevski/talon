@@ -76,7 +76,8 @@ resource "aws_instance" "app" {
     secrets_prefix = local.secrets_prefix
     kms_alias      = aws_kms_alias.secrets.name
 
-    ec2_jobs_enabled = var.ec2_jobs_enabled
+    ec2_jobs_enabled   = var.ec2_jobs_enabled
+    ec2_gpu_admin_only = var.ec2_gpu_admin_only
   })
   user_data_replace_on_change = true
 

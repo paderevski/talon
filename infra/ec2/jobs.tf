@@ -21,6 +21,12 @@ variable "ec2_jobs_enabled" {
   default     = true
 }
 
+variable "ec2_gpu_admin_only" {
+  description = "Write EC2_GPU_ADMIN_ONLY into the web server's config at first boot: true keeps GPU machines admin-only, false offers them to students. Changing it replaces the web instance (user_data), which resets the database."
+  type        = bool
+  default     = false
+}
+
 variable "job_instance_type" {
   description = "Default instance type in the job launch template (Graviton, matching the AMI; non-burstable, since t4g bills surplus CPU credits the job rate does not cover)."
   type        = string
