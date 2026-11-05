@@ -20,10 +20,11 @@
 #
 # Logs: this script's own output (not the student's) is the boot log,
 # /var/log/talon-job.log, one "<UTC time> <line>" per line. It goes to
-# CloudWatch every 15 seconds (stream <job id>/<instance id>) and to S3 as
-# logs/boot.log at the end, on every exit path. The last line is a JSON
-# summary (event job.boot_summary) with the result and phase timings. The
-# student's output is /tmp/job.log -> S3 logs/job.log only.
+# CloudWatch every 5 seconds (stream <job id>/<instance id>). The last line is
+# a JSON summary (event job.boot_summary) with the result and phase timings.
+# The job log, /tmp/job.log, is what the app shows: setup steps ("[talon]
+# HH:MM:SS ...", via step) then the student's output. Both logs go to S3
+# (logs/job.log, logs/boot.log) every 3 seconds when changed, and on exit.
 #
 # No `set -e`: every path must reach the upload and the shutdown.
 set -uo pipefail
@@ -126,11 +127,30 @@ if ! [[ "$S3P" =~ ^jobs/[A-Za-z0-9-]+$ ]]; then
 fi
 PREFIX="s3://$BUCKET/$S3P"
 START=$(date -u +%FT%TZ)
-echo "[talon] job $JOB on $INSTANCE_ID ($INSTANCE_TYPE, image $IMAGE), ${UPTIME_AT_START}s after kernel boot"
+: > /tmp/job.log
+step() { echo "[talon] $*"; echo "[talon] $(date -u +%T) $*" >> /tmp/job.log; }
+step "job $JOB on $INSTANCE_ID ($INSTANCE_TYPE, image $IMAGE), ${UPTIME_AT_START}s after kernel boot"
 
 # For the summary line (emit_summary).
 RESULT=setup_failed; EXIT_CODE=null; FAIL_MESSAGE=""; T_RUN=""; T_DONE=""; SKIPPED=0; SCRATCH_KIND=""
-SHIP_LOOP=""; SUMMARY_DONE=false
+SHIP_LOOP=""; LOG_LOOP=""; SUMMARY_DONE=false
+
+# Upload each log to S3 if its size or mtime changed. The lock keeps an older
+# upload from landing after a newer one.
+ship_logs() {
+  local f n key
+  for f in /tmp/job.log "$BOOT_LOG"; do
+    n=job.log; [ "$f" = "$BOOT_LOG" ] && n=boot.log
+    key=$(stat -c %s.%Y "$f" 2>/dev/null) || continue
+    [ "$key" = "$(cat /run/talon-sent.$n 2>/dev/null)" ] && continue
+    flock -w 60 /run/talon-s3log.lock aws s3 cp "$f" "$PREFIX/logs/$n" --only-show-errors &&
+      echo "$key" > /run/talon-sent.$n
+  done
+}
+stop_log_loop() { # let the loop finish its upload, so ours is the last
+  [ -n "$LOG_LOOP" ] || return 0
+  touch /run/talon-logs.stop; wait "$LOG_LOOP"; LOG_LOOP=""
+}
 
 ship_boot_log() {
   [ -n "$LOG_GROUP" ] && command -v aws >/dev/null || return 0
@@ -162,15 +182,15 @@ status() { # state [exit_code] [message]
     "$1" "${2:-null}" "${3:-}" "$START" "$(date -u +%FT%TZ)" "$INSTANCE_ID" |
     aws s3 cp - "$PREFIX/status.json" --only-show-errors
 }
-# Every exit path: summary, last log lines to CloudWatch, boot.log to S3,
+# Every exit path: summary, last log lines to CloudWatch, logs to S3,
 # power off.
 finish() {
   [ -n "$SHIP_LOOP" ] && kill "$SHIP_LOOP" 2>/dev/null
   emit_summary
   sleep 1 # let the timestamping pipe write the last lines
   ship_boot_log
-  if command -v aws >/dev/null && [ -n "$BUCKET" ]; then
-    aws s3 cp "$BOOT_LOG" "$PREFIX/logs/boot.log" --only-show-errors
+  if command -v aws >/dev/null && [ -n "${PREFIX:-}" ]; then
+    stop_log_loop; ship_logs
   fi
   sync; shutdown -h now
 }
@@ -179,13 +199,16 @@ trap finish EXIT
 # The AWS CLI is not on the stock Ubuntu AMI (a baked AMI will replace this
 # later); the Deep Learning AMIs may already have it.
 if ! command -v aws >/dev/null; then
+  step "installing the AWS CLI"
   for i in 1 2 3; do snap install aws-cli --classic && break; sleep 5; done
 fi
 if ! command -v aws >/dev/null; then echo "no aws cli"; exit 1; fi
 if [ -z "$BUCKET" ]; then echo "no talon-bucket tag"; exit 1; fi
 ship_boot_log
-( while sleep 15; do ship_boot_log; done ) &
+( while sleep 5; do ship_boot_log; done ) &
 SHIP_LOOP=$!
+( while [ ! -e /run/talon-logs.stop ]; do ship_logs; sleep 3; done ) &
+LOG_LOOP=$!
 
 # apt: the security group only lets HTTPS out, and the instance has no IPv6
 # route. Ubuntu's default sources are HTTP, and on arm64 the regional EC2 mirror
@@ -196,6 +219,7 @@ echo 'Acquire::ForceIPv4 "true";' > /etc/apt/apt.conf.d/99talon-ipv4
 
 # Untrusted code runs as 'student'. Fail closed: if the instance metadata
 # service cannot be blocked for that user, the job does not run.
+step "creating the job user, blocking instance metadata for it"
 useradd -m -s /bin/bash student
 command -v iptables >/dev/null || { apt-get update -qq && apt-get install -y -qq iptables; }
 if ! iptables -I OUTPUT -d 169.254.169.254 -m owner --uid-owner student -j REJECT; then
@@ -205,22 +229,26 @@ fi
 ip6tables -I OUTPUT -d fd00:ec2::254 -m owner --uid-owner student -j REJECT 2>/dev/null || true
 
 mkdir -p /work/output
+step "downloading job input"
 if ! aws s3 cp --recursive "$PREFIX/input/" /work --only-show-errors; then
   status failed "" "could not fetch input"
   exit 1
 fi
 if [ -f /work/repo.tgz ]; then # a Talon job: the cloned repository
+  step "unpacking the repository ($(du -h /work/repo.tgz | cut -f1))"
   mkdir -p /work/repo && tar -xzf /work/repo.tgz -C /work/repo && rm -f /work/repo.tgz
   # pip and venv are not on the stock image (a baked AMI will replace this).
   # The PyTorch DLAMI has its own Python with venv (run.sh uses it).
   if [ "$IMAGE" != gpu ]; then
+    step "installing Python venv and pip (apt)"
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq && apt-get install -y -qq python3-venv python3-pip
   fi
 fi
 if [ "$IMAGE" != cpu ]; then # the driver can take a moment after boot
+  step "waiting for the GPU driver"
   for i in $(seq 1 30); do nvidia-smi >/dev/null 2>&1 && break; sleep 2; done
-  nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader || echo "nvidia-smi failed"
+  step "GPU: $(nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader || echo "nvidia-smi failed")"
 fi
 if [ ! -f /work/run.sh ]; then # smoke test when launched by hand with no input
   cat > /work/run.sh <<'EOF'
@@ -254,7 +282,7 @@ else
     fi
   done
 fi
-echo "scratch: /work/scratch on $SCRATCH_KIND"
+step "TALON_SCRATCH_DIR=/work/scratch: $SCRATCH_KIND, $(df -h --output=avail /work/scratch | tail -1 | tr -d ' ') free, not saved"
 
 chown -R student:student /work
 touch /work/.talon-start # files newer than this were created or changed by the job
@@ -290,8 +318,7 @@ upload_tree() {
   done < <(find "$dir" -type f "$@" -print0 2>/dev/null)
 }
 
-sync_all() {
-  aws s3 cp /tmp/job.log "$PREFIX/logs/job.log" --only-show-errors 2>/dev/null
+sync_all() { # output files only; the log loop ships the logs
   upload_tree /work/output "$PREFIX/output"
   # Nothing hidden (any path part starting with "."): .git, .venv, .cache
   # (model and dataset caches), .ipynb_checkpoints, dotfiles.
@@ -301,17 +328,15 @@ sync_all() {
 }
 
 status running
-: > /tmp/job.log
-echo "[talon] TALON_SCRATCH_DIR=/work/scratch: $SCRATCH_KIND, $(df -h --output=avail /work/scratch | tail -1 | tr -d ' ') free, not saved" >> /tmp/job.log
 ( while sleep 30; do sync_all; done ) &
 LOOP=$!
 T_RUN=$(date +%s)
-echo "[talon] setup took $((T_RUN - T0))s; running the job (limit ${MAX}s)"
+step "setup took $((T_RUN - T0))s; running the job (limit ${MAX}s)"
 runuser -u student -- bash -c 'cd /work && exec timeout --kill-after=30 "$0" bash run.sh' "$MAX" >> /tmp/job.log 2>&1
 CODE=$?
 T_DONE=$(date +%s)
 kill "$LOOP" 2>/dev/null; wait "$LOOP" 2>/dev/null
-echo "[talon] job ended after $((T_DONE - T_RUN))s with exit code $CODE"
+step "job ended after $((T_DONE - T_RUN))s with exit code $CODE; saving output"
 
 case $CODE in
   0)   STATE_NAME=succeeded ;;
@@ -319,12 +344,10 @@ case $CODE in
   *)   STATE_NAME=failed ;;
 esac
 sync_all
-if [ "$SKIPPED" -gt 0 ]; then
-  echo "[talon] $SKIPPED file(s) were not saved (limits: $MAX_FILES files, 200 MB per file, 500 MB total)." >> /tmp/job.log
-  aws s3 cp /tmp/job.log "$PREFIX/logs/job.log" --only-show-errors
-fi
+[ "$SKIPPED" -gt 0 ] && step "$SKIPPED file(s) were not saved (limits: $MAX_FILES files, 200 MB per file, 500 MB total)."
+step "done ($STATE_NAME); shutting down"
 RESULT=$STATE_NAME; EXIT_CODE=$CODE
 emit_summary
 sleep 1 # let the timestamping pipe write the summary
-aws s3 cp "$BOOT_LOG" "$PREFIX/logs/boot.log" --only-show-errors
+stop_log_loop; ship_logs # complete logs before the final status
 status "$STATE_NAME" "$CODE"

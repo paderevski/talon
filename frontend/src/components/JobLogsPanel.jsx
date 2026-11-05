@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchJobLogs } from "../api/client";
 
-const pollIntervalMs = 4000;
+const pollIntervalMs = 2000;
 const maxLines = 2000;
 
 // The job's log, fetched in chunks by cursor. Keeps polling while the job is
