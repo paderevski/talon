@@ -35,6 +35,24 @@ Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
    `-var db_apply_immediately=true`) and a NAT gateway plus app route table
    per zone, so a single-zone outage leaves the site, job launches and
    GitHub working. About +$47/month at list price.
+   Failover tests 2026-11-05 (probe every second through the tunnel):
+   - Forced RDS failover, first run: RDS switched in 54 s, but pooled
+     connections to the old primary hung (no RST), the site was down about
+     2.5 minutes, and the ALB's database-aware health check got a healthy
+     server replaced. Fixed on branch `db-failover` (merged, 7973cb7): pool
+     `query_timeout` 15 s (a timed-out query's connection is discarded),
+     TCP keepalive after 10 s, `withTransaction` and the advisory lock
+     discard a connection that failed a query; the ALB checks
+     `/api/health/live` (app up, no database); `/api/health` keeps the
+     database check and a 30 s background check logs outages.
+   - Second run: site unavailable 62 s, back 13 s after RDS finished; no
+     server replaced.
+   - Backend stopped on one server (10 s x 2 health check): about half the
+     requests failed for 20 s (was 44 s at 15 s x 3), none after; the group
+     replaced the server, healthy 4 minutes later.
+   - Seen during a failover restart: RDS reported the db.t4g.micro
+     "critically low on memory" and lowered shared_buffers. Consider
+     db.t4g.small before real use.
 1. **Job queue with launch retries** (step 5 without Spot): a launch with no
    capacity waits and retries instead of failing; also gives overnight jobs.
    Plan it together with "Limiting launch exposure" below: the near-term
