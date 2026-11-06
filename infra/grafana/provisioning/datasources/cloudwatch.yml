@@ -1,0 +1,17 @@
+# CloudWatch (metrics and Logs Insights) in the Talon account, read with the
+# "talon" profile that grafana.sh writes (credential_process over the lcps
+# SSO credentials). The Postgres data source is created by grafana.sh through
+# the API instead, because its IAM token password changes every few minutes
+# and Grafana refuses API updates to provisioned data sources.
+apiVersion: 1
+
+datasources:
+  - name: CloudWatch
+    uid: talon-cloudwatch
+    type: cloudwatch
+    isDefault: true
+    editable: false
+    jsonData:
+      authType: credentials
+      profile: talon
+      defaultRegion: us-east-1

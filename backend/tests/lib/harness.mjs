@@ -23,7 +23,7 @@ export async function resetTestDatabase(databaseUrl = testDatabaseUrl) {
 
   const pool = new pg.Pool({ connectionString: databaseUrl });
   try {
-    await pool.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
+    await pool.query("DROP SCHEMA IF EXISTS reporting CASCADE; DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
     await runMigrations(pool);
     await seedDemoUsers(pool);
   } finally {

@@ -1,0 +1,463 @@
+{
+  "uid": "talon-job",
+  "title": "Talon job",
+  "description": "One job: its database row, ledger entries, machine metrics and logs.",
+  "tags": [
+    "talon"
+  ],
+  "editable": true,
+  "schemaVersion": 41,
+  "version": 1,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "refresh": "",
+  "timezone": "browser",
+  "graphTooltip": 1,
+  "templating": {
+    "list": [
+      {
+        "name": "env",
+        "label": "Environment",
+        "type": "custom",
+        "query": "demo",
+        "current": {
+          "text": "demo",
+          "value": "demo"
+        },
+        "options": [
+          {
+            "text": "demo",
+            "value": "demo",
+            "selected": true
+          }
+        ],
+        "hide": 0
+      },
+      {
+        "name": "job_id",
+        "label": "Job",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "talon-postgres"
+        },
+        "hide": 0,
+        "refresh": 1,
+        "sort": 0,
+        "query": "SELECT id FROM reporting.jobs ORDER BY created_at DESC LIMIT 500",
+        "definition": "SELECT id FROM reporting.jobs ORDER BY created_at DESC LIMIT 500",
+        "current": {},
+        "multi": false,
+        "includeAll": false
+      },
+      {
+        "name": "instance",
+        "label": "Instance",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "talon-postgres"
+        },
+        "hide": 2,
+        "refresh": 1,
+        "sort": 0,
+        "query": "SELECT coalesce(instance_id, 'none') FROM reporting.jobs WHERE id = '$job_id'",
+        "definition": "SELECT coalesce(instance_id, 'none') FROM reporting.jobs WHERE id = '$job_id'",
+        "current": {},
+        "multi": false,
+        "includeAll": false
+      }
+    ]
+  },
+  "links": [
+    {
+      "title": "Talon",
+      "type": "dashboards",
+      "tags": [
+        "talon"
+      ],
+      "asDropdown": true,
+      "includeVars": false,
+      "keepTime": true
+    }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Job",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "talon-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "talon-postgres"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT status, owner_username AS student, coalesce(compute_type, 'local') AS machine,\n             coalesce(instance_id, '-') AS instance,\n             coalesce(duration_seconds::text || ' s', '-') AS duration,\n             '$' || to_char(cost_cents / 100.0, 'FM999990.00') AS cost,\n             '$' || to_char(reserved_cents / 100.0, 'FM999990.00') AS reserved\n      FROM reporting.jobs WHERE id = '$job_id'"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "colorMode": "none",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "links": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Details",
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 24,
+        "h": 4
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "talon-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "talon-postgres"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT name, repo, branch, folder, entry_script, provider, created_at AS started, finalized_at AS finished,\n             max_runtime_seconds AS \"time limit\", error\n      FROM reporting.jobs WHERE id = '$job_id'"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "sortBy": []
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "time limit"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "Ledger entries",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 7
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "talon-postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "talon-postgres"
+          },
+          "editorMode": "code",
+          "rawQuery": true,
+          "format": "table",
+          "rawSql": "SELECT created_at, kind, amount_cents / 100.0 AS amount, account_owner AS account, note\n      FROM reporting.ledger WHERE job_id = '$job_id' ORDER BY created_at"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "sortBy": []
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "amount"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Machine CPU and network",
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 7
+      },
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "talon-cloudwatch"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "talon-cloudwatch"
+          },
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "default",
+          "namespace": "AWS/EC2",
+          "metricName": "CPUUtilization",
+          "dimensions": {
+            "InstanceId": "$instance"
+          },
+          "statistic": "Average",
+          "period": "",
+          "matchExact": true,
+          "label": "CPU %",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "talon-cloudwatch"
+          },
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "default",
+          "namespace": "AWS/EC2",
+          "metricName": "NetworkIn",
+          "dimensions": {
+            "InstanceId": "$instance"
+          },
+          "statistic": "Sum",
+          "period": "",
+          "matchExact": true,
+          "label": "network in (bytes)",
+          "id": "",
+          "expression": ""
+        }
+      ],
+      "description": "Basic EC2 metrics (no agent on job machines: no memory or GPU use yet).",
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "links": [],
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "type": "logs",
+      "title": "Job machine log (boot, setup, script output)",
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 24,
+        "h": 12
+      },
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "talon-cloudwatch"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "talon-cloudwatch"
+          },
+          "queryMode": "Logs",
+          "region": "default",
+          "id": "",
+          "expression": "fields @timestamp, @message\n      | filter @logStream like /^$job_id\\//\n      | sort @timestamp asc\n      | limit 2000",
+          "logGroupNames": [
+            "/talon/$env/jobs"
+          ],
+          "statsGroups": []
+        }
+      ],
+      "description": "Stream <job id>/<instance id> in the jobs log group, written by job_boot.sh.",
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Ascending",
+        "enableLogDetails": true,
+        "dedupStrategy": "none"
+      }
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Backend events for this job",
+      "gridPos": {
+        "x": 0,
+        "y": 27,
+        "w": 24,
+        "h": 8
+      },
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "talon-cloudwatch"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "talon-cloudwatch"
+          },
+          "queryMode": "Logs",
+          "region": "default",
+          "id": "",
+          "expression": "fields @timestamp, level, event, msg, userId, status, instanceId, reason, costCents, error, requestId\n      | filter jobId = \"$job_id\"\n      | sort @timestamp asc\n      | limit 500",
+          "logGroupNames": [
+            "/talon/$env/backend"
+          ],
+          "statsGroups": []
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "sortBy": []
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "requestId"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Trace request",
+                    "url": "/d/talon-request/talon-request?var-env=$env&var-request_id=${__value.raw}&${__url_time_range}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

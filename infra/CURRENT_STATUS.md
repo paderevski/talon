@@ -8,6 +8,20 @@ it differs from v7 and a short what-comes-next; v7 kept for history).
 
 ## Next up (as of 2026-11-05)
 
+-1. **Grafana on a laptop** (branch `grafana`, 2026-11-06): `infra/grafana`
+   (Docker, dashboards as generated JSON, overview plus web server, job,
+   student and request drill-downs). Migration 010 adds read-only
+   `reporting` views; `db-bootstrap.sh` adds role `talon_grafana` (IAM
+   sign-in, SELECT on those views only). Live on RDS 2026-11-06: apply with
+   `db_bootstrap = true`, deploy `grafana --keep-data` (migration 010),
+   `db-bootstrap.sh`, apply with `db_bootstrap = false`. All Postgres panels
+   checked against RDS; the role cannot read tables, write, or run past 10 s.
+   The box runs branch `grafana`, which has `gateway-timeouts` merged in
+   (that branch was on the box before). That apply also moved the GPU job
+   template to AWS's new PyTorch DLAMI (published 2026-11-06; launch
+   template version 10) and its AMI allow-list: GPU jobs on it are not
+   tested yet.
+
 0. ~~**Web tier phase 3**~~ done and merged 2026-11-05: Auto Scaling group
    of two web servers (1a, 1b) behind an internal ALB, reached through the
    SSM tunnel; all checks pass. Details under "Later: two web servers",
@@ -108,6 +122,7 @@ infra/scripts/deploy.sh          # deploy origin/main (push first), then reseed 
 infra/scripts/deploy.sh B --keep-data   # deploy branch B without reseeding
 infra/scripts/shell.sh [id]      # shell on a web server (lists the others)
 infra/scripts/db-bootstrap.sh    # RDS roles and grants (needs db_bootstrap = true)
+infra/grafana/grafana.sh up      # Grafana on this laptop: http://localhost:3000 (infra/grafana/README.md)
 ```
 
 The scripts find web servers by tag (`Project=talon`, `Component=web`,
