@@ -8,7 +8,7 @@ import GitHubPanel, { githubResultMessage } from "./components/GitHubPanel";
 import AdminConsole from "./components/AdminConsole";
 import ChangePasswordDialog from "./components/ChangePasswordDialog";
 import TeacherStudentsPanel from "./components/TeacherStudentsPanel";
-import talonLogo from "../../assets/talon-logo.png";
+import talonLogo from "../../assets/talon-logo.jpg";
 import { normalizeRepoInput } from "./utils/repo";
 import { formatDollars } from "./utils/format";
 
