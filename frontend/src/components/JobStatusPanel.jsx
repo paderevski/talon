@@ -3,7 +3,7 @@ import {
   jobStatusFilters,
   statusLabel,
 } from "talon-shared/status";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import FocusScrollRegion from "./FocusScrollRegion";
 import JobLogsPanel from "./JobLogsPanel";
 
@@ -41,6 +41,8 @@ function formatSubmittedValue(job) {
 
 export default function JobStatusPanel({
   jobs,
+  allJobs = [],
+  focusJobId = null,
   activeFilter,
   setActiveFilter,
   statusAvailability,
@@ -51,7 +53,24 @@ export default function JobStatusPanel({
   readOnly = false,
 }) {
   const [logJobId, setLogJobId] = useState(null);
-  const logJob = logJobId ? jobs.find((job) => job.id === logJobId) || null : null;
+  // Also look in all jobs: the status filter switches on its own (queued,
+  // running, completed) and must not close the panel of the job being watched.
+  const logJob = logJobId
+    ? jobs.find((job) => job.id === logJobId) || allJobs.find((job) => job.id === logJobId) || null
+    : null;
+
+  // A job just submitted: open its logs and progress, and bring them into view
+  // (after the new view's scroll to the top).
+  useEffect(() => {
+    if (!focusJobId) {
+      return undefined;
+    }
+    setLogJobId(focusJobId);
+    const timer = setTimeout(() => {
+      document.getElementById("job-logs")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [focusJobId]);
 
   const isFilterDisabled = (filter) => {
     if (filter === "running") {
@@ -190,6 +209,7 @@ export default function JobStatusPanel({
       </div>
       {logJob ? (
         <JobLogsPanel
+          id="job-logs"
           job={logJob}
           live={logJob.status === "queued" || logJob.status === "running"}
           onClose={() => setLogJobId(null)}

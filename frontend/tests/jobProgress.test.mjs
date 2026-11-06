@@ -1,0 +1,110 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { buildStages, formatElapsed, parseTalonLine } from "../src/utils/jobProgress.js";
+
+const launchedAt = "2026-11-05T14:00:00.000Z";
+const job = (overrides = {}) => ({
+  id: "42",
+  status: "running",
+  repo: "octo/demo",
+  branch: "main",
+  executionRef: { provider: "ec2", instanceId: "i-0abc", instanceType: "c7g.large", launchedAt, submittedAt: launchedAt },
+  ...overrides,
+});
+const ref = Date.parse(launchedAt);
+const events = (...lines) => lines.map((line) => parseTalonLine(line, ref));
+const states = (result) => Object.fromEntries(result.stages.map((stage) => [stage.id, stage.state]));
+
+const fullLog = [
+  "[talon] 14:00:31 job 42 on i-0abc (c7g.large, image cpu), 9.4s after kernel boot",
+  "[talon] 14:00:33 creating the job user, blocking instance metadata for it",
+  "[talon] 14:00:35 downloading job input",
+  "[talon] 14:00:36 unpacking the repository (12K)",
+  "[talon] 14:00:36 installing Python venv and pip (apt)",
+  "[talon] 14:01:02 TALON_SCRATCH_DIR=/work/scratch: root volume, 6.1G free, not saved",
+  "[talon] 14:01:02 setup took 33s; running the job (limit 1800s)",
+  "[talon] 14:02:10 job ended after 68s with exit code 0; saving output",
+  "[talon] 14:02:12 done (succeeded); shutting down",
+];
+
+test("parseTalonLine reads step lines and ignores the student's output", () => {
+  assert.deepEqual(parseTalonLine("[talon] 14:00:35 downloading job input", ref), { at: ref + 35000, text: "downloading job input" });
+  assert.equal(parseTalonLine("epoch 1 loss 0.3", ref), null);
+  assert.equal(parseTalonLine("[talon] TALON_SCRATCH_DIR=/work/scratch: old format", ref), null);
+});
+
+test("parseTalonLine picks the nearest day across midnight UTC", () => {
+  const late = Date.parse("2026-11-05T23:59:30Z");
+  assert.equal(parseTalonLine("[talon] 00:00:10 downloading job input", late).at, Date.parse("2026-11-06T00:00:10Z"));
+});
+
+test("just claimed: package and claim done, boot pending", () => {
+  const result = buildStages({ job: job({ status: "queued" }) });
+  assert.deepEqual(states(result), { package: "done", claim: "done", boot: "active", setup: "waiting", run: "waiting", save: "waiting", finish: "waiting" });
+  assert.match(result.stages[2].detail, /Pending/);
+  assert.equal(result.stages[1].detail, "c7g.large · i-0abc");
+  assert.equal(result.startedAt, ref);
+});
+
+test("instance running, no boot script yet: Linux is starting", () => {
+  const result = buildStages({ job: job() });
+  assert.equal(states(result).boot, "active");
+  assert.match(result.stages[2].detail, /Linux is starting/);
+});
+
+test("during setup: steps so far, setup active", () => {
+  const result = buildStages({ job: job(), events: events(...fullLog.slice(0, 4)) });
+  assert.equal(states(result).boot, "done");
+  assert.equal(states(result).setup, "active");
+  const setup = result.stages.find((stage) => stage.id === "setup");
+  assert.deepEqual(setup.steps.map((step) => step.text), [
+    "Creating the job user, blocking instance metadata for it",
+    "Downloading job input",
+    "Unpacking the repository (12K)",
+  ]);
+  assert.equal(result.stages[2].endedAt - ref, 31000);
+  assert.match(result.stages[2].detail, /Linux up in 9s/);
+});
+
+test("running: last output line is the detail", () => {
+  const result = buildStages({ job: job(), events: events(...fullLog.slice(0, 7)), lastOutput: "epoch 3/10 loss 0.41" });
+  assert.equal(states(result).setup, "done");
+  assert.equal(states(result).run, "active");
+  const run = result.stages.find((stage) => stage.id === "run");
+  assert.equal(run.detail, "epoch 3/10 loss 0.41");
+  const setup = result.stages.find((stage) => stage.id === "setup");
+  assert.equal(setup.steps.at(-1).text, "Scratch space ready: root volume, 6.1G free");
+  assert.match(setup.detail, /33s/);
+});
+
+test("finished: every stage done", () => {
+  const result = buildStages({ job: job({ status: "completed" }), events: events(...fullLog) });
+  assert.ok(result.stages.every((stage) => stage.state === "done"));
+  assert.match(result.stages.find((stage) => stage.id === "run").detail, /code 0/);
+});
+
+test("script failed: run marked failed, output still saved", () => {
+  const log = [...fullLog.slice(0, 7), "[talon] 14:02:10 job ended after 68s with exit code 1; saving output", "[talon] 14:02:12 done (failed); shutting down"];
+  const result = buildStages({ job: job({ status: "failed" }), events: events(...log) });
+  assert.deepEqual(states(result), { package: "done", claim: "done", boot: "done", setup: "done", run: "failed", save: "done", finish: "done" });
+  assert.match(result.stages.find((stage) => stage.id === "run").detail, /code 1/);
+});
+
+test("cancelled during setup: setup stopped, later stages waiting", () => {
+  const result = buildStages({ job: job({ status: "cancelled" }), events: events(...fullLog.slice(0, 3)) });
+  assert.equal(states(result).setup, "failed");
+  assert.equal(result.stages.find((stage) => stage.id === "setup").detail, "Cancelled");
+  assert.equal(states(result).run, "waiting");
+});
+
+test("an old completed job without step lines shows as done", () => {
+  const result = buildStages({ job: job({ status: "completed" }) });
+  assert.ok(result.stages.every((stage) => stage.state === "done"));
+});
+
+test("formatElapsed", () => {
+  assert.equal(formatElapsed(4200), "4s");
+  assert.equal(formatElapsed(68000), "1m 08s");
+  assert.equal(formatElapsed(3 * 3600 * 1000 + 5 * 60 * 1000), "3h 05m");
+  assert.equal(formatElapsed(-1), "");
+});
