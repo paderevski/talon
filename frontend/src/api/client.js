@@ -375,8 +375,9 @@ export const removeAdminClassMember = (classId, userId) =>
 // direction: "increase" | "decrease"; target: "personal" | "pool"; amount in dollars.
 export const adjustAdminBudget = (adjustment) =>
   requestJson("POST", "/api/admin/budget/adjustments", adjustment);
-export const allocateStudentBudget = (studentUsername, amount) =>
-  requestJson("POST", "/api/teacher/allocations", { studentUsername, amount });
+// direction "give" (pool -> student) or "take" (student -> pool).
+export const allocateStudentBudget = (studentUsername, amount, direction = "give") =>
+  requestJson("POST", "/api/teacher/allocations", { studentUsername, amount, direction });
 export const changeOwnPassword = (currentPassword, newPassword) =>
   requestJson("POST", "/api/auth/password", { currentPassword, newPassword });
 

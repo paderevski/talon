@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { allocateStudentBudget, fetchTeacherRoster } from "../api/client";
 import { formatClassName, formatDollars } from "../utils/format";
+import BudgetAdjuster from "./BudgetAdjuster";
 
 const emptyRoster = {
   teacher: {
@@ -14,43 +15,10 @@ const emptyRoster = {
 };
 
 
-// Moves money from the teacher's pool to one student.
-function AllocateForm({ student, onAllocate }) {
-  const [amount, setAmount] = useState("");
-  const [isBusy, setIsBusy] = useState(false);
-
-  async function onSubmit(event) {
-    event.preventDefault();
-    setIsBusy(true);
-    try {
-      await onAllocate(student, Number(amount));
-      setAmount("");
-    } finally {
-      setIsBusy(false);
-    }
-  }
-
-  return (
-    <form className="allocate-form" onSubmit={onSubmit}>
-      <input
-        className="form-input"
-        type="number"
-        min="0.01"
-        step="0.01"
-        placeholder="$"
-        aria-label={`Dollars to add for ${student.fullName}`}
-        value={amount}
-        onChange={(event) => setAmount(event.target.value)}
-      />
-      <button type="submit" className="btn btn-secondary btn-sm" disabled={isBusy || !amount}>
-        Add
-      </button>
-    </form>
-  );
-}
-
 // One section per class the teacher teaches, each with its own student table.
-export function ClassTables({ classes, onOpenStudentView, onAllocate }) {
+// onAllocate is omitted for read-only use; the remaining balance is then
+// shown without the add/subtract control.
+export function ClassTables({ classes, onOpenStudentView, onAllocate, poolBalance = null }) {
   return classes.map((classItem) => (
     <div key={classItem.id ?? classItem.className}>
       <div className="panel-head subhead">
@@ -68,7 +36,6 @@ export function ClassTables({ classes, onOpenStudentView, onAllocate }) {
               <th>Username</th>
               <th>Allocated</th>
               <th>Remaining</th>
-              <th>Add from pool</th>
               <th>Workspace</th>
             </tr>
           </thead>
@@ -78,9 +45,18 @@ export function ClassTables({ classes, onOpenStudentView, onAllocate }) {
                 <td>{student.fullName}</td>
                 <td className="mono-sm">{student.username}</td>
                 <td>{formatDollars(student.quota)}</td>
-                <td>{formatDollars(student.tokensRemaining)}</td>
                 <td>
-                  <AllocateForm student={student} onAllocate={onAllocate} />
+                  {onAllocate ? (
+                    <BudgetAdjuster
+                      who={student.fullName}
+                      balance={student.tokensRemaining}
+                      addLimit={poolBalance}
+                      subtractLimit={student.tokensRemaining}
+                      onAdjust={(direction, amount) => onAllocate(student, direction, amount)}
+                    />
+                  ) : (
+                    formatDollars(student.tokensRemaining)
+                  )}
                 </td>
                 <td>
                   <button
@@ -108,16 +84,17 @@ export default function TeacherStudentsPanel({ authUser, onOpenStudentView }) {
   const [actionError, setActionError] = useState("");
   const [version, setVersion] = useState(0);
 
-  const onAllocate = useCallback(async (student, amount) => {
+  // Errors are shown by the row's control (BudgetAdjuster), so rethrow.
+  const onAllocate = useCallback(async (student, direction, amount) => {
     setActionMessage("");
     setActionError("");
-    try {
-      await allocateStudentBudget(student.username, amount);
-      setActionMessage(`Added ${formatDollars(amount)} to ${student.fullName}`);
-      setVersion((current) => current + 1);
-    } catch (nextError) {
-      setActionError(nextError.message || "Unable to add funds");
-    }
+    await allocateStudentBudget(student.username, amount, direction === "add" ? "give" : "take");
+    setActionMessage(
+      direction === "add"
+        ? `Added ${formatDollars(amount)} to ${student.fullName} from your pool`
+        : `Returned ${formatDollars(amount)} from ${student.fullName} to your pool`,
+    );
+    setVersion((current) => current + 1);
   }, []);
 
   useEffect(() => {
@@ -182,7 +159,7 @@ export default function TeacherStudentsPanel({ authUser, onOpenStudentView }) {
           <div className="result-card">
             <div className="result-job-name">Budget pool</div>
             <div className="result-meta-value mono-sm">{formatDollars(roster.teacher.poolBalance)}</div>
-            <div className="form-hint">Available to allocate to students</div>
+            <div className="form-hint">Add moves money from here to a student; Subtract returns it here</div>
           </div>
         </div>
       ) : null}
@@ -199,7 +176,7 @@ export default function TeacherStudentsPanel({ authUser, onOpenStudentView }) {
         <div className="form-hint">You are not assigned to any classes yet.</div>
       ) : null}
 
-      {!isLoading && !error ? <ClassTables classes={roster.classes} onOpenStudentView={onOpenStudentView} onAllocate={onAllocate} /> : null}
+      {!isLoading && !error ? <ClassTables classes={roster.classes} onOpenStudentView={onOpenStudentView} onAllocate={onAllocate} poolBalance={roster.teacher.poolBalance} /> : null}
     </section>
   );
 }

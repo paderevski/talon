@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import BudgetCell from "./BudgetCell";
+import { adjustAdminBudget } from "../api/client";
+import BudgetAdjuster from "./BudgetAdjuster";
 import { formatClassName } from "../utils/format";
 
 // "Ada Lovelace" sorts as "lovelace ada", so lists read alphabetically by last name.
@@ -78,6 +79,20 @@ export default function UserList({
 
   const isFiltered = search || status !== "all" || classId !== "all";
 
+  // Admin add/subtract in the row: a teacher's pool or anyone's own budget.
+  // Errors are shown by the control; success reloads the lists.
+  const budgetControl = (user, target, balance) => (
+    <BudgetAdjuster
+      who={target === "pool" ? `${user.fullName}'s pool` : user.fullName}
+      balance={balance}
+      subtractLimit={balance}
+      onAdjust={async (direction, amount) => {
+        await adjustAdminBudget({ userId: user.id, target, direction: direction === "add" ? "increase" : "decrease", amount });
+        onChanged();
+      }}
+    />
+  );
+
   return (
     <section className="panel admin-section" id={id}>
       <div className="list-controls">
@@ -152,13 +167,13 @@ export default function UserList({
                     <td>
                       {kind === "teacher" ? (
                         <>
-                          <BudgetCell user={user} target="pool" balance={user.poolBalance ?? 0} label="pool" onChanged={onChanged} />
-                          <div>
-                            <BudgetCell user={user} target="personal" balance={user.personalBalance} label="personal" onChanged={onChanged} />
-                          </div>
+                          <div className="form-hint">Pool</div>
+                          {budgetControl(user, "pool", user.poolBalance ?? 0)}
+                          <div className="form-hint">Own budget</div>
+                          {budgetControl(user, "personal", user.personalBalance ?? 0)}
                         </>
                       ) : (
-                        <BudgetCell user={user} target="personal" balance={user.personalBalance} onChanged={onChanged} />
+                        budgetControl(user, "personal", user.personalBalance ?? 0)
                       )}
                     </td>
                   ) : null}

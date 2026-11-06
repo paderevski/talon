@@ -71,6 +71,8 @@ export function toCents(dollars) {
   return cents;
 }
 
+const formatCents = (cents) => `$${(cents / 100).toFixed(2)}`;
+
 function uniqueViolation(error, message) {
   if (error?.code === "23505") {
     throw new ManagementError(message, 409);
@@ -517,8 +519,14 @@ export async function adjustBudget({ userId, target, direction, amount, note }, 
   });
 }
 
-// Teacher moves money from their pool to a student in one of their classes.
-export async function allocateToStudent({ teacher, studentUsername, amount, note }) {
+// Teacher moves money between their pool and a student in one of their
+// classes: "give" (pool -> student) or "take" (student -> pool). Taking is
+// limited only by the student's balance (spent money and running jobs'
+// reservations are gone); where the money came from does not matter.
+export async function allocateToStudent({ teacher, studentUsername, amount, note, direction = "give" }) {
+  if (!["give", "take"].includes(direction)) {
+    throw new ManagementError("Direction must be give or take");
+  }
   const amountCents = toCents(amount);
 
   await withTransaction(async (client) => {
@@ -536,6 +544,29 @@ export async function allocateToStudent({ teacher, studentUsername, amount, note
 
     const poolAccountId = await ensureAccount(client, teacher.id, "teacher_pool");
     const studentAccountId = await ensureAccount(client, student.rows[0].id, "personal");
+
+    if (direction === "take") {
+      try {
+        await transfer(client, {
+          fromAccountId: studentAccountId,
+          toAccountId: poolAccountId,
+          amountCents,
+          note: cleanText(note, 200) || "Returned to teacher pool",
+          createdBy: teacher.id,
+        });
+      } catch (error) {
+        if (error instanceof BudgetError && error.code === "insufficient_funds") {
+          const balance = await client.query("SELECT balance_cents FROM budget_accounts WHERE id = $1", [studentAccountId]);
+          throw new ManagementError(
+            `The student has only ${formatCents(Math.max(Number(balance.rows[0].balance_cents), 0))} left (spent money and running jobs' reservations can't be taken back)`,
+            409,
+          );
+        }
+        throw error;
+      }
+      return;
+    }
+
     try {
       await transfer(client, {
         fromAccountId: poolAccountId,
