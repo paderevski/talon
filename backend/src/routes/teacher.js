@@ -14,11 +14,12 @@ router.get("/students", async (req, res) => {
   });
 });
 
-// Moves dollars from the teacher's pool to a student in one of their classes.
+// Moves dollars between the teacher's pool and a student in one of their
+// classes: direction "give" (default) or "take".
 router.post("/allocations", async (req, res, next) => {
   try {
-    const { studentUsername, amount, note } = req.body ?? {};
-    await allocateToStudent({ teacher: req.user, studentUsername, amount, note });
+    const { studentUsername, amount, note, direction } = req.body ?? {};
+    await allocateToStudent({ teacher: req.user, studentUsername, amount, note, direction });
     return res.status(201).json({ ok: true });
   } catch (error) {
     return sendManagementError(error, res, next);

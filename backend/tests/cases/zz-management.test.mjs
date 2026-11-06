@@ -181,6 +181,23 @@ export async function run({ baseUrl }) {
   const pupilAfter = afterDecrease.payload.roster.classes[0].students.find((s) => s.username === "mgmt_pupil");
   assert(pupilAfter.tokensRemaining === 7, "Expected the student at $7.00 after the decrease");
 
+  // Take back: student -> pool, at most the student's balance, wherever the
+  // money came from (here partly an admin grant).
+  const take = (studentUsername, amount, direction = "take") =>
+    send(teacherJar, baseUrl, "POST", "/api/teacher/allocations", { studentUsername, amount, direction });
+  const overBalance = await take("mgmt_pupil", 7.5);
+  assert(overBalance.status === 409 && /only \$7\.00 left/.test(overBalance.payload.message),
+    `Expected taking more than the balance refused, got ${overBalance.status} ${overBalance.payload.message}`);
+  assert((await adjust(pupil.payload.id, "personal", "increase", 5)).status === 201, "Expected admin grant to the pupil");
+  assert((await take("mgmt_pupil", 3)).status === 201, "Expected take back to succeed");
+  assert((await take("mgmt_pupil", 1, "sideways")).status === 400, "Expected bad direction 400");
+  assert((await take("mgmt_outsider", 1)).status === 404, "Expected take outside the class to 404");
+  const afterTake = await send(teacherJar, baseUrl, "GET", "/api/teacher/students");
+  assert(afterTake.payload.roster.teacher.poolBalance === 13, "Expected pool at $13.00 after taking $3 back");
+  const pupilTaken = afterTake.payload.roster.classes[0].students.find((s) => s.username === "mgmt_pupil");
+  assert(pupilTaken.tokensRemaining === 9, `Expected the student at $9.00, got ${pupilTaken.tokensRemaining}`);
+  assert(pupilTaken.quota === 9, `Expected allocated (net funding) $9.00, got ${pupilTaken.quota}`);
+
   // Disable signs the user out; reset password replaces the old one
   const pupilJar = createCookieJar();
   await login(pupilJar, baseUrl, "mgmt_pupil", pupil.payload.password);

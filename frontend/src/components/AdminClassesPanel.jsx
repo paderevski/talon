@@ -1,11 +1,13 @@
 import { Fragment, useMemo, useState } from "react";
 import {
   addAdminClassMember,
+  adjustAdminBudget,
   createAdminClass,
   removeAdminClassMember,
   updateAdminClass,
 } from "../api/client";
 import { formatBlock, formatDollars } from "../utils/format";
+import BudgetAdjuster from "./BudgetAdjuster";
 
 function MemberAdder({ label, role, candidates, onAdd, disabled }) {
   const [userId, setUserId] = useState("");
@@ -42,7 +44,7 @@ function MemberAdder({ label, role, candidates, onAdd, disabled }) {
 
 // Everything you can change about one class: members, name/term, archive.
 // Kept separate from the table so the drill-down style can change freely.
-function ClassMembers({ classItem, users, run, isBusy }) {
+function ClassMembers({ classItem, users, run, isBusy, adjustBudget }) {
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState(classItem.name);
   const [term, setTerm] = useState(classItem.term || "");
@@ -139,7 +141,17 @@ function ClassMembers({ classItem, users, run, isBusy }) {
         <table>
           <tbody>
             {classItem.students.map((student) =>
-              memberRow(student, <td className="cell-num">{formatDollars(student.balance)}</td>),
+              memberRow(
+                student,
+                <td>
+                  <BudgetAdjuster
+                    who={student.fullName}
+                    balance={student.balance}
+                    subtractLimit={student.balance}
+                    onAdjust={(direction, amount) => adjustBudget(student, "personal", direction, amount)}
+                  />
+                </td>,
+              ),
             )}
             {classItem.students.length === 0 ? (
               <tr><td className="form-hint">No students yet.</td></tr>
@@ -220,6 +232,19 @@ export default function AdminClassesPanel({ classes, users, onChanged }) {
       setIsFormOpen(false);
     }
   }
+
+  // Admin add/subtract on a teacher's pool or a student's own budget. Errors
+  // are shown by the row's control (BudgetAdjuster), so they are rethrown.
+  async function adjustBudget(user, target, direction, amount) {
+    setMessage("");
+    setError("");
+    await adjustAdminBudget({ userId: user.id, target, direction: direction === "add" ? "increase" : "decrease", amount });
+    const what = target === "pool" ? `${user.fullName}'s pool` : `${user.fullName}'s budget`;
+    setMessage(direction === "add" ? `Added ${formatDollars(amount)} to ${what}` : `Subtracted ${formatDollars(amount)} from ${what}`);
+    onChanged();
+  }
+
+  const poolByTeacherId = useMemo(() => new Map(users.map((user) => [user.id, user.poolBalance ?? 0])), [users]);
 
   const teachers = users.filter((user) => user.status === "active" && user.roles.includes("teacher"));
   const allRows = useMemo(() => toRows(classes), [classes]);
@@ -397,6 +422,7 @@ export default function AdminClassesPanel({ classes, users, onChanged }) {
               {header("teacher", "Teacher")}
               {header("students", "Students", "cell-num")}
               {header("remaining", "Student budget left", "cell-num")}
+              <th title="One pool per teacher, shared by all of their classes">Teacher pool</th>
               <th />
             </tr>
           </thead>
@@ -421,6 +447,18 @@ export default function AdminClassesPanel({ classes, users, onChanged }) {
                     </td>
                     <td className="cell-num">{row.classItem.students.length}</td>
                     <td className="cell-num">{formatDollars(row.remaining)}</td>
+                    <td>
+                      {row.teacher ? (
+                        <BudgetAdjuster
+                          who={`${row.teacher.fullName}'s pool`}
+                          balance={poolByTeacherId.get(row.teacher.id) ?? 0}
+                          subtractLimit={poolByTeacherId.get(row.teacher.id) ?? 0}
+                          onAdjust={(direction, amount) => adjustBudget(row.teacher, "pool", direction, amount)}
+                        />
+                      ) : (
+                        <span className="form-hint">No teacher</span>
+                      )}
+                    </td>
                     <td className="cell-actions">
                       <button
                         type="button"
@@ -434,8 +472,8 @@ export default function AdminClassesPanel({ classes, users, onChanged }) {
                   </tr>
                   {isOpen ? (
                     <tr className="row-detail">
-                      <td colSpan={7}>
-                        <ClassMembers classItem={row.classItem} users={users} run={run} isBusy={isBusy} />
+                      <td colSpan={8}>
+                        <ClassMembers classItem={row.classItem} users={users} run={run} isBusy={isBusy} adjustBudget={adjustBudget} />
                       </td>
                     </tr>
                   ) : null}
@@ -444,7 +482,7 @@ export default function AdminClassesPanel({ classes, users, onChanged }) {
             })}
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={7} className="form-hint">
+                <td colSpan={8} className="form-hint">
                   {allRows.length === 0 ? "No classes yet." : "Nothing matches these filters."}
                 </td>
               </tr>

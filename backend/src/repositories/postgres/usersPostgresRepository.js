@@ -35,8 +35,9 @@ function mapUserRow(row) {
   };
 }
 
-// Legacy roster fields: `quota` = total ever credited to the personal
-// account, `tokensRemaining` = current balance. Both in dollars.
+// Legacy roster fields: `quota` = net funding of the personal account (grants,
+// transfers and admin adjustments; not job charges or refunds), so money a
+// teacher takes back lowers it; `tokensRemaining` = current balance. Dollars.
 function mapStudentBudget(row) {
   return {
     quota: centsToDollars(row.credited_cents ?? 0),
@@ -47,7 +48,7 @@ function mapStudentBudget(row) {
 const personalBudgetJoin = `
   LEFT JOIN budget_accounts a ON a.owner_user_id = s.id AND a.kind = 'personal'
   LEFT JOIN LATERAL (
-    SELECT COALESCE(SUM(l.amount_cents) FILTER (WHERE l.amount_cents > 0), 0) AS credited_cents
+    SELECT COALESCE(SUM(l.amount_cents) FILTER (WHERE l.kind IN ('grant', 'transfer', 'adjustment')), 0) AS credited_cents
     FROM budget_ledger l WHERE l.account_id = a.id
   ) credited ON true
 `;

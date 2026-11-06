@@ -820,8 +820,6 @@ td:last-child, th:last-child { border-right: none; }
 }
 .class-member-add { display: flex; gap: 8px; margin-top: 8px; }
 .class-member-add .form-select { flex: 1; }
-.allocate-form { display: flex; gap: 6px; align-items: center; }
-.allocate-form .form-input { width: 90px; padding: 6px 8px; }
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -844,33 +842,17 @@ td:last-child, th:last-child { border-right: none; }
   gap: 12px;
 }
 
-/* Inline budget editing and sortable user lists */
-.budget-link {
-  background: none;
-  border: 1px dashed transparent;
-  border-radius: 6px;
+/* Inline budget add/subtract (BudgetAdjuster) and sortable user lists */
+.budget-adjuster { min-width: 0; }
+.budget-adjuster-row { display: flex; align-items: center; gap: 6px; flex-wrap: nowrap; }
+.budget-adjuster-balance {
+  min-width: 4.5em;
+  font-variant-numeric: tabular-nums;
   color: var(--text-primary);
-  cursor: pointer;
-  font: inherit;
-  padding: 2px 6px;
-  margin: -2px -6px;
-  text-align: left;
 }
-.budget-link:hover { border-color: var(--accent-blue); color: var(--accent-blue-text); }
-.budget-editor { display: flex; flex-direction: column; gap: 6px; min-width: 210px; }
-.budget-editor form { display: flex; flex-direction: column; gap: 6px; }
-.budget-editor .form-input { padding: 6px 8px; }
-.segmented { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-.segmented button {
-  flex: 1;
-  background: transparent;
-  border: none;
-  color: var(--text-secondary);
-  padding: 6px;
-  cursor: pointer;
-  font-weight: 600;
-}
-.segmented button.active { background: var(--accent-blue); color: white; }
+.budget-adjuster-row .form-input { width: 72px; padding: 6px 8px; }
+.budget-adjuster-row .btn { white-space: nowrap; }
+.budget-adjuster-msg { margin-top: 4px; font-size: var(--fs-xs); }
 .list-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 /* Filtered count and the Add button sit at the right end of the filter row. */
 .list-controls-end { margin-left: auto; display: flex; align-items: center; gap: 12px; }
