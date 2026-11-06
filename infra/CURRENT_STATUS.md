@@ -143,7 +143,7 @@ Everything is in CloudWatch Logs (us-east-1), 30 days:
 | `/talon/demo/nginx-error` | nginx error log (text) |
 | `/talon/demo/syslog` | Everything else: backups, deploys, systemd, kernel |
 | `/talon/demo/bootstrap` | First-boot user_data log |
-| `/talon/demo/jobs` | Job instances' boot logs (`job_boot.sh`, root's output, not the student's), stream `<job id>/<instance id>`, sent every 15 s and at exit. Last line: JSON `job.boot_summary` (result, exit code, boot/setup/run seconds, instance type). The same log is `jobs/<id>/logs/boot.log` in S3, uploaded on every exit path; the student's `job.log` is in S3 only |
+| `/talon/demo/jobs` | Job instances' boot logs (`job_boot.sh`, root's output, not the student's), stream `<job id>/<instance id>`, sent every 5 s and at exit. Last line: JSON `job.boot_summary` (result, exit code, boot/setup/run seconds, instance type). The same log is `jobs/<id>/logs/boot.log` in S3, uploaded every 3 s when changed and on every exit path; the student's `job.log` is in S3 only |
 
 nginx passes its `$request_id` to the backend (`X-Request-Id`, also returned
 to the browser), so one `requestId` finds both sides of a request.
@@ -655,7 +655,10 @@ done (below); the adapter and everything after it are not built yet.
    slip past). Local runs on the web server are refused for everyone (admins
    too, since 2026-11-04) when `NODE_ENV=production` unless
    `TALON_ALLOW_LOCAL_JOBS=true`. Live logs:
-   `job_boot.sh` uploads the job log every 30 s. **Output files, complete
+   `job_boot.sh` uploads `job.log` and `boot.log` to S3 every 3 s when they
+   changed (separate loop from the output upload, since 2026-11-05); the job
+   log starts at boot with `[talon] HH:MM:SS` setup steps; the log panel
+   polls every 2 s. **Output files, complete
    solution:** two sources as in the local runner, `output/`
    (`TALON_OUTPUT_DIR`, source `output_dir`) and `changed/` (files created or
    changed in the repo directory since the job started, source
