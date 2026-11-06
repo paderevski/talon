@@ -177,6 +177,11 @@ const linkWeb = { title: "Open web server ${__field.labels.InstanceId}", url: `/
 const linkWebCell = { title: "Open web server", url: `/d/talon-web/talon-web?var-env=$env&var-instance=\${__value.raw}&${T}` };
 const linkRequest = { title: "Trace request", url: `/d/talon-request/talon-request?var-env=$env&var-request_id=\${__value.raw}&${T}` };
 
+// Cost panels count EC2 jobs only. Local runs are free; the demo seed gives
+// its fake history "local" jobs with made-up costs (seedDemo.js) so student
+// budgets look used, and those are not AWS spend.
+const EC2 = "provider = 'ec2'";
+
 // Hidden columns that give a job link its time window (start - 10 min .. end + 10 min).
 const JOB_WINDOW = `
   (extract(epoch FROM created_at - interval '10 minutes') * 1000)::bigint AS start_ms,
@@ -236,7 +241,7 @@ const overview = dashboard("talon-overview", "Talon overview", {
       SELECT coalesce(sum(cost_cents) FILTER (WHERE status IN ('completed', 'failed')
                         AND coalesce(finalized_at, updated_at) >= date_trunc('month', now())), 0) / 100.0 AS "jobs",
              coalesce(sum(reserved_cents) FILTER (WHERE status IN ('queued', 'running')), 0) / 100.0 AS "reserved now"
-      FROM reporting.jobs`)], { unit: "currencyUSD", decimals: 2, description: "Finished job cost this calendar month, and the reservations held by unfinished jobs (database)." }),
+      FROM reporting.jobs WHERE ${EC2}`)], { unit: "currencyUSD", decimals: 2, description: "EC2 job cost finished this calendar month, and the reservations held by unfinished EC2 jobs (database)." }),
 
     row("Web and load balancer", 5),
     timeseries("Requests and errors", g(0, 6, 12, 8), [
@@ -271,13 +276,13 @@ const overview = dashboard("talon-overview", "Talon overview", {
       FROM reporting.jobs WHERE $__timeFilter(created_at)
       GROUP BY 1, 2 ORDER BY 1`, "time_series")], { bars: true, stack: true, min: 0 }),
     barchart("Job cost by machine", g(12, 30, 6, 8), [sql(`
-      SELECT coalesce(compute_type, 'local') AS machine, sum(cost_cents) / 100.0 AS cost
-      FROM reporting.jobs WHERE $__timeFilter(created_at)
-      GROUP BY 1 ORDER BY 2 DESC`)], { unit: "currencyUSD" }),
+      SELECT compute_type AS machine, sum(cost_cents) / 100.0 AS cost
+      FROM reporting.jobs WHERE ${EC2} AND $__timeFilter(created_at)
+      GROUP BY 1 ORDER BY 2 DESC`)], { unit: "currencyUSD", description: "EC2 jobs started in the time range." }),
     table("Top spenders", g(18, 30, 6, 8), [sql(`
       SELECT owner_username AS student, count(*) AS jobs, sum(cost_cents) / 100.0 AS cost
-      FROM reporting.jobs WHERE $__timeFilter(created_at)
-      GROUP BY 1 ORDER BY 3 DESC, 2 DESC LIMIT 20`)], { columns: { student: { link: linkStudent }, cost: { unit: "currencyUSD" } } }),
+      FROM reporting.jobs WHERE ${EC2} AND $__timeFilter(created_at)
+      GROUP BY 1 ORDER BY 3 DESC, 2 DESC LIMIT 20`)], { columns: { student: { link: linkStudent }, cost: { unit: "currencyUSD" } }, description: "EC2 jobs started in the time range." }),
     table("Unfinished jobs, then recent ones", g(0, 38, 24, 9), [sql(`
       SELECT id AS job, status, owner_username AS student, coalesce(compute_type, 'local') AS machine,
              instance_id AS instance, created_at AS started, finalized_at AS finished,
@@ -292,7 +297,7 @@ const overview = dashboard("talon-overview", "Talon overview", {
     timeseries("Job cost per day", g(0, 48, 12, 7), [sql(`
       SELECT $__timeGroupAlias(ended_at, '1d'), sum(cost_cents) / 100.0 AS "job cost"
       FROM (SELECT coalesce(finalized_at, updated_at) AS ended_at, cost_cents
-            FROM reporting.jobs WHERE status IN ('completed', 'failed')) finished
+            FROM reporting.jobs WHERE ${EC2} AND status IN ('completed', 'failed')) finished
       WHERE $__timeFilter(ended_at)
       GROUP BY 1 ORDER BY 1`, "time_series")], { unit: "currencyUSD", bars: true, min: 0 }),
     table("Teacher pools", g(12, 48, 6, 7), [sql(`
@@ -439,7 +444,7 @@ const student = dashboard("talon-student", "Talon student", {
              count(*) FILTER (WHERE status IN ('queued', 'running')) AS unfinished
       FROM reporting.jobs WHERE owner_username = '$student' AND $__timeFilter(created_at)`)]),
     stat("Cost in range", g(12, 0, 6, 4), [sql(`
-      SELECT coalesce(sum(cost_cents), 0) / 100.0 AS cost FROM reporting.jobs WHERE owner_username = '$student' AND $__timeFilter(created_at)`)],
+      SELECT coalesce(sum(cost_cents), 0) / 100.0 AS cost FROM reporting.jobs WHERE ${EC2} AND owner_username = '$student' AND $__timeFilter(created_at)`)],
       { unit: "currencyUSD", decimals: 2, textMode: "value" }),
     table("Classes", g(18, 0, 6, 4), [sql(`
       SELECT class_name AS class, block, teacher_username AS teacher FROM reporting.class_students

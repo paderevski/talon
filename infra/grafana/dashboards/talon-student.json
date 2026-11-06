@@ -222,7 +222,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT coalesce(sum(cost_cents), 0) / 100.0 AS cost FROM reporting.jobs WHERE owner_username = '$student' AND $__timeFilter(created_at)"
+          "rawSql": "SELECT coalesce(sum(cost_cents), 0) / 100.0 AS cost FROM reporting.jobs WHERE provider = 'ec2' AND owner_username = '$student' AND $__timeFilter(created_at)"
         }
       ],
       "options": {

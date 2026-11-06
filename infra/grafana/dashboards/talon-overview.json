@@ -820,10 +820,10 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT coalesce(sum(cost_cents) FILTER (WHERE status IN ('completed', 'failed')\n                        AND coalesce(finalized_at, updated_at) >= date_trunc('month', now())), 0) / 100.0 AS \"jobs\",\n             coalesce(sum(reserved_cents) FILTER (WHERE status IN ('queued', 'running')), 0) / 100.0 AS \"reserved now\"\n      FROM reporting.jobs"
+          "rawSql": "SELECT coalesce(sum(cost_cents) FILTER (WHERE status IN ('completed', 'failed')\n                        AND coalesce(finalized_at, updated_at) >= date_trunc('month', now())), 0) / 100.0 AS \"jobs\",\n             coalesce(sum(reserved_cents) FILTER (WHERE status IN ('queued', 'running')), 0) / 100.0 AS \"reserved now\"\n      FROM reporting.jobs WHERE provider = 'ec2'"
         }
       ],
-      "description": "Finished job cost this calendar month, and the reservations held by unfinished jobs (database).",
+      "description": "EC2 job cost finished this calendar month, and the reservations held by unfinished EC2 jobs (database).",
       "options": {
         "reduceOptions": {
           "calcs": [
@@ -1746,9 +1746,10 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT coalesce(compute_type, 'local') AS machine, sum(cost_cents) / 100.0 AS cost\n      FROM reporting.jobs WHERE $__timeFilter(created_at)\n      GROUP BY 1 ORDER BY 2 DESC"
+          "rawSql": "SELECT compute_type AS machine, sum(cost_cents) / 100.0 AS cost\n      FROM reporting.jobs WHERE provider = 'ec2' AND $__timeFilter(created_at)\n      GROUP BY 1 ORDER BY 2 DESC"
         }
       ],
+      "description": "EC2 jobs started in the time range.",
       "options": {
         "orientation": "horizontal",
         "showValue": "auto",
@@ -1791,9 +1792,10 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "table",
-          "rawSql": "SELECT owner_username AS student, count(*) AS jobs, sum(cost_cents) / 100.0 AS cost\n      FROM reporting.jobs WHERE $__timeFilter(created_at)\n      GROUP BY 1 ORDER BY 3 DESC, 2 DESC LIMIT 20"
+          "rawSql": "SELECT owner_username AS student, count(*) AS jobs, sum(cost_cents) / 100.0 AS cost\n      FROM reporting.jobs WHERE provider = 'ec2' AND $__timeFilter(created_at)\n      GROUP BY 1 ORDER BY 3 DESC, 2 DESC LIMIT 20"
         }
       ],
+      "description": "EC2 jobs started in the time range.",
       "options": {
         "showHeader": true,
         "cellHeight": "sm",
@@ -2036,7 +2038,7 @@
           "editorMode": "code",
           "rawQuery": true,
           "format": "time_series",
-          "rawSql": "SELECT $__timeGroupAlias(ended_at, '1d'), sum(cost_cents) / 100.0 AS \"job cost\"\n      FROM (SELECT coalesce(finalized_at, updated_at) AS ended_at, cost_cents\n            FROM reporting.jobs WHERE status IN ('completed', 'failed')) finished\n      WHERE $__timeFilter(ended_at)\n      GROUP BY 1 ORDER BY 1"
+          "rawSql": "SELECT $__timeGroupAlias(ended_at, '1d'), sum(cost_cents) / 100.0 AS \"job cost\"\n      FROM (SELECT coalesce(finalized_at, updated_at) AS ended_at, cost_cents\n            FROM reporting.jobs WHERE provider = 'ec2' AND status IN ('completed', 'failed')) finished\n      WHERE $__timeFilter(ended_at)\n      GROUP BY 1 ORDER BY 1"
         }
       ],
       "options": {
