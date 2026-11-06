@@ -197,6 +197,27 @@ export async function unhideJob(jobId) {
   return response.json();
 }
 
+// 502 and 504 come from nginx or the load balancer, not the app: the server
+// was restarting or took too long to answer. The app may still have done the
+// work (it does not stop when the connection drops), so a write must not be
+// reported as failed.
+const gatewayStatuses = new Set([502, 504]);
+
+export class GatewayError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "GatewayError";
+  }
+}
+
+function gatewayError(method) {
+  return new GatewayError(
+    method === "GET"
+      ? "The server did not answer in time. Try again in a moment."
+      : "The server did not answer in time, but the change may still have been made. Check before trying again.",
+  );
+}
+
 export async function submitJob(payload) {
   const response = await apiFetch("/api/jobs", {
     method: "POST",
@@ -205,6 +226,11 @@ export async function submitJob(payload) {
   });
 
   if (!response.ok) {
+    if (gatewayStatuses.has(response.status)) {
+      throw new GatewayError(
+        "The server did not answer in time, but the job may still have started. Check Jobs before submitting again.",
+      );
+    }
     let message = `Submit failed: ${response.status}`;
     try {
       message = (await response.json()).message || message;
@@ -339,6 +365,9 @@ async function requestJson(method, path, body) {
   }
 
   if (!response.ok) {
+    if (gatewayStatuses.has(response.status)) {
+      throw gatewayError(method);
+    }
     throw new Error(payload?.message || `Request failed (${response.status})`);
   }
 
