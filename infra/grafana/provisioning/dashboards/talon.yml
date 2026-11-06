@@ -1,0 +1,14 @@
+# Dashboards come from infra/grafana/dashboards/*.json, which
+# build-dashboards.mjs generates. Edits made in the Grafana UI are not saved
+# back: change the generator (or export the JSON from the UI into the folder).
+apiVersion: 1
+
+providers:
+  - name: talon
+    folder: Talon
+    type: file
+    allowUiUpdates: true
+    updateIntervalSeconds: 10
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

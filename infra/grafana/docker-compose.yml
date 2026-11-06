@@ -1,0 +1,42 @@
+# Grafana for Talon on a laptop. Start it with infra/grafana/grafana.sh,
+# which writes the AWS credentials, the database settings and the admin
+# password into $TALON_GRAFANA_HOME (default ~/.talon-grafana, outside the
+# repo) before running this.
+name: talon-grafana
+
+services:
+  grafana:
+    image: grafana/grafana:13.2.5
+    ports:
+      - "127.0.0.1:${TALON_GRAFANA_PORT:-3000}:3000" # this laptop only
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${TALON_GRAFANA_ADMIN_PASSWORD:?run grafana.sh}
+      # Bound to 127.0.0.1, so a browser on this laptop gets in without a login.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/talon-overview.json
+      TALON_ENV: ${TALON_ENV:-demo}
+      # CloudWatch reads credentials through credential_process (aws/config),
+      # which cats the file grafana.sh keeps fresh from the lcps SSO profile.
+      AWS_CONFIG_FILE: /etc/grafana/aws/config
+      AWS_SHARED_CREDENTIALS_FILE: /etc/grafana/aws/credentials
+      AWS_SDK_LOAD_CONFIG: "1"
+    extra_hosts:
+      # RDS mode: the RDS host name points at this laptop, where the SSM
+      # tunnel listens, so TLS can verify the certificate's name (verify-full).
+      - "${TALON_PG_TUNNEL_HOST:-rds-tunnel.invalid}:host-gateway"
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./provisioning:/etc/grafana/provisioning:ro
+      - ./dashboards:/var/lib/grafana/dashboards:ro
+      - ${TALON_GRAFANA_HOME:?run grafana.sh}/aws:/etc/grafana/aws:ro
+      - ${TALON_GRAFANA_HOME:?run grafana.sh}/rds-ca.pem:/etc/grafana/rds-ca.pem:ro
+      - grafana-data:/var/lib/grafana
+
+volumes:
+  grafana-data:

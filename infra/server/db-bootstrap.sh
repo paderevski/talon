@@ -7,7 +7,10 @@
 #   talon_migrate  owns database "talon" and its schema (migrations, seed)
 #   talon_app      the running backend: SELECT/INSERT/UPDATE/DELETE on the
 #                  tables and their sequences, nothing else
-# Both sign in with IAM tokens (rds_iam): no password is set for either.
+#   talon_grafana  dashboards (infra/grafana): SELECT on the "reporting"
+#                  views only (migration 010), 10 s statement timeout,
+#                  at most 5 connections
+# All sign in with IAM tokens (rds_iam): no password is set for any of them.
 #
 # Master sign-in: the first block below makes the master a member of
 # talon_migrate, which is in rds_iam. RDS's pg_hba rule "+rds_iam" matches
@@ -57,15 +60,21 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'talon_app') THEN
     CREATE ROLE talon_app LOGIN;
   END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'talon_grafana') THEN
+    CREATE ROLE talon_grafana LOGIN;
+  END IF;
 END
 $$;
-GRANT rds_iam TO talon_migrate, talon_app;
+GRANT rds_iam TO talon_migrate, talon_app, talon_grafana;
+ALTER ROLE talon_grafana CONNECTION LIMIT 5;
+ALTER ROLE talon_grafana SET statement_timeout = '10s';
+ALTER ROLE talon_grafana SET default_transaction_read_only = on;
 -- The master user must be a member to create a database owned by it.
 GRANT talon_migrate TO CURRENT_USER;
 SELECT 'CREATE DATABASE talon OWNER talon_migrate'
 WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'talon') \gexec
 REVOKE ALL ON DATABASE talon FROM PUBLIC;
-GRANT CONNECT ON DATABASE talon TO talon_app;
+GRANT CONNECT ON DATABASE talon TO talon_app, talon_grafana;
 SQL
 
 # Privileges inside "talon". Default privileges cover tables that future
@@ -79,6 +88,13 @@ ALTER DEFAULT PRIVILEGES FOR ROLE talon_migrate IN SCHEMA public
   GRANT USAGE, SELECT ON SEQUENCES TO talon_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO talon_app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO talon_app;
+-- Reporting views (migration 010) for talon_grafana. Migration 010 grants
+-- these too when the role exists, so either order works.
+CREATE SCHEMA IF NOT EXISTS reporting AUTHORIZATION talon_migrate;
+GRANT USAGE ON SCHEMA reporting TO talon_grafana;
+GRANT SELECT ON ALL TABLES IN SCHEMA reporting TO talon_grafana;
+ALTER DEFAULT PRIVILEGES FOR ROLE talon_migrate IN SCHEMA reporting
+  GRANT SELECT ON TABLES TO talon_grafana;
 SQL
 
 psql -q -d talon -Atc "SELECT 'db-bootstrap: done. roles: ' || string_agg(rolname, ', ' ORDER BY rolname) FROM pg_roles WHERE rolname LIKE 'talon\_%'"
