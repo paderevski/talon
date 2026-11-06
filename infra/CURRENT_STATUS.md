@@ -12,10 +12,15 @@ it differs from v7 and a short what-comes-next; v7 kept for history).
    (Docker, dashboards as generated JSON, overview plus web server, job,
    student and request drill-downs). Migration 010 adds read-only
    `reporting` views; `db-bootstrap.sh` adds role `talon_grafana` (IAM
-   sign-in, SELECT on those views only). Verified locally: CloudWatch panels
-   against the demo account, Postgres panels against `talon_dev`. Not yet on
-   RDS: needs `db_bootstrap = true` apply, `db-bootstrap.sh`, a deploy
-   (migration 010), then `db_bootstrap = false`.
+   sign-in, SELECT on those views only). Live on RDS 2026-11-06: apply with
+   `db_bootstrap = true`, deploy `grafana --keep-data` (migration 010),
+   `db-bootstrap.sh`, apply with `db_bootstrap = false`. All Postgres panels
+   checked against RDS; the role cannot read tables, write, or run past 10 s.
+   The box runs branch `grafana`, which has `gateway-timeouts` merged in
+   (that branch was on the box before). That apply also moved the GPU job
+   template to AWS's new PyTorch DLAMI (published 2026-11-06; launch
+   template version 10) and its AMI allow-list: GPU jobs on it are not
+   tested yet.
 
 0. ~~**Web tier phase 3**~~ done and merged 2026-11-05: Auto Scaling group
    of two web servers (1a, 1b) behind an internal ALB, reached through the
