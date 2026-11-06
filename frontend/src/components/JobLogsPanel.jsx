@@ -111,10 +111,16 @@ export default function JobLogsPanel({ id, job, live, onClose }) {
         <span className="job-log-title">Logs: {job.name}{live ? " (live)" : ""}</span>
         <button className="btn btn-secondary btn-sm" type="button" onClick={onClose}>Close</button>
       </div>
-      {progress ? <JobProgress stages={progress.stages} startedAt={progress.startedAt} live={live} /> : null}
-      <pre className="job-log-body" ref={preRef} onScroll={onScroll} aria-label={`Logs for ${job.name}`}>
-        {lines.length ? lines.join("\n") : emptyText}
-      </pre>
+      {/* EC2 jobs: progress beside the log; the progress sets the height and
+          the log scrolls within it. */}
+      <div className={progress ? "job-log-split" : undefined}>
+        {progress ? <JobProgress stages={progress.stages} startedAt={progress.startedAt} live={live} /> : null}
+        <div className="job-log-pane">
+          <pre className="job-log-body" ref={preRef} onScroll={onScroll} aria-label={`Logs for ${job.name}`}>
+            {lines.length ? lines.join("\n") : emptyText}
+          </pre>
+        </div>
+      </div>
       {lines.length && message ? <div className="form-hint">{message}</div> : null}
     </div>
   );
