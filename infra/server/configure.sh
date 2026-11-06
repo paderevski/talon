@@ -168,6 +168,11 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $talon_forwarded_proto;
         proxy_set_header X-Request-Id $request_id;
+        # Match the load balancer's idle timeout (alb_idle_timeout_seconds in
+        # infra/ec2/alb.tf, 180 s). nginx's 60 s default would cut off a slow
+        # job submit (clone, upload, launch) or roster import first.
+        proxy_read_timeout 180s;
+        proxy_send_timeout 180s;
     }
 }
 EOF

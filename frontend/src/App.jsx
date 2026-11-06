@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { cancelJob, fetchComputeOptions, fetchCurrentUser, fetchJobFiles, fetchJobs, fetchRepoTree, fetchResults, getGithubStatus, hideJob, login, logout, setUnauthorizedHandler, submitJob, unhideJob } from "./api/client";
+import { GatewayError, cancelJob, fetchComputeOptions, fetchCurrentUser, fetchJobFiles, fetchJobs, fetchRepoTree, fetchResults, getGithubStatus, hideJob, login, logout, setUnauthorizedHandler, submitJob, unhideJob } from "./api/client";
 import NewJobPanel from "./components/NewJobPanel";
 import RepoBrowserPanel from "./components/RepoBrowserPanel";
 import JobStatusPanel from "./components/JobStatusPanel";
@@ -507,7 +507,16 @@ export default function App() {
       repo: normalizedRepo || form.repo,
     };
 
-    const result = await submitJob(payload);
+    let result;
+    try {
+      result = await submitJob(payload);
+    } catch (error) {
+      // The job may have started anyway: show it in the list if it did.
+      if (error instanceof GatewayError) {
+        await refreshJobs().catch(() => {});
+      }
+      throw error;
+    }
     if (normalizedRepo && normalizedRepo !== repoPath) {
       setRepoPath(normalizedRepo);
       setRepoDirectoryPath("");
