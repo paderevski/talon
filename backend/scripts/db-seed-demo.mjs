@@ -8,8 +8,12 @@ useMigrationRole();
 try {
   const pool = getPool();
   await runMigrations(pool, { log: console.log });
-  // --replace-all: wipe every user, not only demo ones (see seedDemo.js).
-  const counts = await seedDemoUsers(pool, { replaceAll: process.argv.includes("--replace-all") });
+  // --replace-all: wipe every user, not only demo ones; --allow-running-jobs:
+  // wipe even while EC2 jobs are queued or running (see seedDemo.js).
+  const counts = await seedDemoUsers(pool, {
+    replaceAll: process.argv.includes("--replace-all"),
+    allowRunningJobs: process.argv.includes("--allow-running-jobs"),
+  });
   console.log(`Demo users seeded into ${describeDatabase()}`);
   console.log(JSON.stringify(counts, null, 2));
   console.log("Passwords: admin123 (admin), teach123 (teachers), student123 (students), talon123 (jane_smith)");

@@ -1055,3 +1055,183 @@ button.source-placeholder:disabled { color: var(--text-muted); cursor: not-allow
   .class-detail { grid-template-columns: 1fr; }
 }
 .class-member-add .class-block-input { flex: 0 0 90px; }
+
+/* ---------------------------------------------------------- job progress */
+/* EC2 job timeline above the log (JobProgress.jsx). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.job-progress {
+  padding: 14px 16px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.job-progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-bottom: 12px;
+}
+.job-progress-now {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-md);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.job-progress-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-blue);
+  animation: job-live 1.6s ease-in-out infinite;
+}
+.job-progress-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.job-stage {
+  --node: 22px;
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--node) 1fr;
+  gap: 12px;
+  padding-bottom: 14px;
+}
+/* The connector to the next stage: grey, green once this stage is done, a
+   moving blue gradient while it is active. */
+.job-stage:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: calc(var(--node) / 2 - 1px);
+  top: calc(var(--node) + 2px);
+  bottom: 2px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--border);
+}
+.job-stage.done:not(:last-child)::after { background: var(--accent-green); }
+.job-stage.active:not(:last-child)::after {
+  background: linear-gradient(180deg, var(--accent-blue) 0%, var(--accent-blue) 30%, var(--border) 60%, var(--border) 100%);
+  background-size: 100% 200%;
+  animation: job-flow 1.4s linear infinite;
+}
+.job-stage-node {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: var(--node);
+  height: var(--node);
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--bg-card);
+  color: var(--bg-card);
+  transition: background 0.3s, border-color 0.3s;
+}
+.job-stage-node svg { width: 14px; height: 14px; }
+.job-stage.done .job-stage-node { background: var(--accent-green); border-color: var(--accent-green); animation: job-pop 0.35s ease-out; }
+.job-stage.failed .job-stage-node { background: var(--accent-red); border-color: var(--accent-red); }
+.job-stage.active .job-stage-node {
+  border-color: var(--accent-blue);
+  background: var(--accent-blue-glow);
+  animation: job-ring 1.6s ease-out infinite;
+}
+.job-stage.active .job-stage-node::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-blue);
+}
+.job-stage-body { min-width: 0; padding-top: 1px; }
+.job-stage-title-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.job-stage-title { font-size: var(--fs-base); font-weight: 600; color: var(--text-primary); }
+.job-stage.waiting .job-stage-title { color: var(--text-muted); font-weight: 500; }
+.job-stage-where {
+  font-size: var(--fs-xs);
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+.job-stage.active .job-stage-where { border-color: var(--accent-blue); color: var(--accent-blue-text); }
+.job-stage-time { margin-left: auto; font-size: var(--fs-sm); }
+.job-stage.active .job-stage-time { color: var(--accent-blue-text); }
+.job-stage-detail {
+  margin-top: 2px;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+  animation: job-in 0.3s ease-out;
+}
+.job-stage.active .job-stage-detail { color: var(--text-primary); }
+.job-stage.failed .job-stage-detail { color: var(--accent-red); }
+.job-stage-steps {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+.job-stage-steps li {
+  display: flex;
+  gap: 10px;
+  padding: 2px 0;
+  animation: job-in 0.35s ease-out;
+}
+.job-stage-steps li.current { color: var(--text-primary); }
+.job-step-time { min-width: 3.5em; color: var(--text-muted); }
+
+@keyframes job-live { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+@keyframes job-flow { from { background-position: 0 100%; } to { background-position: 0 -100%; } }
+@keyframes job-ring {
+  0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.55); }
+  100% { box-shadow: 0 0 0 9px rgba(59, 130, 246, 0); }
+}
+@keyframes job-pop { 0% { transform: scale(0.6); } 70% { transform: scale(1.12); } 100% { transform: scale(1); } }
+@keyframes job-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .job-progress *, .job-progress *::after { animation: none !important; }
+}
+
+/* Progress beside the log, about 1:2. The progress column sets the row
+   height; the log fills its cell and scrolls. Stacked on narrow screens. */
+.job-log-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+}
+.job-log-split .job-progress {
+  border-bottom: none;
+  border-right: 1px solid var(--border);
+  padding: 12px 12px 4px;
+}
+.job-log-split .job-progress-now { font-size: var(--fs-base); }
+.job-log-split .job-log-pane {
+  position: relative;
+  min-height: 240px;
+}
+.job-log-split .job-log-body {
+  position: absolute;
+  inset: 0;
+  max-height: none;
+}
+@media (max-width: 900px) {
+  .job-log-split { grid-template-columns: minmax(0, 1fr); }
+  .job-log-split .job-progress { border-right: none; border-bottom: 1px solid var(--border); }
+  .job-log-split .job-log-pane { position: static; min-height: 0; }
+  .job-log-split .job-log-body { position: static; max-height: 320px; }
+}

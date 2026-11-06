@@ -153,6 +153,35 @@ const tests = [
     assert(unblocked === 0, `Expected every seeded class to have a block and a teacher, ${unblocked} do not`);
   }],
 
+  ["seed refuses while an EC2 job is queued or running, unless allowRunningJobs", async () => {
+    const owner = await scalar("SELECT id FROM users WHERE username = 'jane_smith'");
+    await pool.query(
+      "INSERT INTO jobs (owner_user_id, name, repo, status, execution_provider) VALUES ($1, 'live-ec2', 'octo/demo', 'running', 'ec2')",
+      [owner],
+    );
+    let message = "";
+    try {
+      await seedDemoUsers(pool, { replaceAll: true });
+    } catch (error) {
+      message = error.message;
+    }
+    assert(/EC2 jobs still queued or running/.test(message) && /live-ec2/.test(message), `Expected refusal, got: ${message || "no error"}`);
+    assert((await scalar("SELECT COUNT(*)::int FROM jobs WHERE name = 'live-ec2'")) === 1, "Expected the job to survive the refused seed");
+
+    await seedDemoUsers(pool, { replaceAll: true, allowRunningJobs: true });
+    assert((await scalar("SELECT COUNT(*)::int FROM jobs WHERE name = 'live-ec2'")) === 0, "Expected the override to wipe it");
+  }],
+
+  ["seed ignores finished EC2 jobs and running local jobs", async () => {
+    const owner = await scalar("SELECT id FROM users WHERE username = 'jane_smith'");
+    await pool.query(
+      `INSERT INTO jobs (owner_user_id, name, repo, status, execution_provider) VALUES
+         ($1, 'done-ec2', 'octo/demo', 'completed', 'ec2'), ($1, 'local-run', 'octo/demo', 'running', 'local')`,
+      [owner],
+    );
+    await seedDemoUsers(pool, { replaceAll: true });
+  }],
+
   ["login: correct password returns user with id and roles", async () => {
     const user = await repo.findByCredentials("jane_smith", "talon123");
     assert(user, "Expected jane_smith to log in");

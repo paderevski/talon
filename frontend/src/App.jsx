@@ -145,6 +145,7 @@ export default function App() {
   const [authUser, setAuthUser] = useState(getStoredAuthUser);
   // Coming back from GitHub sign-in the server redirects to #github.
   const [route, setRoute] = useState(readHashRoute);
+  const [focusJobId, setFocusJobId] = useState(null);
   const [githubStatus, setGithubStatus] = useState(null);
   const githubResult = githubResultOnLoad;
   const [selectedStudentView, setSelectedStudentView] = useState(null);
@@ -506,7 +507,7 @@ export default function App() {
       repo: normalizedRepo || form.repo,
     };
 
-    await submitJob(payload);
+    const result = await submitJob(payload);
     if (normalizedRepo && normalizedRepo !== repoPath) {
       setRepoPath(normalizedRepo);
       setRepoDirectoryPath("");
@@ -515,6 +516,11 @@ export default function App() {
       setRepoBranch(form.branch);
     }
     await refreshJobs();
+    // An EC2 job: go to Jobs with its progress open, to watch it launch.
+    if (result?.job?.executionRef?.provider === "ec2") {
+      setFocusJobId(result.job.id);
+      window.location.hash = "jobs";
+    }
   };
 
   // From the submit form: repo, branch and the job's folder. The repo browser
@@ -588,6 +594,13 @@ export default function App() {
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
+
+  // The submitted job's progress opens once, not on every return to Jobs.
+  useEffect(() => {
+    if (activeView !== "jobs") {
+      setFocusJobId(null);
+    }
+  }, [activeView]);
 
   // A new view starts at the top, not wherever the previous one was scrolled.
   useEffect(() => {
@@ -809,6 +822,8 @@ export default function App() {
             <>
               <JobStatusPanel
                 jobs={visibleJobs}
+                allJobs={visibleAllJobs}
+                focusJobId={activeView === "jobs" ? focusJobId : null}
                 activeFilter={activeFilter}
                 setActiveFilter={setActiveFilter}
                 statusAvailability={visibleStatusAvailability}
