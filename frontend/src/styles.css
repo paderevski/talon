@@ -1207,3 +1207,31 @@ button.source-placeholder:disabled { color: var(--text-muted); cursor: not-allow
 @media (prefers-reduced-motion: reduce) {
   .job-progress *, .job-progress *::after { animation: none !important; }
 }
+
+/* Progress beside the log, about 1:2. The progress column sets the row
+   height; the log fills its cell and scrolls. Stacked on narrow screens. */
+.job-log-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+}
+.job-log-split .job-progress {
+  border-bottom: none;
+  border-right: 1px solid var(--border);
+  padding: 12px 12px 4px;
+}
+.job-log-split .job-progress-now { font-size: var(--fs-base); }
+.job-log-split .job-log-pane {
+  position: relative;
+  min-height: 240px;
+}
+.job-log-split .job-log-body {
+  position: absolute;
+  inset: 0;
+  max-height: none;
+}
+@media (max-width: 900px) {
+  .job-log-split { grid-template-columns: minmax(0, 1fr); }
+  .job-log-split .job-progress { border-right: none; border-bottom: 1px solid var(--border); }
+  .job-log-split .job-log-pane { position: static; min-height: 0; }
+  .job-log-split .job-log-body { position: static; max-height: 320px; }
+}

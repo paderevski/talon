@@ -137,7 +137,11 @@ async function seedStudentJobs(client, { studentId, accountId, spentCents }) {
 // replaceAll: also wipe users that are not demo users (deploy.sh does this on
 // the demo box, whose data is disposable). Without it, any non-demo user
 // makes the seed refuse, so a local database with real work is safe.
-export async function seedDemoUsers(pool, { replaceAll = false } = {}) {
+// allowRunningJobs: wipe even while EC2 jobs are queued or running. Without
+// it the seed refuses: their rows would go, the reconciler would then
+// terminate their instances ("no job row") and their results in S3 could no
+// longer be found from the app.
+export async function seedDemoUsers(pool, { replaceAll = false, allowRunningJobs = false } = {}) {
   assertDemoSeedAllowed();
   const teachers = [...teacherSeeds, legacyTeacher];
   const demoUsernames = allDemoUsernames(teachers);
@@ -153,6 +157,20 @@ export async function seedDemoUsers(pool, { replaceAll = false } = {}) {
           `Refusing to seed: database has non-demo users (${nonDemo.rows
             .map((row) => row.username)
             .join(", ")})`,
+        );
+      }
+
+      const running = await client.query(
+        `SELECT id, name, status FROM jobs
+         WHERE execution_provider = 'ec2' AND status IN ('queued', 'running')
+         ORDER BY created_at LIMIT 5`,
+      );
+      if (running.rows.length > 0 && !allowRunningJobs) {
+        throw new Error(
+          `Refusing to seed: EC2 jobs still queued or running (${running.rows
+            .map((row) => `${row.id} ${row.name} ${row.status}`)
+            .join(", ")}). Reseeding deletes them and the reconciler then terminates their instances. ` +
+            "Wait for them to finish or cancel them, or pass --allow-running-jobs.",
         );
       }
 
