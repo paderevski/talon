@@ -24,7 +24,7 @@ export async function run({ baseUrl }) {
   const after = await withTestDb(async (pool) => (await pool.query("SELECT status, result_sync_key FROM jobs WHERE id = $1", [jobId])).rows[0]);
   assert(after.status === "failed" && after.result_sync_key === "cancelled-before-launch", `after ${JSON.stringify(after)}`);
 
-  // A job with no execution ref that is not an EC2 job being prepared is still refused.
+  // Cancelling it again is refused: it has finished.
   const again = await apiFetch(`${baseUrl}/api/jobs/${jobId}/cancel`, { method: "POST" });
-  assert(again.status === 400, `second cancel should be 400, got ${again.status}`);
+  assert(again.status === 409, `second cancel should be 409, got ${again.status}`);
 }

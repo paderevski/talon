@@ -1,5 +1,11 @@
 const repoSegmentPattern = /^[A-Za-z0-9_.-]+$/;
 
+// An owner or repository name. GitHub never allows "." or ".." (or any
+// all-dot name), and they would walk up the path of a GitHub API URL.
+export function isRepoSegment(value) {
+  return repoSegmentPattern.test(value) && !/^\.+$/.test(value);
+}
+
 export function normalizeRepoInput(value) {
   const raw = String(value ?? "").trim();
   if (!raw) {
@@ -46,7 +52,7 @@ export function normalizeRepoPath(value) {
   }
 
   const [owner, repo] = parts;
-  if (!repoSegmentPattern.test(owner) || !repoSegmentPattern.test(repo)) {
+  if (!isRepoSegment(owner) || !isRepoSegment(repo)) {
     return "";
   }
 
@@ -139,6 +145,15 @@ export function normalizeDrivePath(value) {
   return segments.join("/");
 }
 
+// A stray "%" (e.g. half-typed "%20") is kept as typed rather than thrown.
+function decodeSegment(segment) {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 // Reads a GitHub URL pasted from the browser:
 //   https://github.com/o/r                      -> { repo }
 //   https://github.com/o/r/tree/<branch>/a/b    -> { repo, branch, folder: "a/b" }
@@ -161,7 +176,7 @@ export function parseGithubUrl(value) {
     return repo ? { repo } : null;
   }
 
-  const [owner, name, kind, branch, ...rest] = parsed.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  const [owner, name, kind, branch, ...rest] = parsed.pathname.split("/").filter(Boolean).map(decodeSegment);
   const repo = normalizeRepoPath(`${owner ?? ""}/${String(name ?? "").replace(/\.git$/i, "")}`);
   if (!repo) {
     return null;

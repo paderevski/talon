@@ -76,7 +76,10 @@ export function createJobSync({ jobsRepository, getExecutionStatus, getExecution
 
     if (isTerminalExecutionState(execution.state)) {
       const syncKey = execution.syncKey || execution.endedAt || execution.state;
-      if (job.resultSyncKey === syncKey) {
+      // Stored once. Only the job's own reported result may replace what was
+      // stored (e.g. an "instance gone" guess); a later guess such as the
+      // time limit passing must not relabel a finished job.
+      if (job.resultSyncKey === syncKey || (job.resultSyncKey && !execution.reported)) {
         return { job, execution };
       }
 

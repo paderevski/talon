@@ -1,4 +1,4 @@
-import { splitRepoPath } from "../utils/repo";
+import { splitRepoPath } from "../utils/repo.js";
 
 const headers = {
   "Content-Type": "application/json",
@@ -134,16 +134,7 @@ export async function cancelJob(jobId) {
   );
 
   if (!response.ok) {
-    let message = `Unable to cancel job (${response.status})`;
-    try {
-      const body = await response.json();
-      if (body?.message) {
-        message = body.message;
-      }
-    } catch {
-      // Ignore parse errors and keep fallback message.
-    }
-    throw new Error(message);
+    throw await writeError(response, `Unable to cancel job`);
   }
 
   return response.json();
@@ -157,16 +148,7 @@ export async function hideJob(jobId, reason) {
   });
 
   if (!response.ok) {
-    let message = `Unable to hide job (${response.status})`;
-    try {
-      const body = await response.json();
-      if (body?.message) {
-        message = body.message;
-      }
-    } catch {
-      // Ignore parse errors and keep fallback message.
-    }
-    throw new Error(message);
+    throw await writeError(response, `Unable to hide job`);
   }
 
   return response.json();
@@ -182,16 +164,7 @@ export async function unhideJob(jobId) {
   );
 
   if (!response.ok) {
-    let message = `Unable to unhide job (${response.status})`;
-    try {
-      const body = await response.json();
-      if (body?.message) {
-        message = body.message;
-      }
-    } catch {
-      // Ignore parse errors and keep fallback message.
-    }
-    throw new Error(message);
+    throw await writeError(response, `Unable to unhide job`);
   }
 
   return response.json();
@@ -216,6 +189,16 @@ function gatewayError(method) {
       ? "The server did not answer in time. Try again in a moment."
       : "The server did not answer in time, but the change may still have been made. Check before trying again.",
   );
+}
+
+// The error for a failed write: a GatewayError for 502/504 (it may have
+// worked), else the server's message, else `fallback (status)`.
+async function writeError(response, fallback) {
+  if (gatewayStatuses.has(response.status)) {
+    return gatewayError("POST");
+  }
+  const body = await response.json().catch(() => null);
+  return new Error(body?.message || `${fallback} (${response.status})`);
 }
 
 export async function submitJob(payload) {
@@ -326,7 +309,7 @@ export async function fetchConnectionItems(provider) {
 export async function disconnectConnection(provider, label = provider) {
   const response = await apiFetch(`/api/connections/${encodeURIComponent(provider)}`, { method: "DELETE" });
   if (!response.ok) {
-    throw new Error(`Unable to disconnect ${label} (${response.status})`);
+    throw await writeError(response, `Unable to disconnect ${label}`);
   }
   return response.json();
 }
