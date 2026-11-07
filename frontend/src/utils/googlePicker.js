@@ -29,9 +29,21 @@ export async function openDrivePicker({ accessToken, apiKey, appId }) {
   await loadPickerApi();
   const g = window.google.picker;
   return new Promise((resolve) => {
-    const view = new g.DocsView(g.ViewId.DOCS).setIncludeFolders(true).setSelectFolderEnabled(true);
+    // Browsable views (open folders like in Drive) instead of the default
+    // flat list of every file: My Drive from its root, what others shared,
+    // and shared drives. Folders can be chosen as well as files.
+    const browse = () => new g.DocsView(g.ViewId.DOCS)
+      .setIncludeFolders(true)
+      .setSelectFolderEnabled(true)
+      .setMode(g.DocsViewMode.LIST);
+    const myDrive = browse().setParent("root").setLabel("My Drive");
+    const sharedWithMe = browse().setOwnedByMe(false).setLabel("Shared with me");
+    const sharedDrives = browse().setEnableDrives(true).setLabel("Shared drives");
     const picker = new g.PickerBuilder()
-      .addView(view)
+      .addView(myDrive)
+      .addView(sharedWithMe)
+      .addView(sharedDrives)
+      .enableFeature(g.Feature.SUPPORT_DRIVES)
       .setOAuthToken(accessToken)
       .setDeveloperKey(apiKey)
       .setAppId(appId)
