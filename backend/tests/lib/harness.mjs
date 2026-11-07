@@ -144,6 +144,11 @@ export async function startBackendForTests({ env: extraEnv = {}, reset = true } 
       GITHUB_APP_CLIENT_SECRET: "",
       GITHUB_APP_PRIVATE_KEY: "",
       GITHUB_APP_PRIVATE_KEY_FILE: "",
+      // ...and never to Google.
+      GOOGLE_OAUTH_CLIENT_ID: "",
+      GOOGLE_OAUTH_CLIENT_SECRET: "",
+      GOOGLE_PICKER_API_KEY: "",
+      GOOGLE_PROJECT_NUMBER: "",
       ...extraEnv,
     },
     stdio: ["ignore", "pipe", "pipe"],

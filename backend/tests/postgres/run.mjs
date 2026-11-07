@@ -33,6 +33,7 @@ import { createEc2Reconciler } from "../../src/services/ec2Reconciler.js";
 import { createJobSync } from "../../src/services/jobSync.js";
 import { createConnectionsStore, ConnectionInUseError } from "../../src/connections/store.js";
 import { createConnectionRegistry } from "../../src/connections/registry.js";
+import { createGoogleDriveProvider, driveScope, pickerAppId } from "../../src/connections/providers/googleDrive.js";
 import { getSourceType, parseCodeSource, prepareCodeSnapshot, registerSource } from "../../src/sources/index.js";
 import { checkTree, packSnapshot } from "../../src/sources/snapshot.js";
 import { cloneInto } from "../../src/sources/fetchers/git.js";
@@ -71,6 +72,26 @@ function makeFakeGithub(routes) {
   };
   return { fetch, calls };
 }
+
+// Fake Google for the Drive provider tests: routes are "METHOD host/path"
+// (query ignored); a handler gets the parsed body and returns the JSON reply
+// (__status sets the HTTP status).
+function makeFakeGoogle(routes) {
+  const calls = [];
+  const fetch = async (url, init = {}) => {
+    const { host, pathname } = new URL(url);
+    const key = `${init.method || "GET"} ${host}${pathname}`;
+    const body = init.body ? Object.fromEntries(new URLSearchParams(String(init.body))) : null;
+    calls.push({ key, url, auth: init.headers?.Authorization || "", body });
+    const handler = routes[key];
+    const { __status = 200, ...data } = handler ? handler(body) : { __status: 404, error: "not_found" };
+    const status = data.error && __status === 200 ? 400 : __status;
+    return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
+  };
+  return { fetch, calls };
+}
+const driveStore = () => createConnectionsStore({ provider: "google_drive", tokenPurpose: "google-drive-tokens", pool });
+const fakeGoogleSettings = () => ({ clientId: "client-1", clientSecret: "secret-1", pickerApiKey: "picker-key", projectNumber: "123456", publicUrl: "http://localhost:5173" });
 
 let fakeGithubKey = null;
 function fakeGithubConfig() {
@@ -1144,6 +1165,109 @@ const tests = [
     await github.deleteLink(userId);
     assert((await drive.getLink(other)) && (await github.getLink(userId)) === null, "deleteLink is per provider");
     await pool.query("DELETE FROM connections WHERE user_id = ANY($1)", [[userId, other]]);
+  }],
+
+  ["google drive: connect stores the account and client; lists picked files; picker config; unlink revokes", async () => {
+    const userId = await scalar("SELECT id FROM users WHERE username = 'student_a1'");
+    const google = makeFakeGoogle({
+      "POST oauth2.googleapis.com/token": () => ({ access_token: "ya29.first", refresh_token: "1//refresh", expires_in: 3599, scope: `openid ${driveScope} email` }),
+      "GET openidconnect.googleapis.com/v1/userinfo": () => ({ sub: "g-111", email: "a2@example.com" }),
+      "GET www.googleapis.com/drive/v3/files/folderId0001": () => ({ id: "folderId0001", name: "lab3", mimeType: "application/vnd.google-apps.folder", trashed: false }),
+      "GET www.googleapis.com/drive/v3/files/fileId000002": () => ({ id: "fileId000002", name: "train.py", mimeType: "text/x-python", trashed: false }),
+      "GET www.googleapis.com/drive/v3/files/docId0000003": () => ({ id: "docId0000003", name: "Notes", mimeType: "application/vnd.google-apps.document", trashed: false }),
+      "GET www.googleapis.com/drive/v3/files/trashId00004": () => ({ id: "trashId00004", name: "old.py", mimeType: "text/x-python", trashed: true }),
+      "POST oauth2.googleapis.com/revoke": () => ({}),
+    });
+    const drive = createGoogleDriveProvider({ store: driveStore(), settings: fakeGoogleSettings(), fetch: google.fetch });
+
+    const url = new URL(await drive.authorizeUrl("st4te"));
+    const q = Object.fromEntries(url.searchParams);
+    assert(url.host === "accounts.google.com" && q.client_id === "client-1" && q.state === "st4te" && q.access_type === "offline", `authorize ${url}`);
+    assert(q.redirect_uri === "http://localhost:5173/api/connections/google_drive/callback" && q.scope.includes(driveScope) && /consent/.test(q.prompt), `authorize params ${JSON.stringify(q)}`);
+
+    assert((await drive.completeCallback(userId, { code: "c0de" })) === "connected", "connect");
+    const tokenCall = google.calls.find((c) => c.key === "POST oauth2.googleapis.com/token");
+    assert(tokenCall.body.code === "c0de" && tokenCall.body.grant_type === "authorization_code" && tokenCall.body.client_secret === "secret-1", `token call ${JSON.stringify(tokenCall.body)}`);
+    const link = await drive.getLink(userId);
+    assert(link.login === "a2@example.com" && link.needsReconnect === false, `link ${JSON.stringify(link)}`);
+    const row = (await pool.query("SELECT external_id, client_id, ciphertext FROM connections WHERE user_id = $1 AND provider = 'google_drive'", [userId])).rows[0];
+    assert(row.external_id === "g-111" && row.client_id === "client-1" && !/ya29|1\/\/refresh/.test(Buffer.from(row.ciphertext).toString("utf8")), "stored link");
+
+    // Picks are checked with Drive (the student's token) and stored; the
+    // list is what was picked, never the whole Drive.
+    assert((await drive.listItems(userId)).length === 0, "nothing picked yet");
+    const items = await drive.addPickedItems(userId, ["fileId000002", "folderId0001", "docId0000003", "fileId000002"]);
+    assert(JSON.stringify(items.map((i) => [i.id, i.label, i.kind])) === '[["folderId0001","lab3","folder"],["docId0000003","Notes","google-doc"],["fileId000002","train.py","file"]]', `items ${JSON.stringify(items)}`);
+    assert(google.calls.filter((c) => c.key.startsWith("GET www.googleapis.com/drive/v3/files/")).every((c) => c.auth === "Bearer ya29.first"), "checks use the user's token");
+    for (const [ids, pattern] of [[["trashId00004"], /trash/], [["missingId0005"], /cannot be read/], [["../etc"], /between 1 and 50/], [[], /between 1 and 50/]]) {
+      let message = "";
+      try { await drive.addPickedItems(userId, ids); } catch (error) { message = `${error.status} ${error.message}`; }
+      assert(/^400 /.test(message) && pattern.test(message), `${JSON.stringify(ids)}: ${message}`);
+    }
+    assert((await drive.listItems(userId)).length === 3, "refused picks are not stored");
+    assert((await drive.removePickedItem(userId, "docId0000003")) === true && (await drive.removePickedItem(userId, "docId0000003")) === false, "remove a pick");
+    const picker = await drive.pickerConfig(userId);
+    assert(picker.accessToken === "ya29.first" && picker.apiKey === "picker-key" && picker.appId === "123456", `picker ${JSON.stringify(picker)}`);
+
+    // The Picker's app id must be the project number; a project ID falls back to the client id's prefix.
+    assert(pickerAppId({ projectNumber: "my-project-id", clientId: "987654-abc.apps.googleusercontent.com" }) === "987654", "app id from the client id");
+    assert(pickerAppId({ projectNumber: "", clientId: "555-x.apps.googleusercontent.com" }) === "555", "app id when unset");
+
+    // Another OAuth client (the project moved): the link asks to reconnect.
+    const moved = createGoogleDriveProvider({ store: driveStore(), settings: { ...fakeGoogleSettings(), clientId: "client-2" }, fetch: google.fetch });
+    assert((await moved.getLink(userId)).needsReconnect === true, "client change should ask for a reconnect");
+
+    // The same Google account cannot link to a second Talon user.
+    const other = await scalar("SELECT id FROM users WHERE username = 'jane_smith'");
+    const revokesBefore = google.calls.filter((c) => c.key === "POST oauth2.googleapis.com/revoke").length;
+    assert((await drive.completeCallback(other, { code: "again" })) === "in-use", "second user with the same Google account");
+    assert(google.calls.filter((c) => c.key === "POST oauth2.googleapis.com/revoke").length === revokesBefore, "in-use must not revoke the first user's grant");
+    assert((await drive.getAccessToken(userId)) === "ya29.first", "first user's link still works");
+
+    // A link made with the narrower drive.file permission must reconnect.
+    await driveStore().withLockedTokens(userId, (tokens, save) => save({ ...tokens, scope: "openid email https://www.googleapis.com/auth/drive.file" }));
+    assert((await drive.getLink(userId)).needsReconnect === true, "drive.file link should ask for a reconnect");
+
+    await drive.unlink(userId);
+    assert((await scalar("SELECT count(*)::int FROM connection_items WHERE user_id = $1", [userId])) === 0, "picks go with the link");
+    const revoke = google.calls.filter((c) => c.key === "POST oauth2.googleapis.com/revoke").at(-1);
+    assert(revoke && /token=1%2F%2Frefresh/.test(revoke.url), `revoke ${revoke?.url}`);
+    assert((await drive.getLink(userId)) === null, "unlink should delete the link");
+  }],
+
+  ["google drive: unticked Drive permission is refused; tokens refresh; a dead refresh token unlinks", async () => {
+    const userId = await scalar("SELECT id FROM users WHERE username = 'student_a1'");
+    let tokenReply = () => ({ access_token: "ya29.noscope", refresh_token: "1//x", expires_in: 3599, scope: "openid email" });
+    const google = makeFakeGoogle({
+      "POST oauth2.googleapis.com/token": (body) => tokenReply(body),
+      "GET openidconnect.googleapis.com/v1/userinfo": () => ({ sub: "g-222", email: "a2@example.com" }),
+      "POST oauth2.googleapis.com/revoke": () => ({}),
+    });
+    let clock = Date.now();
+    const drive = createGoogleDriveProvider({ store: driveStore(), settings: fakeGoogleSettings(), fetch: google.fetch, now: () => clock });
+    assert((await drive.completeCallback(userId, { code: "c" })) === "missing-scope", "missing drive.file scope must be refused");
+    assert(google.calls.some((c) => c.key === "POST oauth2.googleapis.com/revoke") && (await drive.getLink(userId)) === null, "refused grant is revoked, not stored");
+
+    tokenReply = () => ({ access_token: "ya29.one", refresh_token: "1//keep", expires_in: 3600, scope: driveScope });
+    assert((await drive.completeCallback(userId, { code: "c" })) === "connected", "connect");
+    assert((await drive.getAccessToken(userId)) === "ya29.one", "fresh token used as is");
+
+    clock += 3600 * 1000; // expired
+    tokenReply = (body) => (body.grant_type === "refresh_token" && body.refresh_token === "1//keep" ? { access_token: "ya29.two", expires_in: 3600, scope: driveScope } : { error: "bad" });
+    assert((await drive.getAccessToken(userId)) === "ya29.two", "refreshed token");
+    clock += 3600 * 1000;
+    tokenReply = (body) => (body.refresh_token === "1//keep" ? { access_token: "ya29.three", expires_in: 3600 } : { error: "lost refresh token" });
+    assert((await drive.getAccessToken(userId)) === "ya29.three", "refresh token kept when Google sends none");
+
+    clock += 3600 * 1000;
+    tokenReply = () => ({ __status: 400, error: "invalid_grant" });
+    assert((await drive.getAccessToken(userId)) === null && (await drive.getLink(userId)) === null, "invalid_grant should unlink");
+
+    const unconfigured = createGoogleDriveProvider({ store: driveStore(), env: {}, fetch: google.fetch });
+    assert((await unconfigured.status()).configured === false, "no settings: not configured");
+    let status = 0;
+    try { await unconfigured.listItems(userId); } catch (error) { status = error.status; }
+    assert(status === 503, `listing without settings should be 503, got ${status}`);
   }],
 
   ["connections registry: describes every provider, configured or not", async () => {

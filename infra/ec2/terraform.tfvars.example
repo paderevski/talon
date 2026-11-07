@@ -7,3 +7,9 @@ alert_email = "you@example.org" # backup alerts go here (confirm the email AWS s
 # github_app_client_id = "Iv23li..."
 # github_app_slug      = "talon-aet-cs"
 # public_url           = "http://localhost:8080" # later https://talon.lcps.org
+
+# Google Drive connection (google.tf), from the Google Cloud project. The
+# client secret goes into SSM by hand (google-oauth-client-secret).
+# google_oauth_client_id = "1234-abc.apps.googleusercontent.com"
+# google_project_number  = "123456789012"
+# google_picker_api_key  = "AIza..."

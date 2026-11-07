@@ -331,6 +331,20 @@ export async function disconnectConnection(provider, label = provider) {
   return response.json();
 }
 
+// What the Google Picker needs: { accessToken, apiKey, appId }. The token is
+// the signed-in user's own short-lived Drive token.
+export const fetchDrivePickerConfig = () => getJson("/api/connections/google_drive/picker");
+
+// Saves what was picked in the Google Picker; the server checks each id with
+// Drive. Returns the updated list [{ id, label, kind }].
+export async function saveDrivePicks(ids) {
+  const body = await requestJson("POST", "/api/connections/google_drive/items", { ids });
+  return Array.isArray(body?.items) ? body.items : [];
+}
+
+export const removeConnectionItem = (provider, itemId) =>
+  requestJson("DELETE", `/api/connections/${encodeURIComponent(provider)}/items/${encodeURIComponent(itemId)}`);
+
 // Full-page navigation: the server redirects to the provider and back to
 // /?connection=<provider>&result=<code>#connections. GitHub's modes:
 // "authorize" (sign in) and "install" (choose repositories).

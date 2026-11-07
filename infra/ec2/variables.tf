@@ -59,8 +59,26 @@ variable "github_app_slug" {
   default     = ""
 }
 
+variable "google_oauth_client_id" {
+  description = "Google OAuth client ID for the Google Drive connection (not secret)"
+  type        = string
+  default     = ""
+}
+
+variable "google_project_number" {
+  description = "Google Cloud project number (the Picker's app id; not secret)"
+  type        = string
+  default     = ""
+}
+
+variable "google_picker_api_key" {
+  description = "Google Picker API key (sent to browsers; restrict it to the Picker API and Talon's origins in Google Cloud)"
+  type        = string
+  default     = ""
+}
+
 variable "public_url" {
-  description = "Where browsers reach Talon; the GitHub callback is <public_url>/api/github/callback"
+  description = "Where browsers reach Talon; callbacks are <public_url>/api/github/callback and <public_url>/api/connections/google_drive/callback"
   type        = string
   default     = "http://localhost:8080" # SSM tunnel (infra/scripts/tunnel.sh)
 }

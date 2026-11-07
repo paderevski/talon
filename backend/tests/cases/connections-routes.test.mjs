@@ -22,6 +22,14 @@ export async function run({ baseUrl }) {
   assert(github && github.configured === false && github.linked === false && github.account === null, `list ${JSON.stringify(listed)}`);
   assert(github.label === "GitHub" && github.roles.includes("code") && github.auth === "oauth", `github entry ${JSON.stringify(github)}`);
 
+  const drive = listed.items.find((item) => item.provider === "google_drive");
+  assert(drive && drive.label === "Google Drive" && drive.configured === false && drive.linked === false, `drive entry ${JSON.stringify(drive)}`);
+  const picker = await jar.fetch(`${baseUrl}/api/connections/google_drive/picker`);
+  assert(picker.status === 503, `picker without settings should be 503, got ${picker.status}`);
+  const driveConnect = await jar.fetch(`${baseUrl}/api/connections/google_drive/connect`, { redirect: "manual" });
+  assert(/connection=google_drive&result=not-configured/.test(driveConnect.headers.get("location") || ""), "drive connect without settings");
+  assert((await fetch(`${baseUrl}/api/connections/google_drive/picker`)).status === 401, "picker needs sign-in");
+
   const one = await (await jar.fetch(`${baseUrl}/api/connections/github`)).json();
   assert(one.provider === "github" && one.linked === false, `single ${JSON.stringify(one)}`);
   assert((await jar.fetch(`${baseUrl}/api/connections/dropbox`)).status === 404, "unknown provider should be 404");

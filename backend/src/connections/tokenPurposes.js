@@ -4,4 +4,5 @@
 // map to re-encrypt every provider's rows.
 export const tokenPurposes = Object.freeze({
   github: "github-app-tokens",
+  google_drive: "google-drive-tokens",
 });
