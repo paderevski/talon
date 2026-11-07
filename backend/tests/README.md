@@ -24,9 +24,10 @@ From `backend/`:
 
 ## Current coverage
 
-One file per case in `cases/` (28 today): sign-in and sessions, roles and
-roster access, header spoofing, job visibility and budgets, EC2 access and
-cancel, connections, logging and proxy trust, management and roster import.
+One file per case in `cases/` (32 today): sign-in, sessions and password
+changes, roles and roster access, header spoofing, job visibility, files and
+budgets, EC2 access and cancel, connections, logging and proxy trust,
+management and roster import.
 List them with `ls cases`.
 
 ## Add a new regression test

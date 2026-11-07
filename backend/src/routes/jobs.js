@@ -526,6 +526,12 @@ router.post("/:id/cancel", async (req, res) => {
     return res.status(403).json({ message: "Only the job owner or an admin can cancel it" });
   }
 
+  // A finished job keeps its result: cancelling it would leave a cancel
+  // marker that later relabels the stored result.
+  if (job.resultSyncKey || ["completed", "failed"].includes(job.status)) {
+    return res.status(409).json({ message: "Job has already finished" });
+  }
+
   // An EC2 job still being prepared: finish it here (refunding the
   // reservation). The launcher, on whichever web server, sees it finished
   // and starts nothing; an instance started in a race is terminated by the

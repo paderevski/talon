@@ -290,9 +290,12 @@ export async function unlockUser(userId) {
 }
 
 // Self-service. Other sessions of the same user are signed out; the caller's
-// own session (keepSid) stays.
+// own session (keepSid) stays. Passwords are trimmed, as at login, so a
+// padded password can still sign in.
 export async function changeOwnPassword(userId, currentPassword, newPassword, keepSid) {
-  if (String(newPassword ?? "").length < 8) {
+  currentPassword = String(currentPassword ?? "").trim();
+  newPassword = String(newPassword ?? "").trim();
+  if (newPassword.length < 8) {
     throw new ManagementError("New password must be at least 8 characters");
   }
 

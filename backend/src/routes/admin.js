@@ -33,6 +33,11 @@ function handle(fn) {
       if (userId !== undefined && !uuidPattern.test(userId)) {
         return res.status(404).json({ message: "User not found" });
       }
+      // Postgres matches a uuid in any case, but the self checks and session
+      // revocation compare text: use the canonical lower-case form.
+      if (userId !== undefined) {
+        req.params.userId = userId.toLowerCase();
+      }
       if (classId !== undefined && !/^\d{1,15}$/.test(classId)) {
         return res.status(404).json({ message: "Class not found" });
       }

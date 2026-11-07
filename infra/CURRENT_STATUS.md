@@ -8,6 +8,26 @@ it differs from v7 and a short what-comes-next; v7 kept for history).
 
 ## Next up (as of 2026-11-07)
 
+-6. **Test review fixes** (branch `test-review-fixes`, 2026-11-07, not
+   merged): a review of the automated tests found six bugs, fixed with
+   tests: the repo browser's GitHub-failure fallback served one user's
+   cached private-repo listing to another (now only to the user who loaded
+   it); upper-case user ids in admin routes slipped past the self checks
+   and session revocation (ids are lower-cased); `..` was accepted as a
+   repo owner/name (`isRepoSegment`; `/tree` checks names like
+   `/branches`); a finished EC2 job was relabelled "Time limit exceeded"
+   (or "cancelled") on a later look (only the job's own `status.json`
+   replaces a stored result; cancelling a finished job is 409); a changed
+   password was stored untrimmed but login trims; a stray `%` in a pasted
+   GitHub URL threw. New regression cases and Postgres cases also cover
+   cross-class allocations, sessions ended by password changes and resets,
+   EC2 cancel refunds, parallel submits against a budget, file access by
+   non-owners, OAuth state checks, tokens out of responses and cross-user
+   Drive items. A 502/504 on cancel, hide, unhide or disconnect now says
+   the change may have been made (as submit and the admin writes did).
+   Still open from the review: cancel racing a launch (small window, the
+   reconciler cleans up), the client taking a non-JSON 200 as success,
+   loose budget amount parsing (`"0x10"`, `"1e2"`).
 -5. **EC2 launches in the background** (merged, PR #13,
    2026-11-07): submit now answers as soon as the job is reserved (checks,
    source access, budget, limits); fetching the code (clone or Drive copy),

@@ -41,6 +41,11 @@ import createLocalExecutionAdapter from "../../src/execution/adapters/localExecu
 import { checkTree, packSnapshot } from "../../src/sources/snapshot.js";
 import { cloneInto } from "../../src/sources/fetchers/git.js";
 import { jobLaunchPrefix, userHomePrefix, userPrefix } from "../../src/storage/keys.js";
+import express from "express";
+import http from "node:http";
+import { createRepoRouter } from "../../src/routes/repo.js";
+import { createProviderRouter } from "../../src/routes/connections.js";
+import { describeProvider } from "../../src/connections/registry.js";
 
 const databaseUrl = testDatabaseUrl;
 
@@ -204,6 +209,25 @@ function makeFakeAws({ instance = { state: "running" } } = {}) {
     },
   };
 }
+
+// Serves an express app on a free local port; returns { baseUrl, close }.
+async function serveApp(app) {
+  const server = app.listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  return { baseUrl: `http://127.0.0.1:${server.address().port}`, close: () => new Promise((resolve) => { server.close(resolve); server.closeAllConnections(); }) };
+}
+
+// A personal account topped up by `cents` through the ledger (keeps the
+// balance equal to the ledger sum). Returns { accountId, balance() }.
+async function topUp(username, cents) {
+  const userId = await scalar("SELECT id FROM users WHERE username = $1", [username]);
+  const accountId = await withTransaction((client) => ensureAccount(client, userId, "personal"), { pool });
+  await pool.query("UPDATE budget_accounts SET balance_cents = balance_cents + $2 WHERE id = $1", [accountId, cents]);
+  await pool.query("INSERT INTO budget_ledger (account_id, amount_cents, kind, note) VALUES ($1, $2, 'grant', 'test top-up')", [accountId, cents]);
+  return { userId, accountId, balance: async () => Number(await scalar("SELECT balance_cents FROM budget_accounts WHERE id = $1", [accountId])) };
+}
+
+const ledgerCount = async (jobId, kind) => Number(await scalar("SELECT count(*) FROM budget_ledger WHERE job_id = $1 AND kind = $2", [jobId, kind]));
 
 const tests = [
   ["migrations are idempotent", async () => {
@@ -2220,6 +2244,268 @@ const tests = [
 
 ];
 
+// Found by the test review (2026-11-07): money, access and stored results.
+tests.push(
+  ["ec2 jobs: cancelling a launched job bills launch to cancel and refunds the rest once", async () => {
+    const jobs = createJobsPostgresRepository({ pool });
+    const { userId, balance } = await topUp("student_k1", 1000);
+    const start = await balance();
+    const aws = makeFakeAws({ instance: { state: "running" } });
+    let clock = Date.parse("2026-01-01T00:10:00Z");
+    const adapter = createEc2ExecutionAdapter({ ec2: aws.ec2, s3: aws.s3, config: { bucket: "b", launchTemplateId: "lt", subnetIds: ["s"] }, now: () => clock });
+    const sync = createJobSync({ jobsRepository: jobs, getExecutionStatus: (ref) => adapter.getStatus(ref), getExecutionOutputFiles: async () => [], now: () => clock });
+
+    const job = await jobs.createWithReservation({
+      ownerUserId: userId, name: "cancel-launched", repo: "x/y", executionProvider: "ec2",
+      computeType: "t4g.medium", hourlyRateCents: 360, maxRuntimeSeconds: 1800, reserveCents: 200,
+    });
+    const ref = { provider: "ec2", jobId: job.id, executionId: job.id, s3Prefix: `jobs/${job.id}`, instanceId: "i-abc", maxRuntimeSeconds: 1800, submittedAt: "2026-01-01T00:00:00Z", launchedAt: "2026-01-01T00:00:00Z" };
+    await jobs.setExecutionRef(job.id, ref);
+
+    // Cancelled 10 minutes after launch: 600 s at 360 c/h = 60 c; 140 c back.
+    await adapter.cancel(ref);
+    aws.setInstance({ state: "shutting-down" });
+    const { job: settled } = await sync.synchronizeJobFromExecution(await jobs.findById(job.id));
+    assert(settled.status === "failed" && settled.resultSyncKey === "cancelled" && settled.costCents === 60, `settled ${settled.status} ${settled.resultSyncKey} ${settled.costCents}`);
+    assert((await balance()) === start - 60, `balance moved ${start - (await balance())}`);
+
+    // Looked at again, long after the time limit: nothing changes.
+    clock = Date.parse("2026-01-01T05:00:00Z");
+    aws.setInstance(null);
+    const { job: later } = await sync.synchronizeJobFromExecution(await jobs.findById(job.id));
+    assert(later.resultSyncKey === "cancelled" && later.costCents === 60, `later ${later.resultSyncKey} ${later.costCents}`);
+    assert((await ledgerCount(job.id, "refund")) === 1 && (await ledgerCount(job.id, "charge")) === 1, "one charge, one refund");
+    assert((await balance()) === start - 60, "balance unchanged by later looks");
+  }],
+
+  ["jobSync: a finished EC2 job keeps its result when its time limit later passes; its own reported result still replaces a guess", async () => {
+    const jobs = createJobsPostgresRepository({ pool });
+    const { userId, balance } = await topUp("student_k2", 1000);
+    const start = await balance();
+    const aws = makeFakeAws({ instance: { state: "terminated" } });
+    let clock = Date.parse("2026-01-01T00:10:00Z");
+    const adapter = createEc2ExecutionAdapter({ ec2: aws.ec2, s3: aws.s3, config: { bucket: "b", launchTemplateId: "lt", subnetIds: ["s"] }, now: () => clock });
+    const sync = createJobSync({ jobsRepository: jobs, getExecutionStatus: (ref) => adapter.getStatus(ref), getExecutionOutputFiles: async () => [], now: () => clock });
+
+    const job = await jobs.createWithReservation({
+      ownerUserId: userId, name: "ended-early", repo: "x/y", executionProvider: "ec2",
+      computeType: "t4g.medium", hourlyRateCents: 360, maxRuntimeSeconds: 1800, reserveCents: 200,
+    });
+    const ref = { provider: "ec2", jobId: job.id, executionId: job.id, s3Prefix: `jobs/${job.id}`, instanceId: "i-abc", maxRuntimeSeconds: 1800, submittedAt: "2026-01-01T00:00:00Z", launchedAt: "2026-01-01T00:00:00Z" };
+    await jobs.setExecutionRef(job.id, ref);
+
+    // The instance is gone with no result 10 minutes in.
+    const { job: ended } = await sync.synchronizeJobFromExecution(await jobs.findById(job.id));
+    assert(ended.resultSyncKey === "ended:i-abc" && ended.costCents === 60, `ended ${ended.resultSyncKey} ${ended.costCents}`);
+    const result = async () => (await pool.query("SELECT error, duration_seconds, finalized_at FROM results WHERE job_id = $1", [job.id])).rows[0];
+    const stored = await result();
+
+    // Hours later the adapter reports "overrun": the stored result stays.
+    clock = Date.parse("2026-01-01T05:00:00Z");
+    assert((await adapter.getStatus(ref)).syncKey === "overrun", "adapter now infers an overrun");
+    const { job: later } = await sync.synchronizeJobFromExecution(await jobs.findById(job.id));
+    assert(later.resultSyncKey === "ended:i-abc", `relabelled to ${later.resultSyncKey}`);
+    assert(JSON.stringify(await result()) === JSON.stringify(stored), `result changed: ${JSON.stringify(await result())}`);
+
+    // The job's own status.json (uploaded late) is authoritative and replaces the guess; money is settled once.
+    aws.objects.set(`jobs/${job.id}/status.json`, JSON.stringify({ state: "succeeded", exit_code: 0, updated_at: "2026-01-01T00:09:30Z" }));
+    const { job: reported } = await sync.synchronizeJobFromExecution(await jobs.findById(job.id));
+    assert(reported.status === "completed" && reported.resultSyncKey === "status:2026-01-01T00:09:30Z", `reported ${reported.status} ${reported.resultSyncKey}`);
+    assert(reported.costCents === 60 && (await balance()) === start - 60, "cost settled once");
+    assert((await ledgerCount(job.id, "refund")) === 1, "one refund");
+  }],
+
+  ["ec2 jobs: parallel submits against a budget that covers one reservation: exactly one is accepted", async () => {
+    const jobs = createJobsPostgresRepository({ pool });
+    const userId = await scalar("INSERT INTO users (username, display_name) VALUES ('parallel.budget@lcps.org', 'Parallel Budget') RETURNING id");
+    await pool.query("INSERT INTO user_roles (user_id, role) VALUES ($1, 'student')", [userId]);
+    const { balance } = await topUp("parallel.budget@lcps.org", 300);
+    const reserve = () => jobs.createWithReservation({
+      ownerUserId: userId, name: "parallel", repo: "x/y", executionProvider: "ec2",
+      computeType: "t4g.medium", hourlyRateCents: 360, maxRuntimeSeconds: 1800, reserveCents: 200,
+    });
+    const results = await Promise.allSettled([reserve(), reserve(), reserve()]);
+    const accepted = results.filter((r) => r.status === "fulfilled");
+    const refused = results.filter((r) => r.status === "rejected");
+    assert(accepted.length === 1 && refused.length === 2, `results ${results.map((r) => r.status)}`);
+    assert(refused.every((r) => r.reason instanceof BudgetError), `refusals ${refused.map((r) => r.reason)}`);
+    assert((await balance()) === 100, `balance ${await balance()}`);
+    await jobs.finalize(accepted[0].value.id, { syncKey: "test-done", status: "failed", neverRan: true, error: "test cleanup" });
+  }],
+
+  ["repo tree: a private repo's cached listing never reaches another user, even while GitHub is failing", async () => {
+    const realFetch = globalThis.fetch;
+    let githubDown = false;
+    const repos = {
+      "acme/secret": { private: true, item: "plans.txt", message: "secret plans" },
+      "acme/open": { private: false, item: "README.md", message: "hello" },
+    };
+    globalThis.fetch = async (url, init = {}) => {
+      const u = new URL(url);
+      if (u.host !== "api.github.com") return realFetch(url, init);
+      const reply = (status, data) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
+      if (githubDown) return reply(403, { message: "API rate limit exceeded" });
+      const match = /^\/repos\/([^/]+\/[^/]+)(\/.*)?$/.exec(u.pathname);
+      const info = match && repos[match[1]];
+      const auth = init.headers?.Authorization || "";
+      if (!info || (info.private && auth !== "Bearer ghu_owner")) return reply(404, { message: "Not Found" });
+      const rest = match[2] || "";
+      const commit = { sha: "abc123", commit: { message: info.message, author: { date: "2026-11-01T00:00:00Z" } } };
+      if (!rest) return reply(200, { private: info.private, default_branch: "main" });
+      if (rest === "/commits/main") return reply(200, commit);
+      if (rest === "/commits") return reply(200, [commit]);
+      if (rest === "/contents") return reply(200, [{ name: info.item, path: info.item, type: "file", size: 5 }]);
+      return reply(404, { message: "Not Found" });
+    };
+    const githubApp = () => ({
+      async getUserAccessToken(userId) { return userId === "owner" ? "ghu_owner" : null; },
+      async forgetRevokedLink() {},
+    });
+    const app = express();
+    app.use((req, _res, next) => { req.user = { id: req.get("x-test-user") }; next(); });
+    app.use("/api/repos", createRepoRouter({ githubApp }));
+    const served = await serveApp(app);
+    const tree = async (user, repo) => (await realFetch(`${served.baseUrl}/api/repos/${repo}/tree`, { headers: { "x-test-user": user } })).json();
+    try {
+      const own = await tree("owner", "acme/secret");
+      assert(own.items?.[0]?.name === "plans.txt" && !own.stale, `owner listing ${JSON.stringify(own)}`);
+      await tree("owner", "acme/open");
+
+      githubDown = true;
+      const other = await tree("someone-else", "acme/secret");
+      assert(other.stale === true && other.items.length === 0, `another user saw ${JSON.stringify(other.items)}`);
+      assert(!JSON.stringify(other).includes("secret plans"), "commit message leaked");
+      const ownAgain = await tree("owner", "acme/secret");
+      assert(ownAgain.stale === true && ownAgain.items[0]?.name === "plans.txt", "the owner still gets the cached listing");
+      const open = await tree("someone-else", "acme/open");
+      assert(open.stale === true && open.items[0]?.name === "README.md", "a public repo's listing may be shared");
+
+      // ".." and other all-dot names are refused before any GitHub call (sent
+      // raw: fetch would resolve the dots itself).
+      for (const rawPath of ["/api/repos/%2E%2E/user/tree", "/api/repos/acme/../tree", "/api/repos/acme/.../branches"]) {
+        const { hostname, port } = new URL(served.baseUrl);
+        const status = await new Promise((resolve, reject) => {
+          const request = http.request({ hostname, port, path: rawPath, headers: { "x-test-user": "owner" } }, (response) => { response.resume(); resolve(response.statusCode); });
+          request.on("error", reject);
+          request.end();
+        });
+        assert(status === 400, `${rawPath}: expected 400, got ${status}`);
+      }
+    } finally {
+      globalThis.fetch = realFetch;
+      await served.close();
+    }
+  }],
+
+  ["connections: the OAuth callback state must match, be fresh, be for this provider, and works once", async () => {
+    let completed = 0;
+    const fakeProvider = (id) => ({
+      id,
+      label: id,
+      async status() { return { configured: true }; },
+      async authorizeUrl(state) { return `https://provider.example/authorize?state=${state}`; },
+      async completeCallback() { completed += 1; return "connected"; },
+      async getLink() { return null; },
+      async unlink() {},
+      async listItems() { return []; },
+    });
+    // One test client, so one in-memory session stands in for the cookie session.
+    const testSession = {};
+    Object.defineProperty(testSession, "save", { value: (callback) => callback() });
+    const app = express();
+    app.use((req, _res, next) => { req.user = { id: "u-1" }; req.session = testSession; next(); });
+    app.use("/api/connections/alpha", createProviderRouter(fakeProvider("alpha")));
+    app.use("/api/connections/beta", createProviderRouter(fakeProvider("beta")));
+    const served = await serveApp(app);
+    const connect = async (provider) => {
+      const response = await fetch(`${served.baseUrl}/api/connections/${provider}/connect`, { redirect: "manual" });
+      return new URL(response.headers.get("location")).searchParams.get("state");
+    };
+    const callback = async (provider, query) => {
+      const response = await fetch(`${served.baseUrl}/api/connections/${provider}/callback?${new URLSearchParams(query)}`, { redirect: "manual" });
+      return new URL(response.headers.get("location"), served.baseUrl).searchParams.get("result");
+    };
+    const realNow = Date.now;
+    try {
+      // Wrong value of the right length; the real state is then used up.
+      let state = await connect("alpha");
+      const wrong = (state[0] === "A" ? "B" : "A") + state.slice(1);
+      assert((await callback("alpha", { code: "c", state: wrong })) === "state", "wrong state");
+      assert((await callback("alpha", { code: "c", state })) === "state", "a state is used up by a failed try");
+
+      // Right state works once.
+      state = await connect("alpha");
+      assert((await callback("alpha", { code: "c", state })) === "connected", "right state");
+      assert((await callback("alpha", { code: "c", state })) === "state", "replayed state");
+
+      // Another provider's state.
+      state = await connect("beta");
+      assert((await callback("alpha", { code: "c", state })) === "state", "beta's state at alpha");
+
+      // Older than 10 minutes.
+      state = await connect("alpha");
+      Date.now = () => realNow() + 11 * 60 * 1000;
+      assert((await callback("alpha", { code: "c", state })) === "state", "expired state");
+      Date.now = realNow;
+
+      // The user said no at the provider.
+      state = await connect("alpha");
+      assert((await callback("alpha", { state, error: "access_denied" })) === "denied", "denied");
+      assert(completed === 1, `completeCallback ran ${completed} times, expected only for the one good callback`);
+    } finally {
+      Date.now = realNow;
+      await served.close();
+    }
+  }],
+
+  ["connections: a linked account's tokens never appear in connection responses", async () => {
+    const userId = await scalar("SELECT id FROM users WHERE username = 'student_g3'");
+    const store = driveStore();
+    await store.saveLink(userId, { externalId: "g-sentinel", login: "c1@example.com", clientId: "client-1", tokens: { accessToken: "ya29.SENTINEL", refreshToken: "1//SENTINEL", scope: driveScope, accessExpiresAt: new Date(Date.now() + 3600e3) } });
+    await store.addPicked(userId, [{ id: "rootFolder01", label: "ML Club", kind: "folder" }]);
+    const drive = createGoogleDriveProvider({ store, settings: fakeGoogleSettings(), fetch: makeFakeDrive(sampleDriveTree()).fetch });
+    const app = express();
+    app.use((req, _res, next) => { req.user = { id: userId }; next(); });
+    app.use("/api/connections/google_drive", createProviderRouter(drive));
+    const served = await serveApp(app);
+    try {
+      const described = await describeProvider(drive, userId);
+      assert(described.linked === true && !JSON.stringify(described).includes("SENTINEL"), `describe ${JSON.stringify(described)}`);
+      for (const path of ["", "/items"]) {
+        const response = await fetch(`${served.baseUrl}/api/connections/google_drive${path}`);
+        const body = await response.text();
+        assert(response.ok && !body.includes("SENTINEL"), `${path || "/"}: ${response.status} ${body}`);
+      }
+    } finally {
+      await served.close();
+      await store.deleteLink(userId);
+    }
+  }],
+
+  ["google drive: one user cannot browse, use or remove another user's picked item", async () => {
+    const owner = await scalar("SELECT id FROM users WHERE username = 'student_k4'");
+    const other = await scalar("SELECT id FROM users WHERE username = 'student_k5'");
+    const store = driveStore();
+    const link = (externalId) => ({ externalId, login: `${externalId}@example.com`, clientId: "client-1", tokens: { accessToken: `ya29.${externalId}`, scope: driveScope, accessExpiresAt: new Date(Date.now() + 3600e3) } });
+    await store.saveLink(owner, link("g-owner"));
+    await store.saveLink(other, link("g-other"));
+    await store.addPicked(owner, [{ id: "rootFolder01", label: "ML Club", kind: "folder" }]);
+    const drive = createGoogleDriveProvider({ store, settings: fakeGoogleSettings(), fetch: makeFakeDrive(sampleDriveTree()).fetch });
+    const source = createDriveSource({ provider: drive });
+    try {
+      assert((await drive.browse(owner, "rootFolder01", "")).items.length > 0, "the owner can browse");
+      const status = async (fn) => { try { await fn(); return 200; } catch (error) { return error.status; } };
+      assert((await status(() => drive.browse(other, "rootFolder01", ""))) === 403, "another user browsing");
+      assert((await status(() => source.resolveAccess(other, { itemId: "rootFolder01", path: "" }))) === 403, "another user submitting a job from it");
+      assert((await drive.removePickedItem(other, "rootFolder01")) === false, "another user removing it");
+      assert((await drive.listItems(owner)).some((item) => item.id === "rootFolder01"), "the owner's pick remains");
+    } finally {
+      await store.deleteLink(owner);
+      await store.deleteLink(other);
+    }
+  }],
+);
+
 // HTTP tests against a real backend using the Postgres provider and
 // Postgres session store. `server` is started after the repository tests.
 let server = null;
@@ -2308,6 +2594,40 @@ httpTests.push(
     assert(!(await visibleTo("student_g2", "student123")), "Classmate must not see the job");
     assert(await visibleTo("admin", "admin123"), "Admin should see the job");
     await student.fetch(`${server.baseUrl}/api/jobs/${job.id}/cancel`, { method: "POST" });
+  }],
+);
+
+httpTests.push(
+  ["ec2 cancel route: a job still being prepared is refunded in full once; a finished job cannot be cancelled", async () => {
+    const jobs = createJobsPostgresRepository({ pool });
+    const { userId, balance } = await topUp("student_k3", 500);
+    const start = await balance();
+    const job = await jobs.createWithReservation({
+      ownerUserId: userId, name: "route-cancel", repo: "x/y", executionProvider: "ec2",
+      computeType: "t4g.medium", hourlyRateCents: 360, maxRuntimeSeconds: 1800, reserveCents: 200,
+    });
+    assert((await balance()) === start - 200, "reserved");
+
+    const jar = createCookieJar();
+    await login(jar, server.baseUrl, "student_k3", "student123");
+    const cancel = await jar.fetch(`${server.baseUrl}/api/jobs/${job.id}/cancel`, { method: "POST" });
+    assert(cancel.ok, `cancel ${cancel.status}`);
+    assert((await balance()) === start && (await ledgerCount(job.id, "refund")) === 1, `refund: balance moved ${start - (await balance())}`);
+
+    const again = await jar.fetch(`${server.baseUrl}/api/jobs/${job.id}/cancel`, { method: "POST" });
+    assert(again.status === 409, `second cancel: expected 409, got ${again.status}`);
+
+    // A finished, launched job: refused before any cancel marker is written.
+    const launched = await jobs.createWithReservation({
+      ownerUserId: userId, name: "route-cancel-finished", repo: "x/y", executionProvider: "ec2",
+      computeType: "t4g.medium", hourlyRateCents: 360, maxRuntimeSeconds: 1800, reserveCents: 200,
+    });
+    await jobs.setExecutionRef(launched.id, { provider: "ec2", jobId: launched.id, executionId: launched.id, s3Prefix: `jobs/${launched.id}`, instanceId: "i-done", launchedAt: "2026-01-01T00:00:00Z" });
+    await jobs.finalize(launched.id, { syncKey: "status:done", status: "completed", durationSeconds: 600 });
+    const finished = await jar.fetch(`${server.baseUrl}/api/jobs/${launched.id}/cancel`, { method: "POST" });
+    assert(finished.status === 409, `finished cancel: expected 409, got ${finished.status}`);
+    assert((await jobs.findById(launched.id)).resultSyncKey === "status:done", "result unchanged");
+    assert((await ledgerCount(job.id, "refund")) === 1, "still one refund");
   }],
 );
 

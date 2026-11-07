@@ -388,6 +388,8 @@ export default function createEc2ExecutionAdapter({
           endedAt: status.updated_at || null,
           exitCode: Number.isFinite(status.exit_code) ? status.exit_code : null,
           syncKey: `status:${status.updated_at || status.state}`,
+          // The job's own result (status.json), as opposed to an inference.
+          reported: true,
           message: status.message || (status.state === "timeout" ? "Time limit reached" : undefined),
         };
       }
