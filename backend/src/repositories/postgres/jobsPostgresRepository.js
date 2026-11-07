@@ -181,7 +181,9 @@ export function createJobsPostgresRepository({ pool } = {}) {
     return findById(jobId);
   }
 
-  // Creates a job and reserves its maximum cost in one transaction: the
+  // Creates a job and reserves its maximum cost in one transaction (EC2
+  // jobs; they are "running" from here: Talon is working on them while the
+  // code is prepared and the instance starts, see services/ec2Jobs.js): the
   // reserved amount is charged to the owner's personal budget now and the
   // unused part is refunded when the job is finalized. Throws a BudgetError
   // (code "insufficient_funds") when the balance does not cover it, unless
@@ -262,7 +264,7 @@ export function createJobsPostgresRepository({ pool } = {}) {
              (owner_user_id, name, source_label, entry_script, status, execution_provider,
               compute_type, hourly_rate_cents, max_runtime_seconds, reserved_cents, folder, script_args,
               launch_progress, launch_progress_at)
-           VALUES ($1, $2, $3, $4, 'queued', $5, $6, $7, $8, $9, $10, $11, 'Submitted', now())
+           VALUES ($1, $2, $3, $4, 'running', $5, $6, $7, $8, $9, $10, $11, 'Submitted', now())
            RETURNING id`,
           [
             ownerUserId, name, code.label, entryScript, executionProvider,

@@ -406,16 +406,18 @@ export default function createEc2ExecutionAdapter({
         };
       }
 
+      // An EC2 job counts as running from submit (the code is prepared,
+      // then the instance boots): "queued" is for jobs waiting their turn.
       if (!instance) {
         // Right after launch the instance may not be visible yet.
         if (now() - new Date(ref.submittedAt || 0).getTime() < 2 * 60 * 1000) {
-          return { ...base, state: "queued" };
+          return { ...base, state: "running" };
         }
         throw httpError("Execution not found", 404);
       }
 
       if (instance.state === "pending") {
-        return { ...base, state: "queued" };
+        return { ...base, state: "running" };
       }
       if (instance.state === "running") {
         return { ...base, state: "running" };
