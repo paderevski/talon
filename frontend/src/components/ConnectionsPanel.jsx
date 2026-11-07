@@ -22,9 +22,13 @@ const providerMessages = {
   github: { updated: () => "Repository access updated." },
 };
 
+// code and provider come from the address bar: look up own keys only, so
+// "constructor" or "__proto__" find nothing.
+const own = (table, key) => (table && Object.hasOwn(table, key) ? table[key] : undefined);
+
 export function connectionResultMessage(provider, code, label = provider) {
-  const make = providerMessages[provider]?.[code] || genericMessages[code];
-  return make ? make(label) : "";
+  const make = own(own(providerMessages, provider), code) || own(genericMessages, code);
+  return typeof make === "function" ? make(label) : "";
 }
 
 // What Talon can see through a linked connection: null while loading.
