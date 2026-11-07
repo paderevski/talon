@@ -14,7 +14,7 @@ import {
   openExecutionOutputFile,
   submitExecution,
 } from "../services/jobExecutionService.js";
-import { ec2JobLimits, gpuAllowed, launchEc2Job, launchErrorStatus } from "../services/ec2Jobs.js";
+import { ec2JobLimits, gpuAllowed, launchErrorStatus, startEc2Job } from "../services/ec2Jobs.js";
 import { defaultMaxRuntimeSeconds, listInstanceOptions, runtimeOptions } from "../execution/ec2Rates.js";
 import { markJobAsExecutionLost, synchronizeJobFromExecution } from "../services/jobSync.js";
 import { getJobsRepository } from "../repositories/jobsRepository.js";
@@ -232,8 +232,11 @@ router.post("/", async (req, res) => {
       return undefined;
     }
 
+    // Answers once the job is reserved; fetching the code and starting the
+    // instance continue in the background (services/ec2Jobs.js), recorded
+    // as the job's launch progress.
     try {
-      const job = await launchEc2Job({
+      const { job, launch } = await startEc2Job({
         jobsRepository,
         adapter: getEc2Adapter(),
         user: req.user,
@@ -248,11 +251,18 @@ router.post("/", async (req, res) => {
         userId: req.user.id,
         jobId: job.id,
         provider: "ec2",
-        instanceType: job.executionRef?.instanceType,
-        instanceId: job.executionRef?.instanceId,
+        instanceType: payload.instanceType,
         maxRuntimeSeconds: job.maxRuntimeSeconds,
       });
-      return res.status(201).json({ message: "Job started on EC2", job });
+      launch
+        .then((ended) => ended?.executionRef && log.info("job launched", {
+          event: "job.launched",
+          jobId: job.id,
+          instanceType: ended.executionRef.instanceType,
+          instanceId: ended.executionRef.instanceId,
+        }))
+        .catch((error) => log.error("background launch crashed", { event: "job.launch_crashed", jobId: job.id, err: error }));
+      return res.status(201).json({ message: "Job submitted; preparing to launch", job });
     } catch (error) {
       const status = launchErrorStatus(error) || error?.status || 500;
       (status >= 500 ? log.error : log.info)("job not started", {
@@ -514,6 +524,22 @@ router.post("/:id/cancel", async (req, res) => {
 
   if (!canModify(req.user, job.ownerUsername)) {
     return res.status(403).json({ message: "Only the job owner or an admin can cancel it" });
+  }
+
+  // An EC2 job still being prepared: finish it here (refunding the
+  // reservation). The launcher, on whichever web server, sees it finished
+  // and starts nothing; an instance started in a race is terminated by the
+  // reconciler (its job is finished).
+  if (!job.executionRef && job.executionProvider === "ec2" && !job.resultSyncKey && ["queued", "running"].includes(job.status)) {
+    await jobsRepository.finalize(job.id, {
+      syncKey: "cancelled-before-launch",
+      status: "failed",
+      neverRan: true,
+      error: "Cancelled before it started",
+      finalizedAt: new Date().toISOString(),
+    });
+    log.info("job cancelled before launch", { event: "job.cancel_requested", requestId: req.id, userId: req.user.id, jobId: job.id, preparing: true });
+    return res.json({ ok: true, result: { ok: true, state: "cancelled" } });
   }
 
   if (!job.executionRef) {

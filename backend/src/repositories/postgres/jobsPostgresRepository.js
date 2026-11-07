@@ -73,6 +73,10 @@ function mapJobRow(row) {
     reservedCents: Number(row.reserved_cents),
     executionProvider: row.execution_provider || undefined,
     executionRef: row.execution_ref || undefined,
+    // EC2 jobs between submit and launch: { progress, at } (latest step).
+    ...(row.launch_progress_at
+      ? { launch: { progress: row.launch_progress || "", at: row.launch_progress_at.toISOString() } }
+      : {}),
     resultSyncKey: row.result_sync_key || undefined,
     hiddenAt: row.hidden_at ? row.hidden_at.toISOString() : undefined,
     hiddenBy: row.hidden_by_username || undefined,
@@ -252,8 +256,9 @@ export function createJobsPostgresRepository({ pool } = {}) {
         const inserted = await client.query(
           `INSERT INTO jobs
              (owner_user_id, name, source_label, entry_script, status, execution_provider,
-              compute_type, hourly_rate_cents, max_runtime_seconds, reserved_cents, folder, script_args)
-           VALUES ($1, $2, $3, $4, 'queued', $5, $6, $7, $8, $9, $10, $11)
+              compute_type, hourly_rate_cents, max_runtime_seconds, reserved_cents, folder, script_args,
+              launch_progress, launch_progress_at)
+           VALUES ($1, $2, $3, $4, 'queued', $5, $6, $7, $8, $9, $10, $11, 'Submitted', now())
            RETURNING id`,
           [
             ownerUserId, name, code.label, entryScript, executionProvider,
@@ -277,6 +282,17 @@ export function createJobsPostgresRepository({ pool } = {}) {
       [jobId, JSON.stringify(executionRef)],
     );
     return findById(jobId);
+  }
+
+  // The launcher's latest step for a job still being prepared (no
+  // execution ref yet, not finished). Ignored once the job has launched or
+  // finished, so a late update cannot overwrite anything.
+  async function setLaunchProgress(jobId, text) {
+    await db().query(
+      `UPDATE jobs SET launch_progress = $2, launch_progress_at = now()
+       WHERE id = $1 AND execution_ref IS NULL AND result_sync_key IS NULL`,
+      [jobId, String(text ?? "").slice(0, 500)],
+    );
   }
 
   // What a job's input actually ran from, once packed: the snapshot's S3
@@ -426,5 +442,5 @@ export function createJobsPostgresRepository({ pool } = {}) {
     return result.rows.length ? Number(result.rows[0].balance_cents) : 0;
   }
 
-  return { list, findById, create, createWithReservation, setExecutionRef, recordInputSnapshot, listUnfinished, recordProgress, finalize, setHidden, listResults, personalBalanceCents };
+  return { list, findById, create, createWithReservation, setExecutionRef, setLaunchProgress, recordInputSnapshot, listUnfinished, recordProgress, finalize, setHidden, listResults, personalBalanceCents };
 }

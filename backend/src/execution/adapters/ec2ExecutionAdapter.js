@@ -280,7 +280,9 @@ export default function createEc2ExecutionAdapter({
       assertEntryScript(jobSpec.entryScript);
       assertFolder(jobSpec.folder);
       const snapshotKey = jobInputKey(s3Prefix);
+      const progress = typeof jobSpec.onProgress === "function" ? jobSpec.onProgress : () => {};
       const prepared = await prepareInput(jobSpec);
+      progress(prepared.bytes ? `Uploading the code to S3 (${formatBytes(prepared.bytes)})` : "Uploading the code to S3");
       try {
         await s3.send(new PutObjectCommand({ Bucket: cfg.bucket, Key: snapshotKey, Body: await readFile(prepared.archive) }));
         await s3.send(new PutObjectCommand({ Bucket: cfg.bucket, Key: jobInputKey(s3Prefix, "run.sh"), Body: buildRunScript(jobSpec.entryScript, jobSpec.environment, jobSpec.folder, jobSpec.scriptArgs || [], { image }) }));
@@ -295,6 +297,12 @@ export default function createEc2ExecutionAdapter({
         bytes: prepared.bytes ?? null,
         ref: prepared.ref ?? null,
       };
+
+      // Cancelled while the code was being prepared: start nothing.
+      if (await jobSpec.isCancelled?.()) {
+        throw httpError("Cancelled before an instance was started", 499);
+      }
+      progress(`Starting a ${instanceType} instance`);
 
       const tags = [
         { Key: "Project", Value: "talon" },

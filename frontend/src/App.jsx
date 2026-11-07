@@ -492,8 +492,9 @@ export default function App() {
       setRepoBranch(payload.source.branch || fallbackBranch);
     }
     await refreshJobs();
-    // An EC2 job: go to Jobs with its progress open, to watch it launch.
-    if (result?.job?.executionRef?.provider === "ec2") {
+    // An EC2 job: go to Jobs with its progress open, to watch it launch
+    // (it is still being prepared when submit answers).
+    if (result?.job?.executionProvider === "ec2") {
       setFocusJobId(result.job.id);
       window.location.hash = "jobs";
     }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildStages, formatElapsed, parseTalonLine } from "../src/utils/jobProgress.js";
+import { buildStages, formatElapsed, isEc2Job, parseTalonLine } from "../src/utils/jobProgress.js";
 
 const launchedAt = "2026-11-05T14:00:00.000Z";
 const job = (overrides = {}) => ({
@@ -119,4 +119,13 @@ test("a Drive job's packaging step says it copies from Drive, with the file coun
   const pkg = buildStages({ job: driveJob, events: events(...fullLog) }).stages.find((stage) => stage.id === "package");
   assert.equal(pkg.title, "Copy and package the Drive folder");
   assert.equal(pkg.detail, "Colab Notebooks/minimal-rnn: 12 files from Google Drive, tar, upload to S3");
+});
+
+test("an EC2 job still being prepared shows the launcher's latest step", () => {
+  const preparing = { id: "43", status: "queued", executionProvider: "ec2", source: { type: "drive", label: "Colab Notebooks/minimal-rnn", ref: {} }, launch: { progress: "Copied 200 of 584 files (12 s)", at: launchedAt } };
+  assert.equal(isEc2Job(preparing), true);
+  const { stages } = buildStages({ job: preparing, events: [] });
+  assert.equal(stages[0].state, "active");
+  assert.equal(stages[0].detail, "Copied 200 of 584 files (12 s)");
+  assert.equal(stages[1].state, "waiting");
 });

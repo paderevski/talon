@@ -27,7 +27,7 @@ import { BudgetError, ensureAccount, grant, transfer } from "../../src/budget/le
 import { bootAllowanceSeconds, hourlyRateCentsFor, imageFor, isAllowedRuntime, listInstanceOptions, reservationCentsFor } from "../../src/execution/ec2Rates.js";
 import createEc2ExecutionAdapter, { assertEntryScript, buildRunScript } from "../../src/execution/adapters/ec2ExecutionAdapter.js";
 import { JobLimitError } from "../../src/repositories/postgres/jobsPostgresRepository.js";
-import { launchEc2Job, parseEnvironmentVariables } from "../../src/services/ec2Jobs.js";
+import { launchEc2Job, parseEnvironmentVariables, startEc2Job } from "../../src/services/ec2Jobs.js";
 import { parseScriptArgs } from "../../src/utils/scriptArgs.js";
 import { createEc2Reconciler } from "../../src/services/ec2Reconciler.js";
 import { createJobSync } from "../../src/services/jobSync.js";
@@ -993,10 +993,14 @@ const tests = [
   ["ec2 reconciler: a job whose execution is gone is marked lost; other sync errors leave it alone", async () => {
     const jobs = createJobsPostgresRepository({ pool });
     const owner = await scalar("SELECT id FROM users WHERE username = 'admin'");
-    const mk = (name) => jobs.createWithReservation({
-      ownerUserId: owner, name, repo: "x/y", executionProvider: "ec2", hourlyRateCents: 360,
-      maxRuntimeSeconds: 100, reserveCents: 5, enforceBalance: false,
-    });
+    // Launched jobs (with an execution ref); jobs still being prepared are not synced.
+    const mk = async (name) => {
+      const job = await jobs.createWithReservation({
+        ownerUserId: owner, name, repo: "x/y", executionProvider: "ec2", hourlyRateCents: 360,
+        maxRuntimeSeconds: 100, reserveCents: 5, enforceBalance: false,
+      });
+      return jobs.setExecutionRef(job.id, { provider: "ec2", executionId: job.id, jobId: job.id, instanceId: `i-${job.id}` });
+    };
     const gone = await mk("lost-gone");
     const flaky = await mk("lost-flaky");
     const fine = await mk("lost-fine");
@@ -1667,6 +1671,120 @@ const tests = [
     const flaky = { ...jobs, async recordInputSnapshot() { throw new Error("db hiccup"); } };
     const stillRunning = await launchEc2Job({ jobsRepository: flaky, adapter, user, isAdmin: true, credential: "inst-token", payload: { name: "snap2", repo: "o/r", instanceType: "c7g.large" } });
     assert(stillRunning.status === "queued" && stillRunning.executionRef.instanceId === "i-snap", `job after a failed record: ${stillRunning.status}`);
+  }],
+
+  ["ec2 jobs: submit returns at once; the launch runs in the background and records its progress", async () => {
+    const savedLimit = process.env.EC2_MAX_JOBS_TOTAL;
+    process.env.EC2_MAX_JOBS_TOTAL = "1000"; // earlier tests leave unfinished EC2 jobs
+    try {
+    const jobs = createJobsPostgresRepository({ pool });
+    const owner = await scalar("SELECT id FROM users WHERE username = 'admin'");
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const adapter = {
+      async start(spec) {
+        spec.onProgress("Found 584 files (12 MB) in 9 folders");
+        await gate;
+        return { provider: "ec2", executionId: spec.jobId, jobId: spec.jobId, instanceId: "i-bg", instanceType: "c7g.large" };
+      },
+    };
+    const { job, launch } = await startEc2Job({ jobsRepository: jobs, adapter, user: { id: owner, username: "admin" }, isAdmin: true, payload: { name: "bg", repo: "o/r", instanceType: "c7g.large" } });
+    assert(job.status === "queued" && !job.executionRef && job.reservedCents > 0, `submitted job ${JSON.stringify(job)}`);
+    await waitFor(async () => (await jobs.findById(job.id)).launch?.progress?.startsWith("Found 584"), { timeoutMs: 5000 });
+    release();
+    const launched = await launch;
+    assert(launched.executionRef?.instanceId === "i-bg", `launched ${JSON.stringify(launched.executionRef)}`);
+    // Progress is only kept while preparing; later writes are ignored.
+    await jobs.setLaunchProgress(job.id, "late");
+    assert((await jobs.findById(job.id)).launch.progress !== "late", "progress must not change after launch");
+
+    // A launch that fails ends the job as failed with the reason, refunded.
+    const failing = await startEc2Job({ jobsRepository: jobs, adapter: { async start() { throw Object.assign(new Error("Folder is larger than 100 MB"), { status: 400 }); } }, user: { id: owner, username: "admin" }, isAdmin: true, payload: { name: "bg-fail", repo: "o/r", instanceType: "c7g.large" } });
+    const ended = await failing.launch;
+    assert(ended.status === "failed" && ended.costCents === 0, `failed launch ${ended.status} ${ended.costCents}`);
+    assert(/larger than 100 MB/.test((await pool.query("SELECT error FROM results WHERE job_id = $1", [ended.id])).rows[0].error), "the reason is kept");
+    } finally {
+      if (savedLimit === undefined) delete process.env.EC2_MAX_JOBS_TOTAL; else process.env.EC2_MAX_JOBS_TOTAL = savedLimit;
+    }
+  }],
+
+  ["ec2 jobs: cancelling while preparing starts nothing and refunds once", async () => {
+    const savedLimit = process.env.EC2_MAX_JOBS_TOTAL;
+    process.env.EC2_MAX_JOBS_TOTAL = "1000"; // earlier tests leave unfinished EC2 jobs
+    try {
+    const jobs = createJobsPostgresRepository({ pool });
+    const owner = await scalar("SELECT id FROM users WHERE username = 'admin'");
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    let ranInstances = false;
+    const adapter = {
+      async start(spec) {
+        await gate;
+        if (await spec.isCancelled()) {
+          throw Object.assign(new Error("Cancelled before an instance was started"), { status: 499 });
+        }
+        ranInstances = true;
+        return { provider: "ec2", executionId: spec.jobId, jobId: spec.jobId, instanceId: "i-no" };
+      },
+    };
+    const { job, launch } = await startEc2Job({ jobsRepository: jobs, adapter, user: { id: owner, username: "admin" }, isAdmin: true, payload: { name: "bg-cancel", repo: "o/r", instanceType: "c7g.large" } });
+    // What the cancel route does for a job still being prepared.
+    await jobs.finalize(job.id, { syncKey: "cancelled-before-launch", status: "failed", neverRan: true, error: "Cancelled before it started", finalizedAt: new Date().toISOString() });
+    release();
+    const ended = await launch;
+    assert(!ranInstances && !ended.executionRef && ended.status === "failed" && ended.resultSyncKey === "cancelled-before-launch", `after cancel ${JSON.stringify({ ranInstances, ref: ended.executionRef, key: ended.resultSyncKey })}`);
+    const refunds = (await pool.query("SELECT count(*)::int AS n FROM budget_ledger WHERE job_id = $1 AND kind = 'refund'", [job.id])).rows[0].n;
+    assert(refunds === 1 && ended.costCents === 0, `refunds ${refunds}, cost ${ended.costCents}`);
+    } finally {
+      if (savedLimit === undefined) delete process.env.EC2_MAX_JOBS_TOTAL; else process.env.EC2_MAX_JOBS_TOTAL = savedLimit;
+    }
+  }],
+
+  ["ec2 adapter: a job cancelled while its code was prepared never reaches RunInstances; progress is reported", async () => {
+    const aws = makeFakeAws();
+    const progress = [];
+    const adapter = createEc2ExecutionAdapter({
+      ec2: aws.ec2, s3: aws.s3,
+      config: { bucket: "b", launchTemplateId: "lt-1", subnetIds: ["subnet-ok"] },
+      prepareInput: async () => {
+        const dir = await mkdtemp(path.join(os.tmpdir(), "talon-test-"));
+        await writeFile(path.join(dir, "repo.tgz"), "archive-bytes");
+        return { workDir: dir, archive: path.join(dir, "repo.tgz"), bytes: 2048 };
+      },
+      newLaunchId: () => "fedcba9876543210fedcba9876543210",
+    });
+    const spec = { jobId: "job-c1", entryScript: "train.py", maxRuntimeSeconds: 600, instanceType: "c7g.large", ownerUsername: "admin", onProgress: (t) => progress.push(t) };
+    let message = "";
+    try { await adapter.start({ ...spec, isCancelled: async () => true }); } catch (error) { message = `${error.status} ${error.message}`; }
+    assert(/^499 Cancelled/.test(message) && !aws.calls.some((c) => c.name === "RunInstancesCommand"), `cancelled launch: ${message}`);
+    await adapter.start({ ...spec, jobId: "job-c2", isCancelled: async () => false });
+    assert(progress.some((t) => /Uploading the code to S3 \(2.0 KB\)/.test(t)) && progress.includes("Starting a c7g.large instance"), `progress ${JSON.stringify(progress)}`);
+  }],
+
+  ["ec2 reconciler: a launch with no progress for 10 minutes fails and is refunded; a recent one is left alone", async () => {
+    const jobs = createJobsPostgresRepository({ pool });
+    const owner = await scalar("SELECT id FROM users WHERE username = 'admin'");
+    const mk = (name) => jobs.createWithReservation({ ownerUserId: owner, name, repo: "x/y", executionProvider: "ec2", hourlyRateCents: 360, maxRuntimeSeconds: 100, reserveCents: 5, enforceBalance: false });
+    const stale = await mk("prep-stale");
+    const fresh = await mk("prep-fresh");
+    await pool.query("UPDATE jobs SET launch_progress_at = now() - interval '11 minutes', launch_progress = 'Copied 3 of 9 files' WHERE id = $1", [stale.id]);
+    const warned = [];
+    const synced = [];
+    const reconciler = createEc2Reconciler({
+      jobsRepository: jobs,
+      adapter: { async listJobInstances() { return []; }, async terminateInstance() {} },
+      sync: async (job) => synced.push(job.id),
+      markLost: async () => {},
+      log: { info() {}, warn(msg, fields) { warned.push(fields); }, error() {} },
+    });
+    await reconciler.tick();
+    const staleNow = await jobs.findById(stale.id);
+    const freshNow = await jobs.findById(fresh.id);
+    assert(staleNow.status === "failed" && staleNow.resultSyncKey === "launch-interrupted" && staleNow.costCents === 0, `stale ${staleNow.status} ${staleNow.resultSyncKey}`);
+    assert(freshNow.status === "queued" && !freshNow.resultSyncKey, `fresh ${freshNow.status}`);
+    assert(!synced.includes(stale.id) && !synced.includes(fresh.id), "jobs being prepared are not synced");
+    assert(warned.some((w) => w.event === "ec2.launch_interrupted" && w.jobId === stale.id && w.lastProgress === "Copied 3 of 9 files"), `warn ${JSON.stringify(warned)}`);
+    await jobs.finalize(fresh.id, { syncKey: "cleanup", status: "failed", neverRan: true });
   }],
 
   ["ec2 adapter: launch uploads input, tags the instance, falls back to another subnet", async () => {

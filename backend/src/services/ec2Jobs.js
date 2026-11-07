@@ -68,18 +68,26 @@ export const ec2JobLimits = () => ({
 // GPU machines are for admins only unless EC2_GPU_ADMIN_ONLY=false.
 export const gpuAllowed = (isAdmin) => isAdmin || process.env.EC2_GPU_ADMIN_ONLY === "false";
 
-// Starts a job on its own EC2 instance. Order matters:
-//   1. create the job and reserve its maximum cost (one transaction; fails
-//      with 402 when the budget does not cover it),
-//   2. launch (clone, ship to S3, RunInstances), and save the execution ref,
-//   3. if the launch fails, finalize the job as failed, which refunds the
-//      whole reservation. Launching is synchronous: no retry or queue yet.
-//   4. record what the job's code input ran from (snapshot, git commit).
+// Starting a job on its own EC2 instance has two parts:
+//
+//   reserveEc2Job (quick, in the submit request): check the request, create
+//     the job and reserve its maximum cost in one transaction (402 when the
+//     budget does not cover it, 429 at a job limit). The job is "queued"
+//     with no execution ref: it is being prepared.
+//   runEc2Launch (slow, in the background on the same web server): fetch
+//     and pack the code, upload it, RunInstances, save the execution ref and
+//     the input snapshot. Each step is recorded as the job's launch progress.
+//     If it fails, the job is finalized as failed, which refunds the whole
+//     reservation. If the job was cancelled meanwhile (it is already
+//     finished), nothing is started.
+//
+// startEc2Job does the first and kicks off the second (the submit route);
+// launchEc2Job does both and waits (tests, scripts).
 // source: the parsed code source ({ type, ref, label }; default: parsed
 // from the payload). credential: what the source fetches with (for GitHub,
 // an installation token for a private repo; null: anonymous). Passed to the
 // adapter only, never stored.
-export async function launchEc2Job({ jobsRepository, adapter, user, isAdmin, payload, source = null, credential = null }) {
+export async function reserveEc2Job({ jobsRepository, user, isAdmin, payload, source = null }) {
   const code = source ?? parseCodeSource(payload);
   const instanceType = String(payload.instanceType || defaultInstanceType);
   if (!isKnownInstanceType(instanceType)) {
@@ -128,23 +136,73 @@ export async function launchEc2Job({ jobsRepository, adapter, user, isAdmin, pay
     maxUnfinishedTotal: limits.total,
     ...(gpu ? { groupLimit: { computeTypes: gpuInstanceTypes(), max: limits.gpuTotal, label: "GPU jobs" } } : {}),
   });
+  return { job, spec };
+}
 
-  let launched;
+const isFinished = (job) => !job || job.status === "completed" || job.status === "failed" || Boolean(job.resultSyncKey);
+
+// The slow part; never throws (failures finalize the job). Returns the job
+// as it ends up. `log` and `checkEveryMs` are replaceable for tests.
+export async function runEc2Launch({ jobsRepository, adapter, job, spec, credential = null, checkEveryMs = 5000 }) {
+  // Progress lines, written in order and at most every 2 s (plus the last).
+  let pending = Promise.resolve();
+  let lastWrite = 0;
+  let queued = null;
+  const flush = (text) => {
+    lastWrite = Date.now();
+    pending = pending.then(() => jobsRepository.setLaunchProgress(job.id, text)).catch(() => {});
+  };
+  const onProgress = (text) => {
+    queued = text;
+    if (Date.now() - lastWrite >= 2000) {
+      flush(text);
+      queued = null;
+    }
+  };
+
+  // Cancelled (or failed elsewhere) while preparing: the job row is
+  // already finished. Checked before starting an instance, and every few
+  // seconds to stop a long copy early.
+  const abort = new AbortController();
+  const isCancelled = async () => isFinished(await jobsRepository.findById(job.id));
+  const watcher = setInterval(() => {
+    isCancelled().then((stop) => stop && abort.abort()).catch(() => {});
+  }, checkEveryMs);
+  watcher.unref?.();
+
+  let launched = null;
   let input = null;
   try {
-    const { input: ranFrom = null, ...executionRef } = await adapter.start({ ...spec, jobId: job.id, credential });
+    const { input: ranFrom = null, ...executionRef } = await adapter.start({
+      ...spec, jobId: job.id, credential, onProgress, signal: abort.signal, isCancelled,
+    });
     input = ranFrom;
     launched = await jobsRepository.setExecutionRef(job.id, executionRef);
   } catch (error) {
-    await jobsRepository.finalize(job.id, {
+    clearInterval(watcher);
+    if (queued) flush(queued);
+    await pending;
+    if (await isCancelled()) {
+      log.info("launch stopped: the job was cancelled", { event: "job.launch_cancelled", jobId: job.id });
+      return jobsRepository.findById(job.id);
+    }
+    const status = launchErrorStatus(error) || error?.status || 500;
+    (status >= 500 ? log.error : log.info)("job not started", {
+      event: "job.launch_failed",
+      jobId: job.id,
+      status,
+      ...(status >= 500 ? { err: error } : { error: error?.message }),
+    });
+    return jobsRepository.finalize(job.id, {
       syncKey: "launch-failed",
       status: "failed",
       neverRan: true,
       error: `Could not start the job: ${error.message}`,
       finalizedAt: new Date().toISOString(),
     });
-    throw error;
   }
+  clearInterval(watcher);
+  await pending;
 
   // The job is running by now: failing to record its snapshot must not fail it.
   if (input) {
@@ -155,6 +213,27 @@ export async function launchEc2Job({ jobsRepository, adapter, user, isAdmin, pay
     }
   }
   return launched;
+}
+
+// Submit: reserve now, launch in the background. Returns { job, launch }
+// where launch resolves to the job once the launch has ended either way.
+export async function startEc2Job({ jobsRepository, adapter, user, isAdmin, payload, source = null, credential = null }) {
+  const { job, spec } = await reserveEc2Job({ jobsRepository, user, isAdmin, payload, source });
+  const launch = runEc2Launch({ jobsRepository, adapter, job, spec, credential });
+  return { job, launch };
+}
+
+// Both parts, waiting for the launch. Throws what the launch failed with
+// (after the job is finalized), like the submit route used to.
+export async function launchEc2Job({ jobsRepository, adapter, user, isAdmin, payload, source = null, credential = null }) {
+  const { job, spec } = await reserveEc2Job({ jobsRepository, user, isAdmin, payload, source });
+  let failure = null;
+  const wrapped = { ...adapter, start: (args) => adapter.start(args).catch((error) => { failure = error; throw error; }) };
+  const result = await runEc2Launch({ jobsRepository, adapter: wrapped, job, spec, credential });
+  if (failure) {
+    throw failure;
+  }
+  return result;
 }
 
 // HTTP status for errors the caller can fix or wait out; null for the rest.

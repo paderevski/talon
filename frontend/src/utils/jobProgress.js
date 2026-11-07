@@ -40,8 +40,9 @@ export function formatElapsed(ms) {
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}m`;
 }
 
+// Includes EC2 jobs still being prepared (no execution ref yet).
 export function isEc2Job(job) {
-  return job?.executionRef?.provider === "ec2";
+  return job?.executionRef?.provider === "ec2" || job?.executionProvider === "ec2";
 }
 
 const terminalStatuses = new Set(["completed", "failed", "cancelled"]);
@@ -64,6 +65,8 @@ function setupStepLabel(text) {
 function packagingStep(job, claimed) {
   const source = job?.source || {};
   const ref = source.ref || {};
+  // Still being prepared: the launcher's latest step ("Copied 200 of 584 files").
+  const live = !claimed && job?.launch?.progress ? job.launch.progress : "";
   if (source.type === "drive") {
     const count = Number(ref.fileCount);
     const files = Number.isFinite(count) && count >= 0 ? `${count} file${count === 1 ? "" : "s"}` : "files";
@@ -71,7 +74,7 @@ function packagingStep(job, claimed) {
       title: "Copy and package the Drive folder",
       detail: claimed
         ? `${source.label || "Google Drive folder"}: ${files} from Google Drive, tar, upload to S3`
-        : "download from Google Drive, tar, upload to S3",
+        : live || "download from Google Drive, tar, upload to S3",
     };
   }
   const name = source.label || ref.repo || "repository";
@@ -80,7 +83,7 @@ function packagingStep(job, claimed) {
     title: "Clone and package the repository",
     detail: claimed
       ? `${name}${ref.branch ? ` @ ${ref.branch}` : ""}${commit}: shallow clone, tar, upload to S3`
-      : "git clone, tar, upload to S3",
+      : live || "git clone, tar, upload to S3",
   };
 }
 
