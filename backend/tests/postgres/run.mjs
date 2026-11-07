@@ -42,7 +42,6 @@ import { checkTree, packSnapshot } from "../../src/sources/snapshot.js";
 import { cloneInto } from "../../src/sources/fetchers/git.js";
 import { jobLaunchPrefix, userHomePrefix, userPrefix } from "../../src/storage/keys.js";
 import express from "express";
-import session from "express-session";
 import http from "node:http";
 import { createRepoRouter } from "../../src/routes/repo.js";
 import { createProviderRouter } from "../../src/routes/connections.js";
@@ -2410,19 +2409,20 @@ tests.push(
       async unlink() {},
       async listItems() { return []; },
     });
+    // One test client, so one in-memory session stands in for the cookie session.
+    const testSession = {};
+    Object.defineProperty(testSession, "save", { value: (callback) => callback() });
     const app = express();
-    app.use(session({ secret: "test-secret", resave: false, saveUninitialized: false }));
-    app.use((req, _res, next) => { req.user = { id: "u-1" }; next(); });
+    app.use((req, _res, next) => { req.user = { id: "u-1" }; req.session = testSession; next(); });
     app.use("/api/connections/alpha", createProviderRouter(fakeProvider("alpha")));
     app.use("/api/connections/beta", createProviderRouter(fakeProvider("beta")));
     const served = await serveApp(app);
-    const jar = createCookieJar();
     const connect = async (provider) => {
-      const response = await jar.fetch(`${served.baseUrl}/api/connections/${provider}/connect`, { redirect: "manual" });
+      const response = await fetch(`${served.baseUrl}/api/connections/${provider}/connect`, { redirect: "manual" });
       return new URL(response.headers.get("location")).searchParams.get("state");
     };
     const callback = async (provider, query) => {
-      const response = await jar.fetch(`${served.baseUrl}/api/connections/${provider}/callback?${new URLSearchParams(query)}`, { redirect: "manual" });
+      const response = await fetch(`${served.baseUrl}/api/connections/${provider}/callback?${new URLSearchParams(query)}`, { redirect: "manual" });
       return new URL(response.headers.get("location"), served.baseUrl).searchParams.get("result");
     };
     const realNow = Date.now;
