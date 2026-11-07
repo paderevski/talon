@@ -457,6 +457,42 @@ toward two servers)
 - Term end: return leftover teacher pool money to the admin (needs a
   small admin action; see "Gaps to production").
 
+## Probably to do (not scheduled)
+
+Ideas worth doing that are not in the ordered list yet. Move one up into
+"To-do (in order)" when it is scheduled.
+
+- **Presigned S3 URLs for job instances, so jobs hold no AWS credentials**
+  (from the EC2 runner security review, 2026-11-07). Today every job
+  instance shares one role with S3 access to `jobs/*`; a student who gets
+  root on a job box could use it (off the box too, until it expires).
+  Instead the web server signs, per launch: GETs for `input/run.sh` and
+  `input/repo.tgz`, PUTs for `status.json` and `logs/*` (reusable until
+  expiry), and POST policies for `output/` and `changed/` (`starts-with`
+  the job folder, `content-length-range` up to 200 MB). `job_boot.sh` uses
+  curl with them instead of the AWS CLI (no more `snap install aws-cli` at
+  boot). Jobs may run 24 h, so the URLs must not be signed with the web
+  server's role: URLs die with the temporary credentials that signed them
+  (a few hours). Sign with a dedicated IAM user (keys can sign for up to
+  7 days):
+  - Terraform: user `talon-demo-job-signer`, policy mirroring today's job
+    role paths; a bucket policy deny for that user unless the request comes
+    through the S3 gateway endpoint (`aws:SourceVpce`), so a leaked key is
+    useless outside the VPC.
+  - The access key is created by a script straight into SSM (SecureString
+    on the secrets KMS key), never in Terraform state; the web server reads
+    it at startup and only signs with it.
+  - Rotation: two keys per user; switch signing to the new key, delete the
+    old one only after the longest job (24 h) has passed.
+  - On the box the URLs are bearer tokens: keep them in a root-only file and
+    pass them to curl with `-K`, never on a command line (`/proc` shows
+    command lines to every user).
+  - The job role then keeps at most `logs:PutLogEvents` for the CloudWatch
+    boot log (or drop that copy; `boot.log` is in S3), and loses the S3
+    statements.
+  - About a day of work plus a `terraform apply` and one real job run on the
+    box to verify.
+
 ## Going public: ALB + WAF (likely needed for the first stakeholder demo)
 
 The ALB is for protection, not load. One instance is plenty for ~100 users.
