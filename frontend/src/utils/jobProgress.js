@@ -58,12 +58,30 @@ function setupStepLabel(text) {
   return capitalize(text);
 }
 
-// "owner/repo @ branch (abc1234)" for the packaging step.
-function packagedLabel(job) {
-  const ref = job?.source?.ref || {};
-  const name = job?.source?.label || ref.repo || "repository";
+// The packaging step, which depends on where the code came from:
+// git: "owner/repo @ branch (abc1234): shallow clone, tar, upload to S3"
+// drive: "Colab Notebooks/minimal-rnn: 12 files from Google Drive, tar, upload to S3"
+function packagingStep(job, claimed) {
+  const source = job?.source || {};
+  const ref = source.ref || {};
+  if (source.type === "drive") {
+    const count = Number(ref.fileCount);
+    const files = Number.isFinite(count) && count >= 0 ? `${count} file${count === 1 ? "" : "s"}` : "files";
+    return {
+      title: "Copy and package the Drive folder",
+      detail: claimed
+        ? `${source.label || "Google Drive folder"}: ${files} from Google Drive, tar, upload to S3`
+        : "download from Google Drive, tar, upload to S3",
+    };
+  }
+  const name = source.label || ref.repo || "repository";
   const commit = /^[0-9a-f]{7,}$/.test(ref.commit || "") ? ` (${ref.commit.slice(0, 7)})` : "";
-  return `${name}${ref.branch ? ` @ ${ref.branch}` : ""}${commit}`;
+  return {
+    title: "Clone and package the repository",
+    detail: claimed
+      ? `${name}${ref.branch ? ` @ ${ref.branch}` : ""}${commit}: shallow clone, tar, upload to S3`
+      : "git clone, tar, upload to S3",
+  };
 }
 
 // job: { status, source: { label, ref: { repo, branch, commit } }, executionRef }; events: parsed [talon] lines
@@ -85,12 +103,9 @@ export function buildStages({ job, events = [], lastOutput = "" }) {
   const stages = [
     {
       id: "package",
-      title: "Clone and package the repository",
+      ...packagingStep(job, claimed),
       where: "Web server",
       done: claimed,
-      detail: claimed
-        ? `${packagedLabel(job)}: shallow clone, tar, upload to S3`
-        : "git clone, tar, upload to S3",
     },
     {
       id: "claim",

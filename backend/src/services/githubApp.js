@@ -183,6 +183,12 @@ export function createGithubApp({
       body: new URLSearchParams({ client_id: cfg.clientId, client_secret: cfg.clientSecret, ...params }).toString(),
     });
     const data = await response.json().catch(() => ({}));
+    if (data.error === "incorrect_client_credentials") {
+      // Wrong client id or secret: re-read the settings next time, so a
+      // corrected SSM value works without a restart.
+      log.warn("GitHub rejected the app's client credentials; reloading settings next time", { event: "github.bad_client" });
+      cached = null;
+    }
     if (!response.ok || data.error || !data.access_token) {
       throw httpError(`GitHub token request failed: ${data.error || response.status}`, 502, data.error || "token-failed");
     }

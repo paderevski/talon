@@ -113,3 +113,10 @@ test("the packaging step names the source, branch and short commit", () => {
   const pkg = result.stages.find((stage) => stage.id === "package");
   assert.equal(pkg.detail, "octo/demo @ main (0123456): shallow clone, tar, upload to S3");
 });
+
+test("a Drive job's packaging step says it copies from Drive, with the file count", () => {
+  const driveJob = job({ source: { type: "drive", label: "Colab Notebooks/minimal-rnn", ref: { itemId: "x", path: "minimal-rnn", fileCount: 12 } } });
+  const pkg = buildStages({ job: driveJob, events: events(...fullLog) }).stages.find((stage) => stage.id === "package");
+  assert.equal(pkg.title, "Copy and package the Drive folder");
+  assert.equal(pkg.detail, "Colab Notebooks/minimal-rnn: 12 files from Google Drive, tar, upload to S3");
+});

@@ -8,6 +8,17 @@ it differs from v7 and a short what-comes-next; v7 kept for history).
 
 ## Next up (as of 2026-11-05)
 
+-4. **Google Drive live on the box** (2026-11-07): `main` deployed
+   (`--keep-data`, migration 012), `infra/ec2/google.tf` applied (3 SSM
+   settings + read policy, no server replaced), client secret set by hand;
+   connecting Drive through the tunnel works. New
+   `infra/scripts/secrets.sh` (branch `secrets-script`): list SSM
+   parameters by name (values never shown), `set` (typed hidden, or
+   `--from-file`) and `rm` by-hand secrets; refuses Terraform-managed ones
+   and `session-secret` / `credentials-key`. Lesson: a mistyped client
+   secret gave `invalid_client`, and the servers kept the bad value until
+   restarted; the same branch makes Google `invalid_client` and GitHub
+   `incorrect_client_credentials` reload settings on the next attempt.
 -3. **Google Drive connection** (branch `google-drive`, 2026-11-06, not
    merged): provider `google_drive` (OAuth with `drive.readonly` because
    a folder picked under `drive.file` comes without its contents; refresh,

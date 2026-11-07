@@ -1329,6 +1329,25 @@ const tests = [
     assert(status === 503, `listing without settings should be 503, got ${status}`);
   }],
 
+  ["google drive: a rejected client secret is re-read next time, so fixing it needs no restart", async () => {
+    const userId = await scalar("SELECT id FROM users WHERE username = 'student_a1'");
+    const env = { GOOGLE_OAUTH_CLIENT_ID: "client-1", GOOGLE_OAUTH_CLIENT_SECRET: "wrong", GOOGLE_PICKER_API_KEY: "k", GOOGLE_PROJECT_NUMBER: "1", TALON_PUBLIC_URL: "http://localhost:5173" };
+    const google = makeFakeGoogle({
+      "POST oauth2.googleapis.com/token": (body) => (body.client_secret === "right"
+        ? { access_token: "ya29.ok", refresh_token: "1//r", expires_in: 3600, scope: driveScope }
+        : { __status: 401, error: "invalid_client" }),
+      "GET openidconnect.googleapis.com/v1/userinfo": () => ({ sub: "g-reload", email: "a1@example.com" }),
+    });
+    const drive = createGoogleDriveProvider({ store: driveStore(), env, fetch: google.fetch });
+    let first = "";
+    try { await drive.completeCallback(userId, { code: "c" }); } catch (error) { first = error.message; }
+    assert(/invalid_client/.test(first), `first attempt: ${first}`);
+    env.GOOGLE_OAUTH_CLIENT_SECRET = "right"; // the corrected value (SSM in production)
+    assert((await drive.completeCallback(userId, { code: "c" })) === "connected", "second attempt should use the new secret");
+    await drive.unlink(userId).catch(() => {});
+    await driveStore().deleteLink(userId);
+  }],
+
   ["drive client: copies a folder tree, skips Google files, makes names safe and unique, enforces limits", async () => {
     const fake = makeFakeDrive(sampleDriveTree());
     const client = createDriveClient({ token: "t", fetch: fake.fetch });

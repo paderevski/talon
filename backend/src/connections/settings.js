@@ -6,7 +6,9 @@ import { log } from "../utils/log.js";
 // fields: { key: { env: "ENV_NAME", ssm: "parameter-name", required: true } }
 // Returns a getter: () => settings object, or null while any required one
 // is missing. A missing or unreadable result is retried after a minute, so
-// adding the SSM parameters needs no restart.
+// adding the SSM parameters needs no restart. getter.reset() forgets loaded
+// settings (the provider rejected them, e.g. a wrong client secret), so a
+// corrected SSM value is read on the next call.
 const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "us-east-1";
 const retryMs = 60 * 1000;
 
@@ -34,7 +36,7 @@ export function createSettingsLoader({ name, fields, env = process.env, ssm = nu
     return complete ? values : null;
   }
 
-  return async function getSettings() {
+  async function getSettings() {
     if (cached && (cached.value || now() - cached.at < retryMs)) {
       return cached.value;
     }
@@ -46,5 +48,9 @@ export function createSettingsLoader({ name, fields, env = process.env, ssm = nu
     }
     cached = { value, at: now() };
     return value;
+  }
+  getSettings.reset = () => {
+    cached = null;
   };
+  return getSettings;
 }
