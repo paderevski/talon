@@ -110,6 +110,12 @@ export function createGoogleDriveProvider({
       body: new URLSearchParams({ client_id: cfg.clientId, client_secret: cfg.clientSecret, ...params }).toString(),
     });
     const data = await response.json().catch(() => ({}));
+    if (data.error === "invalid_client") {
+      // Wrong client id or secret: re-read SSM next time, so a corrected
+      // secret works without a restart.
+      log.warn("Google rejected the OAuth client; reloading settings next time", { event: "google_drive.invalid_client" });
+      loadSettings.reset();
+    }
     if (!response.ok || !data.access_token) {
       throw httpError(`Google token request failed: ${data.error || response.status}`, 502, data.error || "token-failed");
     }

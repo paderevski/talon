@@ -203,17 +203,20 @@ Local dev: copy `backend/.env.example` to `backend/.env` and fill it in
 (`npm run dev` loads it). Production reads SSM under `/talon/demo/`:
 `github-app-client-id`, `github-app-slug` and `public-url` come from Terraform
 (`github_app_client_id`, `github_app_slug`, `public_url` in
-`infra/ec2/terraform.tfvars`). The two secrets are created by hand so they
-never enter Terraform state or this conversation's tools:
+`infra/ec2/terraform.tfvars`). The secrets are created by hand so they
+never enter Terraform state or an assistant's tools, with
+`infra/scripts/secrets.sh` (in your own terminal):
 
 ```bash
-aws ssm put-parameter --profile lcps --name /talon/demo/github-app-client-secret \
-  --type SecureString --key-id alias/talon-demo-secrets --value "file://client-secret.txt"
-aws ssm put-parameter --profile lcps --name /talon/demo/github-app-private-key \
-  --type SecureString --key-id alias/talon-demo-secrets --value "file://talon.private-key.pem"
+infra/scripts/secrets.sh                                    # list names, versions, who manages each
+infra/scripts/secrets.sh set github-app-client-secret       # type it (hidden, twice)
+infra/scripts/secrets.sh set github-app-private-key --from-file talon.private-key.pem
+infra/scripts/secrets.sh set google-oauth-client-secret     # Google Drive connection
 ```
 
-Add `--overwrite` to replace one. The backend re-checks every minute while
+`set` on an existing secret asks before replacing it; `rm` asks you to type
+the name. It refuses Terraform-managed parameters and the two the web
+servers generate (`session-secret`, `credentials-key`). The backend re-checks every minute while
 anything is missing, so no restart is needed. Without the settings, GitHub
 sign-in is off and public repos still work.
 
