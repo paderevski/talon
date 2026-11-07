@@ -22,6 +22,11 @@ it differs from v7 and a short what-comes-next; v7 kept for history).
    progress for 10 minutes (the server preparing it restarted, e.g. a
    deploy). This is the first half of item 1 (queue): the background work
    can move to a queue worker later with the same API and UI.
+   EC2 jobs are **running** from submit (preparing and a pending instance
+   included; branch `ec2-running-status`): to the student Talon is already
+   working on them, and the Jobs page opens on Running. "Queued" is left
+   for jobs waiting their turn (the local runner's queue, later the
+   capacity queue).
 -4. **Google Drive live on the box** (2026-11-07): `main` deployed
    (`--keep-data`, migration 012), `infra/ec2/google.tf` applied (3 SSM
    settings + read policy, no server replaced), client secret set by hand;

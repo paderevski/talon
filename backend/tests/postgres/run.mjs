@@ -1680,7 +1680,7 @@ const tests = [
 
     const flaky = { ...jobs, async recordInputSnapshot() { throw new Error("db hiccup"); } };
     const stillRunning = await launchEc2Job({ jobsRepository: flaky, adapter, user, isAdmin: true, credential: "inst-token", payload: { name: "snap2", repo: "o/r", instanceType: "c7g.large" } });
-    assert(stillRunning.status === "queued" && stillRunning.executionRef.instanceId === "i-snap", `job after a failed record: ${stillRunning.status}`);
+    assert(stillRunning.status === "running" && stillRunning.executionRef.instanceId === "i-snap", `job after a failed record: ${stillRunning.status}`);
   }],
 
   ["ec2 jobs: submit returns at once; the launch runs in the background and records its progress", async () => {
@@ -1699,7 +1699,7 @@ const tests = [
       },
     };
     const { job, launch } = await startEc2Job({ jobsRepository: jobs, adapter, user: { id: owner, username: "admin" }, isAdmin: true, payload: { name: "bg", repo: "o/r", instanceType: "c7g.large" } });
-    assert(job.status === "queued" && !job.executionRef && job.reservedCents > 0, `submitted job ${JSON.stringify(job)}`);
+    assert(job.status === "running" && !job.executionRef && job.reservedCents > 0, `submitted job ${JSON.stringify(job)}`);
     await waitFor(async () => (await jobs.findById(job.id)).launch?.progress?.startsWith("Found 584"), { timeoutMs: 5000 });
     release();
     const launched = await launch;
@@ -1792,7 +1792,7 @@ const tests = [
     const staleNow = await jobs.findById(stale.id);
     const freshNow = await jobs.findById(fresh.id);
     assert(staleNow.status === "failed" && staleNow.resultSyncKey === "launch-interrupted" && staleNow.costCents === 0, `stale ${staleNow.status} ${staleNow.resultSyncKey}`);
-    assert(freshNow.status === "queued" && !freshNow.resultSyncKey, `fresh ${freshNow.status}`);
+    assert(freshNow.status === "running" && !freshNow.resultSyncKey, `fresh ${freshNow.status}`);
     assert(!synced.includes(stale.id) && !synced.includes(fresh.id), "jobs being prepared are not synced");
     assert(warned.some((w) => w.event === "ec2.launch_interrupted" && w.jobId === stale.id && w.lastProgress === "Copied 3 of 9 files"), `warn ${JSON.stringify(warned)}`);
     await jobs.finalize(fresh.id, { syncKey: "cleanup", status: "failed", neverRan: true });
@@ -2033,7 +2033,7 @@ const tests = [
     const adapter = createEc2ExecutionAdapter({ ec2: aws.ec2, s3: aws.s3, config: { bucket: "b", launchTemplateId: "lt", subnetIds: ["s"] }, now: () => clock });
     const ref = { provider: "ec2", jobId: "job-9", executionId: "job-9", s3Prefix: "jobs/job-9", instanceId: "i-abc", maxRuntimeSeconds: 600, submittedAt: "2026-01-01T00:00:00Z", launchedAt: "2026-01-01T00:00:00Z" };
 
-    assert((await adapter.getStatus(ref)).state === "queued", "pending instance is queued");
+    assert((await adapter.getStatus(ref)).state === "running", "a pending instance counts as running (EC2 jobs are running from submit)");
     aws.setInstance({ state: "running" });
     assert((await adapter.getStatus(ref)).state === "running", "running instance is running");
 
