@@ -170,10 +170,18 @@ export function fixtureGitBin() {
   return gitWrapper;
 }
 
+// fetch() refuses the Fetch standard's "bad ports"; 6000 (X11) is the only
+// one in this range, and a backend there never passes its health check.
+const fetchBlockedPorts = new Set([6000]);
+
 function pickPort() {
   const min = 5500;
   const max = 6500;
-  return Math.floor(Math.random() * (max - min + 1)) + min;
+  let port;
+  do {
+    port = Math.floor(Math.random() * (max - min + 1)) + min;
+  } while (fetchBlockedPorts.has(port));
+  return port;
 }
 
 export async function startBackendForTests({ env: extraEnv = {}, reset = true } = {}) {
