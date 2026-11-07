@@ -89,9 +89,10 @@ export async function run({ baseUrl }) {
 
   const persisted = afterItems.find((item) => item?.jobId === jobId);
   assert(persisted, `Expected result entry for job ${jobId}`);
+  // The code comes from a local fixture repo (harness), so the run succeeds.
   assert(
-    persisted.status === "completed" || persisted.status === "failed",
-    `Expected persisted result to be terminal, got ${persisted.status}`,
+    persisted.status === "completed",
+    `Expected the run to complete, got ${persisted.status}`,
   );
 
   const resultFiles = Array.isArray(persisted.files) ? persisted.files : [];

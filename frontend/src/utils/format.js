@@ -1,7 +1,9 @@
 // Money in the API is dollars (numbers like 8.4). Show it as $8.40.
 export function formatDollars(value) {
+  // Numbers and numeric text only: Number(" ") is 0 and Number(true) is 1.
+  const usable = typeof value === "number" || (typeof value === "string" && value.trim() !== "");
   const amount = Number(value);
-  if (value === null || value === undefined || value === "" || !Number.isFinite(amount)) {
+  if (!usable || !Number.isFinite(amount)) {
     return "—";
   }
 

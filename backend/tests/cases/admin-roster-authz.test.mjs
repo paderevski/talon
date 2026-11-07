@@ -1,4 +1,4 @@
-import { assert, createCookieJar, login } from "../lib/harness.mjs";
+import { assert, createCookieJar, login, withTestDb } from "../lib/harness.mjs";
 
 export const name = "admin roster requires admin and returns seeded roster";
 
@@ -21,9 +21,15 @@ export async function run({ baseUrl }) {
 
   const payload = await response.json();
   assert(payload?.ok === true, "Expected roster payload ok=true");
-  assert(payload?.roster?.stats?.adminCount === 1, "Expected one admin in roster stats");
-  assert(payload?.roster?.stats?.teacherCount === 4, "Expected four teachers in roster stats");
-  assert(payload?.roster?.stats?.studentCount === 16, "Expected sixteen students in roster stats");
+  // Counted from the database now, so tests that add users may run first.
+  const expected = await withTestDb(async (pool) => {
+    const { rows } = await pool.query("SELECT role, count(DISTINCT user_id)::int AS n FROM user_roles GROUP BY role");
+    return Object.fromEntries(rows.map((row) => [row.role, row.n]));
+  });
+  const stats = payload?.roster?.stats ?? {};
+  assert(stats.adminCount === expected.admin && expected.admin >= 1, `admins ${stats.adminCount}, expected ${expected.admin}`);
+  assert(stats.teacherCount === expected.teacher && expected.teacher >= 1, `teachers ${stats.teacherCount}, expected ${expected.teacher}`);
+  assert(stats.studentCount === expected.student && expected.student >= 1, `students ${stats.studentCount}, expected ${expected.student}`);
   assert(Array.isArray(payload?.roster?.teachers), "Expected teachers[] in roster payload");
-  assert(payload.roster.teachers.length === 4, "Expected four teacher records in roster payload");
+  assert(payload.roster.teachers.length === expected.teacher, `teacher records ${payload.roster.teachers.length}, expected ${expected.teacher}`);
 }

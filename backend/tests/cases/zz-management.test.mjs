@@ -215,29 +215,31 @@ export async function run({ baseUrl }) {
   assert((await login(createCookieJar(), baseUrl, "mgmt_pupil", reset.payload.password)).ok,
     "Expected the new password to work");
 
-  // Self-protection
-  const adminId = (await send(admin, baseUrl, "GET", "/api/auth/me")).payload.user.id;
+  // Self-protection, as an admin of its own: the seeded admin's password
+  // never changes, so a failure here cannot break later sign-ins.
+  const ownAdmin = await send(admin, baseUrl, "POST", "/api/admin/users", { username: "mgmt_admin", roles: ["admin"] });
+  assert(ownAdmin.status === 201, `Expected mgmt_admin created, got ${ownAdmin.status}`);
+  const selfJar = createCookieJar();
+  await login(selfJar, baseUrl, "mgmt_admin", ownAdmin.payload.password);
+  const adminId = ownAdmin.payload.id;
 
   // Resetting your own password keeps your session so the new password can be shown
-  const selfReset = await send(admin, baseUrl, "POST", `/api/admin/users/${adminId}/reset-password`);
+  const selfReset = await send(selfJar, baseUrl, "POST", `/api/admin/users/${adminId}/reset-password`);
   assert(selfReset.status === 200 && selfReset.payload.password, "Expected self reset to return a password");
-  assert((await admin.fetch(`${baseUrl}/api/auth/me`)).ok, "Expected own session to survive a self reset");
-  assert((await login(createCookieJar(), baseUrl, "admin", selfReset.payload.password)).ok,
+  assert((await selfJar.fetch(`${baseUrl}/api/auth/me`)).ok, "Expected own session to survive a self reset");
+  assert((await login(createCookieJar(), baseUrl, "mgmt_admin", selfReset.payload.password)).ok,
     "Expected the reset admin password to work");
-  assert((await login(createCookieJar(), baseUrl, "admin", "admin123")).status === 401,
+  assert((await login(createCookieJar(), baseUrl, "mgmt_admin", ownAdmin.payload.password)).status === 401,
     "Expected the old admin password to stop working");
-  // Put the seeded password back; later tests sign in with it
-  const restored = await send(admin, baseUrl, "POST", "/api/auth/password", {
-    currentPassword: selfReset.payload.password,
-    newPassword: "admin123",
-  });
-  assert(restored.status === 200, `Expected admin password restore, got ${restored.status}`);
-  assert((await send(admin, baseUrl, "PATCH", `/api/admin/users/${adminId}`, { status: "disabled" })).status === 400,
+  assert((await send(selfJar, baseUrl, "PATCH", `/api/admin/users/${adminId}`, { status: "disabled" })).status === 400,
     "Expected admin to be unable to disable themself");
-  assert((await send(admin, baseUrl, "PATCH", `/api/admin/users/${adminId}`, { roles: ["teacher"] })).status === 400,
+  assert((await send(selfJar, baseUrl, "PATCH", `/api/admin/users/${adminId}`, { roles: ["teacher"] })).status === 400,
     "Expected admin to be unable to drop their own admin role");
-  assert((await send(admin, baseUrl, "GET", "/api/admin/users/not-a-uuid/x")).status === 404,
-    "Expected unknown route 404");
+  // Malformed ids are refused by the route's id check (not just an unmatched route).
+  assert((await send(admin, baseUrl, "PATCH", "/api/admin/users/not-a-uuid", { status: "active" })).status === 404,
+    "Expected malformed user id 404");
+  assert((await send(admin, baseUrl, "PATCH", "/api/admin/classes/abc", { name: "x" })).status === 404,
+    "Expected malformed class id 404");
 
   // Archive hides the class from the teacher
   await send(admin, baseUrl, "PATCH", `/api/admin/classes/${classId}`, { archived: true });

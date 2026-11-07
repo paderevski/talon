@@ -1,4 +1,7 @@
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import pg from "pg";
 import { runMigrations } from "../../src/db/migrate.js";
@@ -118,6 +121,55 @@ export async function waitForJobTerminalState(
   return lastStatusPayload;
 }
 
+// Local stand-ins for the GitHub repositories the tests submit jobs from, so
+// the suite never clones from github.com. Built once per test process; the
+// backend's git (TALON_GIT_BIN) is a wrapper that rewrites
+// https://github.com/ to this folder. Per repo: { branch: { path: text } }.
+const gitFixtures = {
+  "octocat/Hello-World": { master: { README: "Hello World!\n" } },
+  "paderevski/minimal-rnn": {
+    main: {
+      // Runs long enough for tests to drop marker files in its folders.
+      "script.py": 'import os, time\nprint("Counting")\ntime.sleep(2)\nopen("output.txt", "w").write("Counter: 1\\n")\nprint("Done")\n',
+      "train.py": 'import time\ntime.sleep(2)\nprint("trained")\n',
+      "requirements.txt": "numpy\n",
+    },
+  },
+};
+
+let gitWrapper = null;
+export function fixtureGitBin() {
+  if (gitWrapper) {
+    return gitWrapper;
+  }
+  // Named by content, so runs reuse it and a changed fixture gets a new one.
+  const digest = createHash("sha256").update(JSON.stringify(gitFixtures)).digest("hex").slice(0, 12);
+  const root = path.join(os.tmpdir(), `talon-git-fixtures-${digest}`);
+  const git = (cwd, ...args) => execFileSync("git", ["-c", "user.name=Talon Tests", "-c", "user.email=tests@example.org", ...args], { cwd, stdio: "ignore" });
+  for (const [repo, branches] of Object.entries(gitFixtures)) {
+    const bare = path.join(root, `${repo}.git`);
+    if (existsSync(bare)) {
+      continue;
+    }
+    for (const [branch, files] of Object.entries(branches)) {
+      const work = path.join(root, "work", repo, branch);
+      mkdirSync(work, { recursive: true });
+      git(work, "init", "-q", "-b", branch);
+      for (const [name, text] of Object.entries(files)) {
+        writeFileSync(path.join(work, name), text);
+      }
+      git(work, "add", ".");
+      git(work, "commit", "-q", "-m", "fixture");
+      mkdirSync(path.dirname(bare), { recursive: true });
+      git(path.dirname(bare), "clone", "-q", "--bare", work, bare);
+    }
+  }
+  gitWrapper = path.join(root, "git");
+  writeFileSync(gitWrapper, `#!/bin/sh\nexec git -c protocol.file.allow=always -c "url.file://${root}/.insteadOf=https://github.com/" "$@"\n`);
+  chmodSync(gitWrapper, 0o755);
+  return gitWrapper;
+}
+
 function pickPort() {
   const min = 5500;
   const max = 6500;
@@ -149,6 +201,8 @@ export async function startBackendForTests({ env: extraEnv = {}, reset = true } 
       GOOGLE_OAUTH_CLIENT_SECRET: "",
       GOOGLE_PICKER_API_KEY: "",
       GOOGLE_PROJECT_NUMBER: "",
+      // ...and never clone from github.com (see gitFixtures).
+      TALON_GIT_BIN: fixtureGitBin(),
       ...extraEnv,
     },
     stdio: ["ignore", "pipe", "pipe"],

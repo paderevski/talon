@@ -38,12 +38,14 @@ export async function run({ baseUrl }) {
   // After the lock passes (simulated), the correct password works and resets the counter.
   const pool = new pg.Pool({ connectionString: testDatabaseUrl });
   try {
-    await pool.query("UPDATE login_attempts SET locked_until = now() - interval '1 second', last_failure_at = now() - interval '1 hour'");
+    await pool.query(
+      "UPDATE login_attempts SET locked_until = now() - interval '1 second', last_failure_at = now() - interval '1 hour' WHERE username_key = 'student_a5'",
+    );
     const ok = await attempt(baseUrl, "student_a5", "student123");
     assert(ok.status === 200, `Expected sign-in after the lock expired, got ${ok.status}`);
     const left = await pool.query("SELECT 1 FROM login_attempts WHERE username_key = 'student_a5'");
     assert(left.rowCount === 0, "Successful login should clear the failure counter");
-    await pool.query("DELETE FROM login_attempts");
+    await pool.query("DELETE FROM login_attempts WHERE username_key IN ('student_a5', 'nobody_by_that_name')");
   } finally {
     await pool.end();
   }

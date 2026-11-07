@@ -8,6 +8,18 @@ it differs from v7 and a short what-comes-next; v7 kept for history).
 
 ## Next up (as of 2026-11-07)
 
+-7. **Test review, second pass** (branch `test-review-c-d`, on top of
+   `test-review-fixes`, 2026-11-07, not merged): more tests (role changes
+   mid-session, admin unlock and the throttle window, expired and tampered
+   sessions, what a teacher sees after a student leaves or a class moves or
+   is archived, provider outages leaving links alone, a final ledger check,
+   `formatDollars`, job statuses against the database, client URLs and
+   401s, progress edge cases) and test fixes: regression jobs clone from
+   local fixture repos instead of github.com, roster tests count from the
+   database, `zz-management` uses its own admin, budget and throttle tests
+   clean up after themselves. Two small UI fixes: an end line without an
+   exit code no longer reads "Exited with code undefined", and
+   `formatDollars` shows a dash for blanks and booleans.
 -6. **Test review fixes** (branch `test-review-fixes`, 2026-11-07, not
    merged): a review of the automated tests found six bugs, fixed with
    tests: the repo browser's GitHub-failure fallback served one user's
