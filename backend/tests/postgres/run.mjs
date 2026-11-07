@@ -1553,7 +1553,17 @@ const tests = [
       };
       await refuse((t) => symlink("/etc/passwd", path.join(t, "p")), /links outside/);
       await refuse((t) => symlink("../../x", path.join(t, "up")), /links outside/);
-      await refuse((t) => writeFile(path.join(t, "big"), "x".repeat(2000)), /larger than/);
+      await refuse((t) => writeFile(path.join(t, "big"), "x".repeat(2000)), /larger than .*biggest files: big \(2\.0 KB\)/);
+
+      // Packed over the limit: the error names the biggest files.
+      const { randomBytes } = await import("node:crypto");
+      const media = path.join(dir, "media");
+      await mkdir(media);
+      await writeFile(path.join(media, "train.py"), "print(1)\n");
+      await writeFile(path.join(media, "Niagara 01.mp4"), randomBytes(4096));
+      let packError = "";
+      try { await packSnapshot(media, path.join(dir, "m.tgz"), { maxFiles: 100, maxUnpackedBytes: 1e6, maxBytes: 1024 }); } catch (error) { packError = error.message; }
+      assert(/packed .*biggest files: Niagara 01\.mp4 \(4\.0 KB\), train\.py/.test(packError) && /Move large data/.test(packError), `pack error: ${packError}`);
       await refuse(async (t) => { for (const n of [1, 2, 3]) await writeFile(path.join(t, `f${n}`), ""); }, /more than 2 files/, { maxFiles: 2 });
       await refuse((t) => { execFileSync("mkfifo", [path.join(t, "fifo")]); }, /not a regular file/);
     } finally {
@@ -1703,6 +1713,7 @@ const tests = [
     const ended = await failing.launch;
     assert(ended.status === "failed" && ended.costCents === 0, `failed launch ${ended.status} ${ended.costCents}`);
     assert(/larger than 100 MB/.test((await pool.query("SELECT error FROM results WHERE job_id = $1", [ended.id])).rows[0].error), "the reason is kept");
+    assert(/^Could not start the job: Folder is larger than 100 MB/.test(ended.error || "") && (await jobs.findById(ended.id)).error === ended.error, `the job carries the reason: ${ended.error}`);
     } finally {
       if (savedLimit === undefined) delete process.env.EC2_MAX_JOBS_TOTAL; else process.env.EC2_MAX_JOBS_TOTAL = savedLimit;
     }

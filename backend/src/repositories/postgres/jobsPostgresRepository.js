@@ -15,11 +15,13 @@ export const justFinalized = Symbol("justFinalized");
 const jobSelect = `
   SELECT j.*, o.username AS owner_username, h.username AS hidden_by_username,
          ci.source_type AS code_source_type, ci.source_ref AS code_source_ref,
-         ci.snapshot_sha256 AS code_snapshot_sha256, ci.snapshot_bytes AS code_snapshot_bytes
+         ci.snapshot_sha256 AS code_snapshot_sha256, ci.snapshot_bytes AS code_snapshot_bytes,
+         rs.error AS result_error
   FROM jobs j
   JOIN users o ON o.id = j.owner_user_id
   LEFT JOIN users h ON h.id = j.hidden_by_user_id
   LEFT JOIN job_inputs ci ON ci.job_id = j.id AND ci.role = 'code'
+  LEFT JOIN results rs ON rs.job_id = j.id
 `;
 
 // The job's code source as given to create(): { type, ref, label }. Callers
@@ -71,6 +73,8 @@ function mapJobRow(row) {
     costCents: Number(row.cost_cents),
     maxRuntimeSeconds: row.max_runtime_seconds,
     reservedCents: Number(row.reserved_cents),
+    // Why a finished job failed ("Could not start the job: ..."), if it did.
+    error: row.result_error || undefined,
     executionProvider: row.execution_provider || undefined,
     executionRef: row.execution_ref || undefined,
     // EC2 jobs between submit and launch: { progress, at } (latest step).
