@@ -60,12 +60,16 @@ function getGithubHeaders(token) {
   };
 }
 
+// A folder inside the repository from ?path= ("" = the top; "" if it has
+// ".."). Slashes are trimmed with a loop: /\/+$/ is quadratic on input made
+// of many slashes.
 function normalizeRepoPath(value) {
-  const normalized = String(value ?? "")
-    .trim()
-    .replace(/\\/g, "/")
-    .replace(/^\/+/, "")
-    .replace(/\/+$/, "");
+  const text = String(value ?? "").trim().replace(/\\/g, "/");
+  let start = 0;
+  let end = text.length;
+  while (start < end && text[start] === "/") start += 1;
+  while (end > start && text[end - 1] === "/") end -= 1;
+  const normalized = text.slice(start, end);
 
   if (!normalized) {
     return "";
