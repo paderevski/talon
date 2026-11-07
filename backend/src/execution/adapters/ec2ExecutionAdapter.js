@@ -1,9 +1,6 @@
-import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import os from "node:os";
+import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 import {
   DescribeInstancesCommand,
   EC2Client,
@@ -17,21 +14,18 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { GetParametersCommand, SSMClient } from "@aws-sdk/client-ssm";
-import { assertRepoPath, normalizeFolder } from "talon-shared/repo";
+import { normalizeFolder } from "talon-shared/repo";
 import { defaultInstanceType, imageFor, isKnownInstanceType } from "../ec2Rates.js";
-import { describeCloneError, gitAuthEnv } from "../gitAuth.js";
+import { prepareCodeSnapshot } from "../../sources/index.js";
+import { formatBytes } from "../../sources/snapshot.js";
+import { jobInputKey, jobLaunchPrefix } from "../../storage/keys.js";
 
-const execFileAsync = promisify(execFile);
-
-// One EC2 instance per job. The web server clones the repo, ships it to S3,
+// One EC2 instance per job. The web server fetches the job's code (any
+// source, see ../../sources), packs it as a snapshot, ships it to S3,
 // launches an instance from the Talon launch template, and later reads
 // status.json, logs and outputs back from S3 (see infra/ec2/job_boot.sh for
 // the instance side). The adapter keeps no state of its own: everything it
 // needs is in the execution ref saved on the job row and in S3.
-
-const gitBin = process.env.TALON_GIT_BIN || "git";
-const cloneTimeoutMs = Number(process.env.EC2_GIT_CLONE_TIMEOUT_MS || 90 * 1000);
-const maxRepoBytes = Number(process.env.EC2_MAX_REPO_BYTES || 100 * 1024 * 1024);
 
 // Beyond the time limit before a job counts as failed and the reconciler
 // terminates its instance. Deliberately the last line of defence: the script's
@@ -56,36 +50,11 @@ function httpError(message, status) {
   return error;
 }
 
-function formatBytes(bytes) {
-  if (!Number.isFinite(bytes)) {
-    return "";
-  }
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-  const units = ["KB", "MB", "GB"];
-  let value = bytes;
-  let unit = -1;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
-}
-
 // The entry script is written into run.sh, so only plain relative paths pass.
 export function assertEntryScript(entryScript) {
   const value = String(entryScript ?? "").trim();
   if (!/^[A-Za-z0-9_][A-Za-z0-9_./-]*$/.test(value) || value.includes("..")) {
     throw httpError("Entry script path is invalid", 400);
-  }
-  return value;
-}
-
-function assertBranch(branch) {
-  const value = String(branch || "main").trim() || "main";
-  if (!/^[A-Za-z0-9_][A-Za-z0-9_./-]*$/.test(value) || value.includes("..")) {
-    throw httpError("Branch name is invalid", 400);
   }
   return value;
 }
@@ -161,45 +130,12 @@ export function buildRunScript(entryScript, environment = [], folder = "", scrip
   ].join("\n");
 }
 
-async function cloneAndPack(spec) {
-  const workDir = await mkdtemp(path.join(os.tmpdir(), "talon-ec2-"));
-  try {
-    const repoDir = path.join(workDir, "repo");
-    await execFileAsync(
-      gitBin,
-      [
-        "clone", "--depth", "1", "--branch", assertBranch(spec.branch),
-        `https://github.com/${assertRepoPath(spec.repo)}.git`, repoDir,
-      ],
-      { cwd: workDir, timeout: cloneTimeoutMs, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "echo", ...gitAuthEnv(spec.gitToken) } },
-    ).catch((error) => {
-      throw httpError(`Could not clone ${spec.repo}@${spec.branch}: ${describeCloneError(String(error.stderr || error.message))}`, 400);
-    });
-
-    await rm(path.join(repoDir, ".git"), { recursive: true, force: true });
-    const folder = assertFolder(spec.folder);
-    await stat(path.join(repoDir, folder, assertEntryScript(spec.entryScript))).catch(() => {
-      throw httpError(`Entry script not found: ${folder ? `${folder}/` : ""}${spec.entryScript}`, 400);
-    });
-
-    const archive = path.join(workDir, "repo.tgz");
-    await execFileAsync("tar", ["-czf", archive, "-C", repoDir, "."], { timeout: 60 * 1000 });
-    if ((await stat(archive)).size > maxRepoBytes) {
-      throw httpError(`Repository is larger than ${formatBytes(maxRepoBytes)}`, 400);
-    }
-    return { workDir, archive };
-  } catch (error) {
-    await rm(workDir, { recursive: true, force: true });
-    throw error;
-  }
-}
-
 export default function createEc2ExecutionAdapter({
   ec2 = new EC2Client({ region }),
   s3 = new S3Client({ region }),
   ssm = new SSMClient({ region }),
   config = null, // { bucket, launchTemplateId, subnetIds }; default: env, then SSM
-  prepareInput = cloneAndPack, // (spec) -> { workDir, archive }; replaced in tests
+  prepareInput = prepareCodeSnapshot, // (spec) -> { workDir, archive, bytes?, sha256?, ref? }; replaced in tests
   now = () => Date.now(),
   newLaunchId = () => randomBytes(16).toString("hex"), // 128 random bits; replaced in tests
 } = {}) {
@@ -338,16 +274,27 @@ export default function createEc2ExecutionAdapter({
       if (!/^[a-f0-9]{16,64}$/.test(launchId)) {
         throw httpError("Could not make a launch id", 500);
       }
-      const s3Prefix = `jobs/${jobId}-${launchId}`;
+      const s3Prefix = jobLaunchPrefix(jobId, launchId);
 
-      const { workDir, archive } = await prepareInput(jobSpec);
+      // The snapshot: job_boot.sh unpacks input/repo.tgz into /work/repo.
+      assertEntryScript(jobSpec.entryScript);
+      assertFolder(jobSpec.folder);
+      const snapshotKey = jobInputKey(s3Prefix);
+      const prepared = await prepareInput(jobSpec);
       try {
-        const base = `${s3Prefix}/input`;
-        await s3.send(new PutObjectCommand({ Bucket: cfg.bucket, Key: `${base}/repo.tgz`, Body: await readFile(archive) }));
-        await s3.send(new PutObjectCommand({ Bucket: cfg.bucket, Key: `${base}/run.sh`, Body: buildRunScript(jobSpec.entryScript, jobSpec.environment, jobSpec.folder, jobSpec.scriptArgs || [], { image }) }));
+        await s3.send(new PutObjectCommand({ Bucket: cfg.bucket, Key: snapshotKey, Body: await readFile(prepared.archive) }));
+        await s3.send(new PutObjectCommand({ Bucket: cfg.bucket, Key: jobInputKey(s3Prefix, "run.sh"), Body: buildRunScript(jobSpec.entryScript, jobSpec.environment, jobSpec.folder, jobSpec.scriptArgs || [], { image }) }));
       } finally {
-        await rm(workDir, { recursive: true, force: true });
+        await rm(prepared.workDir, { recursive: true, force: true });
       }
+      // What the job runs from, for its code input (job_inputs). Not part of
+      // the execution ref: launchEc2Job stores it separately.
+      const input = {
+        snapshotKey,
+        sha256: prepared.sha256 ?? null,
+        bytes: prepared.bytes ?? null,
+        ref: prepared.ref ?? null,
+      };
 
       const tags = [
         { Key: "Project", Value: "talon" },
@@ -391,6 +338,7 @@ export default function createEc2ExecutionAdapter({
             maxRuntimeSeconds,
             submittedAt: new Date(now()).toISOString(),
             launchedAt: instance.LaunchTime ? new Date(instance.LaunchTime).toISOString() : new Date(now()).toISOString(),
+            input,
           };
         } catch (error) {
           lastError = error;

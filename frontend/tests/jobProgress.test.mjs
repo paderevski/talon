@@ -6,8 +6,7 @@ const launchedAt = "2026-11-05T14:00:00.000Z";
 const job = (overrides = {}) => ({
   id: "42",
   status: "running",
-  repo: "octo/demo",
-  branch: "main",
+  source: { type: "github", label: "octo/demo", ref: { host: "github.com", repo: "octo/demo", branch: "main", commit: "0123456789abcdef0123456789abcdef01234567" } },
   executionRef: { provider: "ec2", instanceId: "i-0abc", instanceType: "c7g.large", launchedAt, submittedAt: launchedAt },
   ...overrides,
 });
@@ -107,4 +106,10 @@ test("formatElapsed", () => {
   assert.equal(formatElapsed(68000), "1m 08s");
   assert.equal(formatElapsed(3 * 3600 * 1000 + 5 * 60 * 1000), "3h 05m");
   assert.equal(formatElapsed(-1), "");
+});
+
+test("the packaging step names the source, branch and short commit", () => {
+  const result = buildStages({ job: job(), events: events(...fullLog) });
+  const pkg = result.stages.find((stage) => stage.id === "package");
+  assert.equal(pkg.detail, "octo/demo @ main (0123456): shallow clone, tar, upload to S3");
 });

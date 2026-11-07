@@ -132,9 +132,17 @@ All routes except `/api/health` and `/api/auth/*` need a signed-in session.
   `POST /api/jobs/:id/cancel`, `DELETE /api/jobs/:id` (hide),
   `POST /api/jobs/:id/unhide`
 - Results and repos: `GET /api/results`, `GET /api/repos/:owner/:repo/tree`
-- GitHub: `GET|DELETE /api/github` (link status, unlink),
-  `GET /api/github/connect[?mode=install]` and `GET /api/github/callback`
-  (browser round trip to GitHub), `GET /api/github/repos`
+- Connections (linked outside accounts; GitHub today):
+  `GET /api/connections` (every provider and the user's link),
+  `GET|DELETE /api/connections/:provider` (one provider, unlink),
+  `GET /api/connections/:provider/connect[?mode=install]` and
+  `GET /api/connections/:provider/callback` (browser round trip),
+  `GET /api/connections/:provider/items` (for GitHub: the repositories).
+  GitHub's are also served under `/api/github/...`, where its callback is
+  registered.
+- Submit (`POST /api/jobs`) takes the code source as
+  `source: { type: "github", repo, branch }`; jobs return it as
+  `job.source = { type, label, ref }`.
 - Teacher: `/api/teacher/*` (roster and budget allocations)
 - Admin: `/api/admin/*` (users, classes, budget adjustments, CSV roster import)
 
@@ -145,13 +153,13 @@ Talon reads student repositories through a GitHub App owned by the
 
 - **Public repos** need nothing: paste the URL in Submit Job. They are cloned
   anonymously.
-- **Private repos:** the student opens the **GitHub** panel and clicks
+- **Private repos:** the student opens **Connections** and clicks
   **Connect GitHub** (GitHub shows its account picker), then **Choose
   repositories on GitHub**: installs the app on their account (or an org they
   belong to, such as a class org) and picks the repositories Talon may read.
   The panel and Submit Job then list those repos.
 - **What Talon holds:** the student's GitHub App user token (encrypted in
-  `github_accounts`, refreshed automatically). It only reaches repositories
+  `connections`, provider `github`, refreshed automatically). It only reaches repositories
   that the student can see *and* the app is installed on, so it is the access
   check: one student cannot run another student's private repo just because
   both are in an org that installed the app. To clone a private repo, the web

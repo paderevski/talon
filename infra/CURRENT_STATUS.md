@@ -8,6 +8,29 @@ it differs from v7 and a short what-comes-next; v7 kept for history).
 
 ## Next up (as of 2026-11-05)
 
+-2. **Connections and sources** (branch `connections`, 2026-11-06, not
+   merged or deployed). Plan and source of truth:
+   `docs/connections-and-sources-plan.md` (local). The GitHub panel is now
+   **Connections** (one card per provider; GitHub the only one so far;
+   `#github` still opens it). Backend abstractions for more providers and
+   sources: `src/connections/` (generic token store, provider registry,
+   `/api/connections/...`; GitHub's routes stay at `/api/github` because
+   the GitHub App has that callback registered), `src/sources/` (source
+   registry; git fetcher for any host, records the commit; snapshot packer
+   with the safety rules), `src/storage/keys.js` (`users/<id>/...` layout
+   for future uploads and home folders). Migration 011: `connections`
+   replaces `github_accounts` (rows copied, still decrypt), `job_inputs`
+   holds each job's code input (`jobs.repo`/`branch` moved into it, plus
+   the snapshot sha256/size and commit for EC2 jobs), `source_label` on
+   jobs and results, `reporting.jobs` rebuilt (`source_type`,
+   `source_label`, `repo`, `branch`, `commit`, `input_bytes`). Tested:
+   backend, Postgres (new cases for all of the above) and frontend tests;
+   on local dev the migration ran over 50 jobs and a GitHub link, the link
+   still listed its repos, a submitted job recorded its source. Next:
+   Google Drive (personal Google Cloud project first, LCPS Internal project
+   later; see the plan). Deploying needs migration 011 on RDS (`deploy.sh`
+   runs it; Grafana's grants on the rebuilt view are re-applied by the
+   migration).
 -1. **Grafana on a laptop** (branch `grafana`, 2026-11-06): `infra/grafana`
    (Docker, dashboards as generated JSON, overview plus web server, job,
    student and request drill-downs). Migration 010 adds read-only
@@ -311,7 +334,7 @@ toward two servers)
     but failed at the clone. Now: students **Connect GitHub** (install the
     AET-CS-owned Talon app on their account or a class org and pick repos).
     Their GitHub App user token (encrypted in `github_accounts`, migration
-    006, refreshed automatically, one GitHub account per Talon user) is the
+    006; `connections`, provider `github`, since migration 011, refreshed automatically, one GitHub account per Talon user) is the
     access check for the repo list, the repo browser and submit; a private
     repo is cloned on the web server with a one-hour, read-only installation
     token limited to that repo, passed to git through the environment (not
@@ -914,8 +937,11 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   repository, Google Drive) above the job fields, merged to `main`
   2026-11-03. GitHub and public repos work; Google Drive
   is a mock-up only (disabled folder picker, submit disabled). Each source
-  keeps its own repo when switching. The backend does not know about
-  sources yet: it treats "no token" as an anonymous public clone.
+  keeps its own repo when switching. Since branch `connections`
+  (2026-11-06) the form sends `source: { type: "github", ... }` and the
+  backend has a source registry (`src/sources/`); both git choices are the
+  `github` source (no token = anonymous clone). Drive is the next source
+  type: `docs/connections-and-sources-plan.md`.
 - Job folder (merged, migration 007 `jobs.folder`): a job can run from
   a folder inside the repo (working directory, entry script relative to it,
   its requirements.txt else the root's). Pasting a github.com
@@ -1302,6 +1328,7 @@ runs configure itself (talon-deploy does, once per server).
   lost-job billing change, the log panel on EC2 jobs, and the new error
   messages; check them on the box now that it is deployed.
 - 2026-11-03: GitHub App sign-in replaces PATs (item 13); merged to `main`.
+- 2026-11-06: Connections and sources (branch `connections`): Connections panel, generic connection store and routes, job inputs with source and snapshot (migration 011); plan in `docs/connections-and-sources-plan.md`.
 - 2026-11-03: Code-source choice (GitHub / public / Drive mock-up), job folders (migration 007), admin GitHub unlink, revoked-token handling; merged to `main`.
 - 2026-11-03: Script arguments (migration 008) and a branch menu; merged to `main`.
 - 2026-11-04: Class sections (migration 009) on branch `class-sections`, not merged: a class is name + teacher + block; see Management screens.

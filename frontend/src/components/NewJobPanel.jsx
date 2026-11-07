@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { fetchGithubRepos, fetchRepoBranches, fetchRepoTree } from "../api/client";
+import { fetchConnectionItems, fetchRepoBranches, fetchRepoTree } from "../api/client";
 import { normalizeFolder, normalizeRepoInput, parseGithubUrl } from "../utils/repo";
 import { formatDollars } from "../utils/format";
 import { formatRuntime, machineLabel, planJob } from "../utils/jobPlan";
@@ -198,7 +198,8 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
     setIsLoadingRepos(true);
     setRepoError("");
 
-    fetchGithubRepos()
+    fetchConnectionItems("github")
+      .then((list) => list.map((item) => ({ fullName: item.id, private: item.private })))
       .then((items) => {
         const repos = items.map((item) => item.fullName);
         if (cancelled) {
@@ -439,15 +440,15 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
                   ))}
                 </select>
               ) : (
-                <a className="source-placeholder" href="#github">Connect GitHub to choose a repository →</a>
+                <a className="source-placeholder" href="#connections">Connect GitHub to choose a repository →</a>
               )}
               <span className="form-hint">
                 {repoError
                   || (!githubLinked
                     ? "Or use Public repository for a public repo."
                     : (!isLoadingRepos && !repoOptions.length
-                      ? "Choose repositories in the GitHub panel."
-                      : "Repositories the Talon app can read. Add more in the GitHub panel."))}
+                      ? "Choose repositories in Connections."
+                      : "Repositories the Talon app can read. Add more in Connections."))}
               </span>
             </>
           ) : null}

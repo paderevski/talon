@@ -932,6 +932,26 @@ td:last-child, th:last-child { border-right: none; }
 .github-link { color: var(--accent-blue-text); font-size: var(--fs-base); text-decoration: none; }
 .github-link:hover { text-decoration: underline; }
 
+/* Connections panel: one card per provider. */
+.connection-list { display: grid; gap: 16px; max-width: 760px; }
+.connection-card {
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
+}
+.connection-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.connection-card-title { margin: 0; font-size: var(--fs-md); }
+.connection-state { font-size: var(--fs-sm); color: var(--text-muted); }
+.connection-state.linked { color: var(--accent-green, var(--text-secondary)); }
+.connection-card .github-message:last-child { margin-bottom: 0; }
+
 /* Submit form: code source choice (GitHub / public repo / Google Drive). */
 .source-picker { display: flex; gap: 8px; flex-wrap: wrap; }
 .source-option {

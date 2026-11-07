@@ -58,7 +58,15 @@ function setupStepLabel(text) {
   return capitalize(text);
 }
 
-// job: { status, repo, branch, executionRef }; events: parsed [talon] lines
+// "owner/repo @ branch (abc1234)" for the packaging step.
+function packagedLabel(job) {
+  const ref = job?.source?.ref || {};
+  const name = job?.source?.label || ref.repo || "repository";
+  const commit = /^[0-9a-f]{7,}$/.test(ref.commit || "") ? ` (${ref.commit.slice(0, 7)})` : "";
+  return `${name}${ref.branch ? ` @ ${ref.branch}` : ""}${commit}`;
+}
+
+// job: { status, source: { label, ref: { repo, branch, commit } }, executionRef }; events: parsed [talon] lines
 // in order; lastOutput: the latest line the student's code printed.
 // Returns { stages, startedAt } where each stage is
 // { id, title, where, state: done|active|waiting|failed, detail, startedAt,
@@ -81,7 +89,7 @@ export function buildStages({ job, events = [], lastOutput = "" }) {
       where: "Web server",
       done: claimed,
       detail: claimed
-        ? `${job?.repo || "repository"}${job?.branch ? ` @ ${job.branch}` : ""}: shallow clone, tar, upload to S3`
+        ? `${packagedLabel(job)}: shallow clone, tar, upload to S3`
         : "git clone, tar, upload to S3",
     },
     {

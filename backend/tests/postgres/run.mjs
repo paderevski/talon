@@ -5,7 +5,8 @@
 // logger reads this when it writes, so setting it here is early enough.
 process.env.TALON_LOG_LEVEL ??= "error";
 import pg from "pg";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 import { assert, createCookieJar, login, resetTestDatabase, startBackendForTests, testDatabaseUrl, waitFor } from "../lib/harness.mjs";
@@ -30,6 +31,12 @@ import { launchEc2Job, parseEnvironmentVariables } from "../../src/services/ec2J
 import { parseScriptArgs } from "../../src/utils/scriptArgs.js";
 import { createEc2Reconciler } from "../../src/services/ec2Reconciler.js";
 import { createJobSync } from "../../src/services/jobSync.js";
+import { createConnectionsStore, ConnectionInUseError } from "../../src/connections/store.js";
+import { createConnectionRegistry } from "../../src/connections/registry.js";
+import { getSourceType, parseCodeSource, prepareCodeSnapshot, registerSource } from "../../src/sources/index.js";
+import { checkTree, packSnapshot } from "../../src/sources/snapshot.js";
+import { cloneInto } from "../../src/sources/fetchers/git.js";
+import { jobLaunchPrefix, userHomePrefix, userPrefix } from "../../src/storage/keys.js";
 
 const databaseUrl = testDatabaseUrl;
 
@@ -156,7 +163,7 @@ const tests = [
   ["seed refuses while an EC2 job is queued or running, unless allowRunningJobs", async () => {
     const owner = await scalar("SELECT id FROM users WHERE username = 'jane_smith'");
     await pool.query(
-      "INSERT INTO jobs (owner_user_id, name, repo, status, execution_provider) VALUES ($1, 'live-ec2', 'octo/demo', 'running', 'ec2')",
+      "INSERT INTO jobs (owner_user_id, name, source_label, status, execution_provider) VALUES ($1, 'live-ec2', 'octo/demo', 'running', 'ec2')",
       [owner],
     );
     let message = "";
@@ -175,7 +182,7 @@ const tests = [
   ["seed ignores finished EC2 jobs and running local jobs", async () => {
     const owner = await scalar("SELECT id FROM users WHERE username = 'jane_smith'");
     await pool.query(
-      `INSERT INTO jobs (owner_user_id, name, repo, status, execution_provider) VALUES
+      `INSERT INTO jobs (owner_user_id, name, source_label, status, execution_provider) VALUES
          ($1, 'done-ec2', 'octo/demo', 'completed', 'ec2'), ($1, 'local-run', 'octo/demo', 'running', 'local')`,
       [owner],
     );
@@ -373,14 +380,14 @@ const tests = [
     const link = await store.getLink(userId);
     assert(link.githubLogin === "janehub" && link.githubUserId === 1001 && link.linkedAt, `link ${JSON.stringify(link)}`);
 
-    const row = (await pool.query("SELECT * FROM github_accounts WHERE user_id = $1", [userId])).rows[0];
+    const row = (await pool.query("SELECT * FROM connections WHERE user_id = $1 AND provider = 'github'", [userId])).rows[0];
     assert(row.key_id === "k1", `key_id ${row.key_id}`);
     assert(!/example(ACCESS|REFRESH)/.test(Buffer.from(row.ciphertext).toString("utf8")), "ciphertext contains a token");
 
     const tempId = await scalar("INSERT INTO users (username, display_name) VALUES ('cascade.test@lcps.org', 'Cascade Test') RETURNING id");
     await store.saveLink(tempId, { githubUserId: 1002, githubLogin: "cascade", tokens: { accessToken: "ghu_cascade" } });
     await pool.query("DELETE FROM users WHERE id = $1", [tempId]);
-    assert((await scalar("SELECT count(*) FROM github_accounts WHERE user_id = $1", [tempId])) === "0", "link should be deleted with the user");
+    assert((await scalar("SELECT count(*) FROM connections WHERE user_id = $1", [tempId])) === "0", "link should be deleted with the user");
   }],
 
   ["github accounts: a row copied to another user does not decrypt; one GitHub account per Talon user", async () => {
@@ -388,8 +395,8 @@ const tests = [
     const jane = await scalar("SELECT id FROM users WHERE username = 'jane_smith'");
     const other = await scalar("SELECT id FROM users WHERE username = 'student_a1'");
     await pool.query(
-      `INSERT INTO github_accounts (user_id, github_user_id, github_login, key_id, iv, auth_tag, ciphertext)
-       SELECT $2, 999999, github_login, key_id, iv, auth_tag, ciphertext FROM github_accounts WHERE user_id = $1`,
+      `INSERT INTO connections (user_id, provider, external_id, external_login, key_id, iv, auth_tag, ciphertext)
+       SELECT $2, provider, '999999', external_login, key_id, iv, auth_tag, ciphertext FROM connections WHERE user_id = $1 AND provider = 'github'`,
       [jane, other],
     );
     assert((await store.getTokens(other)) === null, "copied row must not decrypt for another user");
@@ -433,12 +440,12 @@ const tests = [
         cwd: new URL("../..", import.meta.url).pathname,
         env: { ...process.env, DATABASE_URL: databaseUrl },
       }).toString();
-      assert(/Rotated 1 GitHub token set\(s\) to key id 'new2'; 0 failed/.test(output), `rotation output: ${output}`);
+      assert(/Rotated 1 connection token set\(s\) to key id 'new2'; 0 failed/.test(output), `rotation output: ${output}`);
 
       process.env.TALON_CREDENTIALS_OLD_KEYS = "";
       const after = await store.getTokens(userId);
       assert(after?.accessToken === tokens.accessToken && after.refreshToken === tokens.refreshToken, "tokens unreadable after rotation");
-      assert((await scalar("SELECT key_id FROM github_accounts WHERE user_id = $1", [userId])) === "new2", "key id not updated");
+      assert((await scalar("SELECT key_id FROM connections WHERE user_id = $1", [userId])) === "new2", "key id not updated");
     } finally {
       for (const [name, value] of [["TALON_CREDENTIALS_KEY", saved.key], ["TALON_CREDENTIALS_KEY_ID", saved.id]]) {
         if (value === undefined) delete process.env[name]; else process.env[name] = value;
@@ -1105,6 +1112,205 @@ const tests = [
     assert(bareLost.resultSyncKey === "lost:unknown", `bare ${bareLost.resultSyncKey}`);
   }],
 
+  ["connections store: one row per user and provider; providers do not see each other's rows", async () => {
+    const github = createConnectionsStore({ provider: "github", tokenPurpose: "github-app-tokens", pool });
+    const drive = createConnectionsStore({ provider: "google_drive", tokenPurpose: "test-drive-tokens", pool });
+    const userId = await scalar("SELECT id FROM users WHERE username = 'student_a1'");
+    const other = await scalar("SELECT id FROM users WHERE username = 'jane_smith'");
+    await github.saveLink(userId, { externalId: "77", login: "a1hub", clientId: "Iv1.one", tokens: { accessToken: "gh-secret" } });
+    await drive.saveLink(userId, { externalId: "google-sub-1", login: "a1@example.com", clientId: "drive-client", tokens: { accessToken: "ya29-secret", refreshToken: "1//r", accessExpiresAt: new Date(Date.now() + 3600e3) } });
+
+    assert((await github.getTokens(userId)).accessToken === "gh-secret", "github tokens");
+    const driveTokens = await drive.getTokens(userId);
+    assert(driveTokens.accessToken === "ya29-secret" && driveTokens.refreshToken === "1//r" && driveTokens.accessExpiresAt && driveTokens.login === "a1@example.com", `drive tokens ${JSON.stringify(driveTokens)}`);
+    assert((await drive.getLink(userId)).clientId === "drive-client", "client id stored");
+    assert(!/ya29-secret/.test(String(await scalar("SELECT ciphertext FROM connections WHERE user_id = $1 AND provider = 'google_drive'", [userId]))), "ciphertext holds the token");
+
+    // A row's purpose is bound into its ciphertext: relabelling a GitHub row
+    // as another provider does not make it readable there.
+    await pool.query("DELETE FROM connections WHERE user_id = $1 AND provider = 'google_drive'", [userId]);
+    await pool.query(
+      `INSERT INTO connections (user_id, provider, external_id, external_login, key_id, iv, auth_tag, ciphertext)
+       SELECT user_id, 'google_drive', 'moved', external_login, key_id, iv, auth_tag, ciphertext FROM connections WHERE user_id = $1 AND provider = 'github'`,
+      [userId],
+    );
+    assert((await drive.getTokens(userId)) === null, "a row from another provider must not decrypt");
+
+    // The same outside account id may exist under two providers, but not twice under one.
+    await drive.saveLink(other, { externalId: "77", login: "x", tokens: { accessToken: "t" } });
+    let inUse = null;
+    try { await github.saveLink(other, { externalId: "77", login: "x", tokens: { accessToken: "t" } }); } catch (error) { inUse = error; }
+    assert(inUse instanceof ConnectionInUseError && inUse.provider === "github", `expected in-use, got ${inUse}`);
+    await github.deleteLink(userId);
+    assert((await drive.getLink(other)) && (await github.getLink(userId)) === null, "deleteLink is per provider");
+    await pool.query("DELETE FROM connections WHERE user_id = ANY($1)", [[userId, other]]);
+  }],
+
+  ["connections registry: describes every provider, configured or not", async () => {
+    const fake = (id, configured, link) => ({
+      id, label: id.toUpperCase(), auth: "oauth", roles: ["code"],
+      status: async () => ({ configured }), getLink: async () => link,
+    });
+    const registry = createConnectionRegistry([fake("one", false, null), fake("two", true, { login: "me", linkedAt: "t", needsReconnect: true })]);
+    const [one, two] = await registry.describeFor("u");
+    assert(one.configured === false && one.linked === false && one.account === null, `one ${JSON.stringify(one)}`);
+    assert(two.linked && two.account.login === "me" && two.needsReconnect, `two ${JSON.stringify(two)}`);
+    assert(registry.get("two") && registry.get("nope") === null, "get by id");
+  }],
+
+  ["sources: github parses URLs and defaults; unknown types and bad input are 400", async () => {
+    const parsed = parseCodeSource({ source: { type: "github", repo: "https://github.com/Owner/Repo.git" } });
+    assert(parsed.type === "github" && parsed.label === "Owner/Repo" && parsed.ref.branch === "main" && parsed.ref.host === "github.com", `parsed ${JSON.stringify(parsed)}`);
+    assert(parseCodeSource({ repo: "a/b", branch: "dev" }).ref.branch === "dev", "top-level repo/branch mean GitHub");
+    for (const payload of [{ source: { type: "nope" } }, { repo: "" }, { repo: "a/b", branch: "-x" }, { repo: "a/b", branch: "a..b" }]) {
+      let status = 0;
+      try { parseCodeSource(payload); } catch (error) { status = error.status; }
+      assert(status === 400, `${JSON.stringify(payload)} should be 400, got ${status}`);
+    }
+    assert(getSourceType("github").runners.includes("ec2") && getSourceType("github").connection === "github", "github source metadata");
+  }],
+
+  ["snapshots: symlinks out of the tree, special files and size limits are refused", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "talon-snap-"));
+    try {
+      const code = path.join(dir, "code");
+      await mkdir(path.join(code, "sub"), { recursive: true });
+      await writeFile(path.join(code, "train.py"), "print('hi')\n");
+      await symlink("../train.py", path.join(code, "sub", "inside.py"));
+      const packed = await packSnapshot(code, path.join(dir, "a.tgz"));
+      assert(packed.bytes > 0 && /^[0-9a-f]{64}$/.test(packed.sha256) && packed.files === 3, `packed ${JSON.stringify(packed)}`);
+      const listing = execFileSync("tar", ["-tzf", path.join(dir, "a.tgz")]).toString();
+      assert(/train\.py/.test(listing) && /sub\/inside\.py/.test(listing), `archive listing ${listing}`);
+
+      const refuse = async (setup, pattern, limits) => {
+        const tree = await mkdtemp(path.join(dir, "t-"));
+        await setup(tree);
+        let message = "";
+        try { await checkTree(tree, { maxFiles: 100, maxUnpackedBytes: 1000, ...limits }); } catch (error) { message = error.message; }
+        assert(pattern.test(message), `expected ${pattern}, got "${message}"`);
+      };
+      await refuse((t) => symlink("/etc/passwd", path.join(t, "p")), /links outside/);
+      await refuse((t) => symlink("../../x", path.join(t, "up")), /links outside/);
+      await refuse((t) => writeFile(path.join(t, "big"), "x".repeat(2000)), /larger than/);
+      await refuse(async (t) => { for (const n of [1, 2, 3]) await writeFile(path.join(t, `f${n}`), ""); }, /more than 2 files/, { maxFiles: 2 });
+      await refuse((t) => { execFileSync("mkfifo", [path.join(t, "fifo")]); }, /not a regular file/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }],
+
+  ["sources: prepareCodeSnapshot fetches, checks the entry script and packs", async () => {
+    registerSource({
+      type: "testdir", label: "Test folder", roles: ["code"], connection: null, runners: ["ec2"],
+      parse: (input) => ({ files: input.files }), describe: () => "test",
+      resolveAccess: async () => "cred-1",
+      async fetchInto(ref, dir, credential) {
+        await mkdir(path.join(dir, "src"), { recursive: true });
+        for (const [name, body] of Object.entries(ref.files)) await writeFile(path.join(dir, name), body);
+        return { fetchedWith: credential };
+      },
+    });
+    const source = { type: "testdir", ref: { files: { "src/main.py": "print(1)" } } };
+    const ok = await prepareCodeSnapshot({ source, credential: "cred-1", folder: "src", entryScript: "main.py" });
+    try {
+      assert(ok.bytes > 0 && /^[0-9a-f]{64}$/.test(ok.sha256) && ok.ref.fetchedWith === "cred-1" && ok.ref.files, `prepared ${JSON.stringify({ ...ok, archive: undefined })}`);
+    } finally {
+      await rm(ok.workDir, { recursive: true, force: true });
+    }
+    let message = "";
+    try { await prepareCodeSnapshot({ source, folder: "", entryScript: "missing.py" }); } catch (error) { message = `${error.status} ${error.message}`; }
+    assert(/^400 Entry script not found: missing\.py/.test(message), message);
+    message = "";
+    try { await prepareCodeSnapshot({ source, folder: "", entryScript: "../../etc/passwd" }); } catch (error) { message = `${error.status} ${error.message}`; }
+    assert(/^400 .*escapes/.test(message), message);
+    const left = (await readdir(os.tmpdir())).filter((n) => n.startsWith("talon-input-"));
+    assert(left.length === 0, `work folders left behind: ${left}`);
+  }],
+
+  ["git fetcher: shallow clone of one branch, records the commit, drops .git", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "talon-git-"));
+    const saved = { count: process.env.GIT_CONFIG_COUNT, key: process.env.GIT_CONFIG_KEY_0, value: process.env.GIT_CONFIG_VALUE_0 };
+    try {
+      const work = path.join(dir, "work");
+      const git = (...args) => execFileSync("git", args, { cwd: work, env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com" } }).toString().trim();
+      await mkdir(work);
+      git("init", "-q", "-b", "dev");
+      await writeFile(path.join(work, "train.py"), "print(1)\n");
+      git("add", ".");
+      git("commit", "-qm", "one");
+      const commit = git("rev-parse", "HEAD");
+      execFileSync("git", ["clone", "-q", "--bare", work, path.join(dir, "owner", "repo.git")]);
+
+      // Point https://github.com/ at the local folder for this clone only.
+      process.env.GIT_CONFIG_COUNT = "1";
+      process.env.GIT_CONFIG_KEY_0 = `url.file://${dir}/.insteadOf`;
+      process.env.GIT_CONFIG_VALUE_0 = "https://github.com/";
+      const target = path.join(dir, "out");
+      const result = await cloneInto({ host: "github.com", repoPath: "owner/repo", branch: "dev", dir: target });
+      assert(result.commit === commit, `commit ${result.commit} != ${commit}`);
+      const files = await readdir(target);
+      assert(files.includes("train.py") && !files.includes(".git"), `cloned files ${files}`);
+
+      let message = "";
+      try { await cloneInto({ host: "github.com", repoPath: "owner/repo", branch: "nope", dir: path.join(dir, "out2") }); } catch (error) { message = `${error.status} ${error.message}`; }
+      assert(/^400 Could not clone owner\/repo@nope/.test(message), message);
+      let hostError = "";
+      try { await cloneInto({ host: "evil host", repoPath: "a/b", branch: "main", dir: path.join(dir, "out3") }); } catch (error) { hostError = error.message; }
+      assert(/host is invalid/.test(hostError), hostError);
+    } finally {
+      for (const [name, value] of [["GIT_CONFIG_COUNT", saved.count], ["GIT_CONFIG_KEY_0", saved.key], ["GIT_CONFIG_VALUE_0", saved.value]]) {
+        if (value === undefined) delete process.env[name]; else process.env[name] = value;
+      }
+      await rm(dir, { recursive: true, force: true });
+    }
+  }],
+
+  ["git auth: token is sent only to the source's host", async () => {
+    assert(gitAuthEnv("tok", "gitlab.com").GIT_CONFIG_KEY_0 === "http.https://gitlab.com/.extraheader", "host in the config key");
+    assert(gitAuthEnv("tok").GIT_CONFIG_KEY_0 === "http.https://github.com/.extraheader", "GitHub by default");
+    let refused = false;
+    try { gitAuthEnv("tok", "github.com/.extraheader x"); } catch { refused = true; }
+    assert(refused, "a host with a path must be refused");
+  }],
+
+  ["storage keys: per-user prefixes by id, launch folders", async () => {
+    const id = "0B1C2D3E-1111-4222-8333-444455556666";
+    assert(userPrefix(id) === "users/0b1c2d3e-1111-4222-8333-444455556666/" && userHomePrefix(id).endsWith("/home/"), "user prefix");
+    for (const bad of ["jane_smith", "../x", ""]) {
+      let refused = false;
+      try { userPrefix(bad); } catch { refused = true; }
+      assert(refused, `user prefix for ${JSON.stringify(bad)} must be refused`);
+    }
+    assert(jobLaunchPrefix("job-7", "0123456789abcdef") === "jobs/job-7-0123456789abcdef", "launch prefix");
+  }],
+
+  ["ec2 jobs: the code input records its snapshot and commit; a failure to record does not fail the job", async () => {
+    const jobs = createJobsPostgresRepository({ pool });
+    const owner = await scalar("SELECT id FROM users WHERE username = 'admin'");
+    const user = { id: owner, username: "admin" };
+    const sha = "a".repeat(64);
+    const commit = "b".repeat(40);
+    const adapter = {
+      async start(spec) {
+        assert(spec.source.type === "github" && spec.source.ref.repo === "o/r" && spec.credential === "inst-token", `spec ${JSON.stringify(spec.source)} ${spec.credential}`);
+        return { provider: "ec2", executionId: spec.jobId, jobId: spec.jobId, instanceId: "i-snap", input: { snapshotKey: "jobs/x/input/repo.tgz", sha256: sha, bytes: 1234, ref: { ...spec.source.ref, commit } } };
+      },
+    };
+    const job = await launchEc2Job({
+      jobsRepository: jobs, adapter, user, isAdmin: true, credential: "inst-token",
+      payload: { name: "snap", source: { type: "github", repo: "o/r", branch: "dev" }, instanceType: "c7g.large" },
+    });
+    assert(job.executionRef.instanceId === "i-snap" && job.executionRef.input === undefined, `execution ref ${JSON.stringify(job.executionRef)}`);
+    assert(job.source.ref.commit === commit && job.source.ref.branch === "dev" && job.source.snapshot.sha256 === sha && job.source.snapshot.bytes === 1234, `source ${JSON.stringify(job.source)}`);
+    assert((await scalar("SELECT snapshot_key FROM job_inputs WHERE job_id = $1", [job.id])) === "jobs/x/input/repo.tgz", "snapshot key stored");
+    const report = (await pool.query("SELECT source_type, source_label, repo, branch, commit, input_bytes FROM reporting.jobs WHERE id = $1", [job.id])).rows[0];
+    assert(report.source_type === "github" && report.source_label === "o/r" && report.repo === "o/r" && report.commit === commit && Number(report.input_bytes) === 1234, `reporting ${JSON.stringify(report)}`);
+
+    const flaky = { ...jobs, async recordInputSnapshot() { throw new Error("db hiccup"); } };
+    const stillRunning = await launchEc2Job({ jobsRepository: flaky, adapter, user, isAdmin: true, credential: "inst-token", payload: { name: "snap2", repo: "o/r", instanceType: "c7g.large" } });
+    assert(stillRunning.status === "queued" && stillRunning.executionRef.instanceId === "i-snap", `job after a failed record: ${stillRunning.status}`);
+  }],
+
   ["ec2 adapter: launch uploads input, tags the instance, falls back to another subnet", async () => {
     const aws = makeFakeAws();
     const adapter = createEc2ExecutionAdapter({
@@ -1122,6 +1328,7 @@ const tests = [
     const folder = "jobs/job-7-0123456789abcdef0123456789abcdef";
     assert(ref.instanceId === "i-abc" && ref.subnetId === "subnet-ok" && ref.executionId === "job-7" && ref.s3Prefix === folder, `ref ${JSON.stringify(ref)}`);
     assert(aws.objects.get(`${folder}/input/repo.tgz`) === "archive-bytes", "repo.tgz not uploaded");
+    assert(ref.input?.snapshotKey === `${folder}/input/repo.tgz`, `snapshot key reported: ${JSON.stringify(ref.input)}`);
     assert(/exec python3 -u 'train.py'/.test(aws.objects.get(`${folder}/input/run.sh`)), "run.sh not uploaded");
     assert(![...aws.objects.keys()].some((k) => k.startsWith("jobs/job-7/")), "nothing goes to the id-only folder");
     const run = aws.calls.filter((c) => c.name === "RunInstancesCommand").at(-1).input;

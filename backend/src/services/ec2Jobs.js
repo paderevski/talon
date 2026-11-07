@@ -1,6 +1,8 @@
 import { parseScriptArgs } from "../utils/scriptArgs.js";
 import { BudgetError } from "../budget/ledger.js";
 import { JobLimitError } from "../repositories/postgres/jobsPostgresRepository.js";
+import { parseCodeSource } from "../sources/index.js";
+import { log } from "../utils/log.js";
 import {
   bootAllowanceSeconds,
   defaultInstanceType,
@@ -72,9 +74,13 @@ export const gpuAllowed = (isAdmin) => isAdmin || process.env.EC2_GPU_ADMIN_ONLY
 //   2. launch (clone, ship to S3, RunInstances), and save the execution ref,
 //   3. if the launch fails, finalize the job as failed, which refunds the
 //      whole reservation. Launching is synchronous: no retry or queue yet.
-// gitToken: installation token for a private repo (null: anonymous clone).
-// Passed to the adapter only, never stored.
-export async function launchEc2Job({ jobsRepository, adapter, user, isAdmin, payload, gitToken = null }) {
+//   4. record what the job's code input ran from (snapshot, git commit).
+// source: the parsed code source ({ type, ref, label }; default: parsed
+// from the payload). credential: what the source fetches with (for GitHub,
+// an installation token for a private repo; null: anonymous). Passed to the
+// adapter only, never stored.
+export async function launchEc2Job({ jobsRepository, adapter, user, isAdmin, payload, source = null, credential = null }) {
+  const code = source ?? parseCodeSource(payload);
   const instanceType = String(payload.instanceType || defaultInstanceType);
   if (!isKnownInstanceType(instanceType)) {
     throw badRequest(`Unknown instance type: ${instanceType}`);
@@ -94,8 +100,7 @@ export async function launchEc2Job({ jobsRepository, adapter, user, isAdmin, pay
   const hourlyRateCents = hourlyRateCentsFor(instanceType);
   const spec = {
     name: payload.name || "untitled-job",
-    repo: payload.repo || "unknown/repo",
-    branch: payload.branch || "main",
+    source: { type: code.type, ref: code.ref },
     entryScript: payload.entryScript || "train.py",
     folder: payload.folder || "",
     scriptArgs: parseScriptArgs(payload.scriptArgs),
@@ -109,8 +114,7 @@ export async function launchEc2Job({ jobsRepository, adapter, user, isAdmin, pay
   const job = await jobsRepository.createWithReservation({
     ownerUserId: user.id,
     name: spec.name,
-    repo: spec.repo,
-    branch: spec.branch,
+    source: code,
     entryScript: spec.entryScript,
     folder: spec.folder,
     scriptArgs: String(payload.scriptArgs ?? "").trim(),
@@ -125,9 +129,12 @@ export async function launchEc2Job({ jobsRepository, adapter, user, isAdmin, pay
     ...(gpu ? { groupLimit: { computeTypes: gpuInstanceTypes(), max: limits.gpuTotal, label: "GPU jobs" } } : {}),
   });
 
+  let launched;
+  let input = null;
   try {
-    const executionRef = await adapter.start({ ...spec, jobId: job.id, gitToken });
-    return await jobsRepository.setExecutionRef(job.id, executionRef);
+    const { input: ranFrom = null, ...executionRef } = await adapter.start({ ...spec, jobId: job.id, credential });
+    input = ranFrom;
+    launched = await jobsRepository.setExecutionRef(job.id, executionRef);
   } catch (error) {
     await jobsRepository.finalize(job.id, {
       syncKey: "launch-failed",
@@ -138,6 +145,16 @@ export async function launchEc2Job({ jobsRepository, adapter, user, isAdmin, pay
     });
     throw error;
   }
+
+  // The job is running by now: failing to record its snapshot must not fail it.
+  if (input) {
+    try {
+      return await jobsRepository.recordInputSnapshot(job.id, "code", input);
+    } catch (error) {
+      log.warn("could not record the job's input snapshot", { event: "job.input_record_failed", jobId: job.id, error: error.message });
+    }
+  }
+  return launched;
 }
 
 // HTTP status for errors the caller can fix or wait out; null for the rest.
