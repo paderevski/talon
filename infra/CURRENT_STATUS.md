@@ -8,8 +8,19 @@ it differs from v7 and a short what-comes-next; v7 kept for history).
 
 ## Next up (as of 2026-11-05)
 
--2. **Connections and sources** (branch `connections`, 2026-11-06, not
-   merged or deployed). Plan and source of truth:
+-3. **Google Drive connection** (branch `google-drive`, 2026-11-06, not
+   merged): provider `google_drive` (OAuth with `drive.readonly` because
+   a folder picked under `drive.file` comes without its contents; refresh,
+   revoke; the Google Picker in the Connections card chooses what Talon
+   may read, kept in `connection_items`, migration 012). Not usable until a Google Cloud project exists: personal
+   project first (External, Testing), LCPS Internal project later. Local
+   dev: `GOOGLE_*` in `backend/.env` (see `.env.example`). Box:
+   `infra/ec2/google.tf` (SSM settings and read permission; not applied)
+   plus `google-oauth-client-secret` by hand. Running jobs from Drive is
+   the next step. Details: `docs/connections-and-sources-plan.md`, step 2.
+-2. ~~**Connections and sources**~~ merged (PR #8) and deployed to the box
+   with `--keep-data` 2026-11-06 (59 jobs and 1 GitHub link converted;
+   GitHub reconnect checked on the box). Plan and source of truth:
    `docs/connections-and-sources-plan.md` (local). The GitHub panel is now
    **Connections** (one card per provider; GitHub the only one so far;
    `#github` still opens it). Backend abstractions for more providers and

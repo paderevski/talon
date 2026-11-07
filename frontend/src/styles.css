@@ -951,6 +951,7 @@ td:last-child, th:last-child { border-right: none; }
 .connection-state { font-size: var(--fs-sm); color: var(--text-muted); }
 .connection-state.linked { color: var(--accent-green, var(--text-secondary)); }
 .connection-card .github-message:last-child { margin-bottom: 0; }
+.connection-item-remove { margin-left: auto; font-size: var(--fs-sm); }
 
 /* Submit form: code source choice (GitHub / public repo / Google Drive). */
 .source-picker { display: flex; gap: 8px; flex-wrap: wrap; }

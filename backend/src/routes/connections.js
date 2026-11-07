@@ -86,6 +86,7 @@ export function createProviderRouter(provider) {
     return res.json({ ok: true });
   });
 
+  provider.extendRouter?.(router, { requireAuth });
   return router;
 }
 

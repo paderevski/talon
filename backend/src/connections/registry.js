@@ -1,4 +1,5 @@
 import { createGithubProvider } from "./providers/github.js";
+import { createGoogleDriveProvider } from "./providers/googleDrive.js";
 
 // Connection providers: outside accounts a user can link (plan:
 // docs/connections-and-sources-plan.md). Each provider is an object with:
@@ -12,13 +13,15 @@ import { createGithubProvider } from "./providers/github.js";
 //   status()             { configured }: off when the server has no settings
 //   getLink(userId)      { login, linkedAt, needsReconnect } | null
 //   authorizeUrl(state, mode)          where Connect sends the browser
-//   completeCallback(userId, query)    result code: connected | updated | denied | in-use
-//   listItems(userId)    what Talon can see: [{ id, label, private }]
+//   completeCallback(userId, query)    result code: connected | updated | denied | in-use | missing-scope
+//   listItems(userId)    what Talon can see: [{ id, label, private, kind? }]
 //   unlink(userId)
+//   extendRouter(router, { requireAuth })   optional extra routes under
+//                        /api/connections/<id>/ (Google: /picker)
 //
 // Built-in sources (public repos, uploads, a home folder) need no account
 // and are not connections; they live in ../sources.
-export function createConnectionRegistry(providers = [createGithubProvider()]) {
+export function createConnectionRegistry(providers = [createGithubProvider(), createGoogleDriveProvider()]) {
   const byId = new Map(providers.map((provider) => [provider.id, provider]));
   return {
     list: () => [...byId.values()],

@@ -139,5 +139,45 @@ export function createConnectionsStore({ provider, tokenPurpose, pool, InUseErro
     }
   }
 
-  return { provider, getLink, getTokens, saveLink, withLockedTokens, deleteLink };
+  // Items the user chose to share (connection_items): [{ id, label, kind, addedAt }].
+  async function listPicked(userId) {
+    const { rows } = await db().query(
+      `SELECT item_id, label, kind, added_at FROM connection_items
+       WHERE user_id = $1 AND provider = $2 ORDER BY kind = 'folder' DESC, lower(label), item_id`,
+      [userId, provider],
+    );
+    return rows.map((row) => ({ id: row.item_id, label: row.label, kind: row.kind, addedAt: row.added_at.toISOString() }));
+  }
+
+  // items: [{ id, label, kind }]; existing ones get the new label/kind.
+  // Fails (foreign key) when the user has no link for this provider.
+  async function addPicked(userId, items) {
+    await withTransaction(async (client) => {
+      for (const item of items) {
+        await client.query(
+          `INSERT INTO connection_items (user_id, provider, item_id, label, kind) VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (user_id, provider, item_id) DO UPDATE SET label = EXCLUDED.label, kind = EXCLUDED.kind`,
+          [userId, provider, item.id, item.label ?? "", item.kind ?? "file"],
+        );
+      }
+    }, { pool: db() });
+  }
+
+  async function removePicked(userId, itemId) {
+    const result = await db().query(
+      "DELETE FROM connection_items WHERE user_id = $1 AND provider = $2 AND item_id = $3",
+      [userId, provider, itemId],
+    );
+    return result.rowCount > 0;
+  }
+
+  async function countPicked(userId) {
+    const { rows } = await db().query(
+      "SELECT count(*)::int AS n FROM connection_items WHERE user_id = $1 AND provider = $2",
+      [userId, provider],
+    );
+    return rows[0].n;
+  }
+
+  return { provider, getLink, getTokens, saveLink, withLockedTokens, deleteLink, listPicked, addPicked, removePicked, countPicked };
 }
