@@ -8,8 +8,7 @@ it differs from v7 and a short what-comes-next; v7 kept for history).
 
 ## Next up (as of 2026-11-07)
 
--7. **Test review, second pass** (branch `test-review-c-d`, on top of
-   `test-review-fixes`, 2026-11-07, not merged): more tests (role changes
+-7. **Test review, second pass** (merged, PR #19, deployed 2026-11-07): more tests (role changes
    mid-session, admin unlock and the throttle window, expired and tampered
    sessions, what a teacher sees after a student leaves or a class moves or
    is archived, provider outages leaving links alone, a final ledger check,
@@ -20,8 +19,7 @@ it differs from v7 and a short what-comes-next; v7 kept for history).
    clean up after themselves. Two small UI fixes: an end line without an
    exit code no longer reads "Exited with code undefined", and
    `formatDollars` shows a dash for blanks and booleans.
--6. **Test review fixes** (branch `test-review-fixes`, 2026-11-07, not
-   merged): a review of the automated tests found six bugs, fixed with
+-6. **Test review fixes** (merged, PR #17, deployed 2026-11-07): a review of the automated tests found six bugs, fixed with
    tests: the repo browser's GitHub-failure fallback served one user's
    cached private-repo listing to another (now only to the user who loaded
    it); upper-case user ids in admin routes slipped past the self checks
@@ -37,9 +35,10 @@ it differs from v7 and a short what-comes-next; v7 kept for history).
    non-owners, OAuth state checks, tokens out of responses and cross-user
    Drive items. A 502/504 on cancel, hide, unhide or disconnect now says
    the change may have been made (as submit and the admin writes did).
-   Still open from the review: cancel racing a launch (small window, the
-   reconciler cleans up), the client taking a non-JSON 200 as success,
-   loose budget amount parsing (`"0x10"`, `"1e2"`).
+   Accepted, not fixed (decided 2026-11-07): cancel racing a launch (small
+   window, the reconciler cleans up), the client taking a non-JSON 200 as
+   success (nginx sends all of /api/ to the backend), loose budget amount
+   parsing (`"0x10"`, `"1e2"`; teachers and admins only, within limits).
 -5. **EC2 launches in the background** (merged, PR #13,
    2026-11-07): submit now answers as soon as the job is reserved (checks,
    source access, budget, limits); fetching the code (clone or Drive copy),
