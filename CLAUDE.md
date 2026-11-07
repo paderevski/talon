@@ -57,8 +57,11 @@ found in a breach" dialog; it blocks clicks until dismissed.
 - End commit messages with the Co-Authored-By line the harness specifies.
 - Deploy a branch to the demo box: `infra/scripts/deploy.sh <branch>`.
   It builds, migrates, restarts, then reseeds fresh demo data (wipes all
-  users, classes, jobs; the box's data is disposable). `--keep-data` skips
-  the reseed. The reseed refuses while EC2 jobs are queued or running (it
+  users, classes, jobs). Normal deploys use `--keep-data`, which skips the
+  reseed, so linked accounts and jobs survive. The box is still a demo and
+  its data is disposable: if keeping it gets in the way of a large migration
+  or refactor, wipe it, and do not write code only to preserve demo rows.
+  The reseed refuses while EC2 jobs are queued or running (it
   would orphan their instances); `--allow-running-jobs` overrides. Changing `infra/ec2/web_user_data.sh.tftpl` (the web
   servers' first boot) rolls new servers in one at a time on the next
   apply (instance refresh, no downtime); the data in RDS stays. Backups
