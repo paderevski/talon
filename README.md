@@ -78,8 +78,9 @@ npm run test:backend                       # HTTP regression tests (resets and s
 npm run test:postgres --workspace backend  # repository, budget, EC2 adapter and session tests
 ```
 
-Run them one after the other, never in parallel: they share `talon_test`. The
-frontend has no automated tests; check UI changes by running the app (or at
+Run them one after the other, never in parallel: they share `talon_test`.
+`npm run test:frontend` covers only the pure form logic (`frontend/tests/`);
+there are no component tests, so check UI changes by running the app (or at
 least `npm run build --workspace frontend`).
 
 ## How jobs run
@@ -93,7 +94,7 @@ the adapter that started it.
   EC2 instance. The web server clones the repo, ships it to S3 and launches an
   instance from a launch template; the instance runs the entry script as an
   unprivileged user under a time limit and writes `status.json`, logs and
-  output files back to S3, then terminates itself. The web server only reads S3.
+  output files back to S3, then terminates itself. The instance never calls the web server; the web server reads its results from S3.
   A reconciler on the web server finalizes finished jobs, charges them, and
   terminates stray or overrun instances. Limits: one unfinished job per user
   (admins exempt) and ten in total. Design notes and verification are in
@@ -141,7 +142,7 @@ All routes except `/api/health` and `/api/auth/*` need a signed-in session.
   GitHub's are also served under `/api/github/...`, where its callback is
   registered.
 - Submit (`POST /api/jobs`) takes the code source as
-  `source: { type: "github", repo, branch }`; jobs return it as
+  `source: { type: "github", repo, branch }` or `{ type: "drive", itemId, path }`; jobs return it as
   `job.source = { type, label, ref }`.
 - Teacher: `/api/teacher/*` (roster and budget allocations)
 - Admin: `/api/admin/*` (users, classes, budget adjustments, CSV roster import)
@@ -258,7 +259,7 @@ unreadable, and those users must connect GitHub again.
 
 ## Deploy
 
-The demo runs on one EC2 instance reachable only through an SSM tunnel. Creating
+The demo runs on two web servers behind an internal ALB, reachable only through an SSM tunnel. Creating
 it, deploying a branch, and the Terraform workflow are documented in
 [`infra/README.md`](infra/README.md) (for example
 `infra/scripts/deploy.sh <branch>` builds, migrates and restarts), and

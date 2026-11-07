@@ -1,14 +1,14 @@
 # Talon infra - current status
 
-_Last updated: 2026-11-05 (status doc refreshed for architecture doc v8; CI and protected `main`; zone resilience and DB failover fixes; web tier phase 3 merged to `main`: two web servers in an Auto Scaling group behind an internal ALB, failover, deploy and reconciler checks pass; changed files skip hidden paths). Earlier the same day: phases 1 and 2 (Talon VPC, RDS with IAM sign-in and split roles, web server from a launch template), per-launch S3 job folders, old box and its code removed. Before that, 2026-11-04 (GPU jobs, build step 4, merged to `main`: one GPU launch template on the PyTorch DLAMI for g4dn.xlarge, g4dn.2xlarge, g6.xlarge and g6e.2xlarge, admin-only; verified on the box with g4dn; the box runs the same code from branch `gpu-jobs`). Before that, 2026-11-03 (GitHub App sign-in, code-source choice, job folders, admin GitHub unlink and script arguments). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
+_Last updated: 2026-11-07 (Connections, Google Drive, Drive jobs and background EC2 launches: Next up items -5 to -2). Before that, 2026-11-05 (status doc refreshed for architecture doc v8; CI and protected `main`; zone resilience and DB failover fixes; web tier phase 3 merged to `main`: two web servers in an Auto Scaling group behind an internal ALB, failover, deploy and reconciler checks pass; changed files skip hidden paths). Earlier the same day: phases 1 and 2 (Talon VPC, RDS with IAM sign-in and split roles, web server from a launch template), per-launch S3 job folders, old box and its code removed. Before that, 2026-11-04 (GPU jobs, build step 4, merged to `main`: one GPU launch template on the PyTorch DLAMI for g4dn.xlarge, g4dn.2xlarge, g6.xlarge and g6e.2xlarge, admin-only; verified on the box with g4dn; the box runs the same code from branch `gpu-jobs`). Before that, 2026-11-03 (GitHub App sign-in, code-source choice, job folders, admin GitHub unlink and script arguments). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
 Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 (gitignored). Architecture doc: `docs/talon-architecture-summary-v8.docx`
 (local, gitignored; 2026-11-05, describes the system as built, with where
 it differs from v7 and a short what-comes-next; v7 kept for history).
 
-## Next up (as of 2026-11-05)
+## Next up (as of 2026-11-07)
 
--5. **EC2 launches in the background** (branch `async-launch`,
+-5. **EC2 launches in the background** (merged, PR #13,
    2026-11-07): submit now answers as soon as the job is reserved (checks,
    source access, budget, limits); fetching the code (clone or Drive copy),
    packing, the S3 upload and RunInstances run in the background on the
@@ -23,7 +23,7 @@ it differs from v7 and a short what-comes-next; v7 kept for history).
    deploy). This is the first half of item 1 (queue): the background work
    can move to a queue worker later with the same API and UI.
    EC2 jobs are **running** from submit (preparing and a pending instance
-   included; branch `ec2-running-status`): to the student Talon is already
+   included; PR #15): to the student Talon is already
    working on them, and the Jobs page opens on Running. "Queued" is left
    for jobs waiting their turn (the local runner's queue, later the
    capacity queue).
@@ -31,23 +31,23 @@ it differs from v7 and a short what-comes-next; v7 kept for history).
    (`--keep-data`, migration 012), `infra/ec2/google.tf` applied (3 SSM
    settings + read policy, no server replaced), client secret set by hand;
    connecting Drive through the tunnel works. New
-   `infra/scripts/secrets.sh` (branch `secrets-script`): list SSM
+   `infra/scripts/secrets.sh` (PR #12): list SSM
    parameters by name (values never shown), `set` (typed hidden, or
    `--from-file`) and `rm` by-hand secrets; refuses Terraform-managed ones
    and `session-secret` / `credentials-key`. Lesson: a mistyped client
    secret gave `invalid_client`, and the servers kept the bad value until
-   restarted; the same branch makes Google `invalid_client` and GitHub
+   restarted; the same PR makes Google `invalid_client` and GitHub
    `incorrect_client_credentials` reload settings on the next attempt.
--3. **Google Drive connection** (branch `google-drive`, 2026-11-06, not
-   merged): provider `google_drive` (OAuth with `drive.readonly` because
+-3. **Google Drive connection** (2026-11-06, merged as PRs #9, #10; live,
+   see -4): provider `google_drive` (OAuth with `drive.readonly` because
    a folder picked under `drive.file` comes without its contents; refresh,
    revoke; the Google Picker in the Connections card chooses what Talon
-   may read, kept in `connection_items`, migration 012). Not usable until a Google Cloud project exists: personal
-   project first (External, Testing), LCPS Internal project later. Local
+   may read, kept in `connection_items`, migration 012). Uses a personal Google Cloud project (External,
+   Testing) for now; an LCPS Internal project later. Local
    dev: `GOOGLE_*` in `backend/.env` (see `.env.example`). Box:
-   `infra/ec2/google.tf` (SSM settings and read permission; not applied)
-   plus `google-oauth-client-secret` by hand. Merged (PRs #9, #10);
-   `google.tf` not applied. **Jobs from Drive** (branch `drive-jobs`,
+   `infra/ec2/google.tf` (SSM settings and read permission; applied 2026-11-07)
+   plus `google-oauth-client-secret` by hand. Merged (PRs #9, #10).
+   **Jobs from Drive** (PR #11,
    2026-11-07): a `drive` source copies the chosen folder only; the New Job
    form has a built-in file browser for GitHub and Drive (the Repo Browser
    panel is gone); the local runner takes non-git sources. Notebooks
@@ -147,6 +147,11 @@ it differs from v7 and a short what-comes-next; v7 kept for history).
    up-to-date branch, enforced for admins. Next (before going public):
    deploys from GitHub through an OIDC role limited to SSM on web servers,
    with deploy.sh's reseed off; later, `terraform plan` on infra PRs.
+**Direction (2026-11-07): AWS Batch** is the planned next step for job
+execution, replacing the web servers creating EC2 instances directly (plan:
+`docs/talon-batch-plan.md`, local only). Until then the EC2 path gets bug
+fixes only. Items 1 and 2 below describe the current EC2 path.
+
 1. **Job queue with launch retries** (step 5 without Spot): a launch with no
    capacity waits and retries instead of failing; also gives overnight jobs.
    Plan it together with "Limiting launch exposure" below: the near-term
@@ -160,8 +165,8 @@ it differs from v7 and a short what-comes-next; v7 kept for history).
    v11, checked with `job-1052`). `data/` is still saved: how to handle
    downloaded datasets (skip `data/`? `.talonignore`?) is open.
 4. Test g6e.2xlarge on the box when it has capacity. GPU machines are open
-   to students once the `ec2_gpu_admin_only = false` default (2026-11-04) is
-   applied; the apply replaces the web instance.
+   to students (`ec2_gpu_admin_only = false`, the Terraform default since
+   2026-11-04; changing it rolls the web servers).
 5. Not code: ask LCPS IT for the `talon.lcps.org` DNS records and the Entra
    App Registration (lead time); decide exposure and subnet for ALB/WAF.
 
@@ -175,7 +180,7 @@ it differs from v7 and a short what-comes-next; v7 kept for history).
 | Elastic IP | None for the web servers (private). One per NAT gateway (1a, 1b) |
 | Inbound access | None. SSM Session Manager only (`tunnel.sh`: SSM port forward through a web server to the internal ALB) |
 | Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`. Postgres 16 on RDS `talon-demo` (`db.t4g.small`, Multi-AZ since 2026-11-05, TLS, IAM sign-in as `talon_app`; migrations as `talon_migrate`). `EC2_JOBS_ENABLED=true` |
-| Deployed | `main` (3ca1615), by first boot (2026-11-05). Web template v6, job templates v12 (CPU) / v8 (GPU) |
+| Deployed | `main`, unless `deploy.sh <branch>` put a test branch on the box (normally tested before merge; the branch may stay until the next deploy since it equals `main` after the PR). `infra/scripts/status.sh --deep` shows the commit, template versions and drift |
 | Approx cost | ~$165/month at list price, not read from the bill (Cost Explorer shows less: LCPS Savings Plans and discounts): two web servers ~$24 + EBS ~$3.20, internal ALB ~$17, two NAT gateways ~$66 + traffic, RDS db.t4g.small Multi-AZ ~$51, KMS key ~$1, alarms/S3/SNS pennies. Plus job instances, billed per second and charged to budgets |
 | Other AWS resources | SSM parameters under `/talon/demo/`, KMS key `alias/talon-demo-secrets`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), CloudWatch alarms (`monitoring.tf`: disk, backend errors, unknown job instance, failed logins, GPU and standard vCPUs; `alb.tf`: healthy hosts, ALB 5xx), CloudWatch agent on each web server (installed and configured by `infra/server/configure.sh`; logs in `/talon/demo/{backend,syslog,nginx-access,nginx-error,bootstrap}`, 30 days; metrics in `Talon/Server`), saved Logs Insights queries `Talon/*` (`log_queries.tf`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and CPU/GPU launch templates (`jobs.tf`), 2 AWS Budgets alerts (`alarms.tf`: 150 USD a month, 10 USD a day) |
 | Root volume | 20 GB gp3, encrypted with the default AWS-managed EBS key (the architecture doc asks for a KMS key; not changed) |
@@ -195,8 +200,7 @@ infra/grafana/grafana.sh up      # Grafana on this laptop: http://localhost:3000
 ```
 
 The scripts find web servers by tag (`Project=talon`, `Component=web`,
-`Environment=$TALON_ENV`, default `demo`; `common.sh`). Until the tag is
-applied they fall back to `terraform output instance_id`. `deploy.sh` deploys
+`Environment=$TALON_ENV`, default `demo`; `common.sh`). `deploy.sh` deploys
 to each server in turn and reseeds once at the end; `TALON_INSTANCE=<id>`
 picks the server for `tunnel.sh`, `shell.sh` and `check-launch-policy.sh`.
 
@@ -245,7 +249,7 @@ to the browser), so one `requestId` finds both sides of a request.
   (failed logins). Others: `auth.login`, `auth.logout`,
   `auth.password_changed`, `job.submitted`, `job.launch_failed`,
   `job.cancel_requested`, `job.finished`, `job.lost`, `ec2.*`, `github.*`,
-  `admin.github_unlinked`, `security.*`.
+  `admin.connection_unlinked`, `security.*`.
 - Never logged: passwords, tokens, cookies, request bodies, query strings.
   Login failures do log the attempted username.
 - How it is wired: `infra/server/configure.sh` (run as root by
@@ -323,14 +327,6 @@ Ordered so each item makes the next one easier. Items 1-8 and 12 are done;
    The scripts, alarms and server access went first; the bucket (demo-data
    dumps only), its KMS key and `backups.tf` were removed in the infra
    cleanup the same day._
-   CloudWatch alarms (`alarms.tf`): no successful backup in 36 hours, and
-   a failed weekly restore test, both to SNS topic `talon-demo-alerts`. The
-   alert email is set (`alert_email` in `terraform.tfvars`, gitignored) and
-   the subscription is confirmed; both alarms were OK on 2026-10-25. The
-   weekly restore test not running at all is not alarmed (CloudWatch cannot
-   look back 8 days at weekly metrics).
-   Still to do: restoring onto a replacement instance is only tested in a
-   scratch DB, not end to end.
 5. ~~**Terraform state to S3**~~ _(done 2026-10-25: bucket from
    `infra/state`; `infra/ec2` uses it with `use_lockfile`; lock tested. The
    old local state files were deleted 2026-10-28.)_
@@ -341,9 +337,8 @@ toward two servers)
 6. ~~**GitHub credentials -> Postgres**~~ _(done: table `github_credentials`,
    one row per user id, AES-256-GCM with the key id stored per row and the
    owner bound into the ciphertext; rotation via
-   `npm run db:rotate-credentials-key`; old JSON file can be imported with
-   `db:import-github-credentials`. They are in the nightly backups, and the
-   backup is only readable together with the SSM key.)_
+   `npm run db:rotate-credentials-key`. They are in the RDS backups, and are
+   only readable together with the SSM key.)_
 7. ~~**Jobs and results -> Postgres**~~ _(done: tables `jobs` and `results`
    owned by user id; status sync is row-level and idempotent; finishing a job
    stores its result and charges the owner's budget in one transaction, once
@@ -661,7 +656,7 @@ done (below); the adapter and everything after it are not built yet.
    permissions (allowed instance types, template-only launch, IMDSv2 required,
    terminate only `Project=talon` + `Component=job`), monthly and daily AWS
    Budgets email alerts (account-wide, alerts only). VPC and subnets are
-   variables (`job_vpc_id`, `job_subnet_ids`). Outbound is open on 443 on
+   variables (`job_vpc_id`, `job_subnet_ids`; removed 2026-11-05, jobs now use the Talon VPC jobs subnets). Outbound is open on 443 on
    purpose: students use kagglehub, Hugging Face and online datasets. Risk
    is bounded by the metadata block, no secrets on the box, the time limit
    and budget, and the 443/53-only group; GuardDuty is not enabled yet.
@@ -793,7 +788,7 @@ done (below); the adapter and everything after it are not built yet.
      pursued: us-west-2 offers g7e/p5 with the same 768-vCPU quotas, but jobs
      there need regional Terraform copies, a reconciler sweep per region and
      cross-region S3 traffic; us-east-2's G quota is only 64 vCPUs.
-   - **Job subnets:** the default subnets of us-east-1a-d
+   - **Job subnets:** one per zone in us-east-1a-d (default VPC then; the Talon VPC's jobs subnets since 2026-11-05)
      (`job_availability_zones`), so capacity errors move to the next zone. The adapter must also move on for `Unsupported`
      (type not offered in that zone), not only `InsufficientInstanceCapacity`,
      and should rotate the starting subnet.
@@ -860,7 +855,7 @@ done (below); the adapter and everything after it are not built yet.
      the budget does not cover.
 5. Spot, overnight queue, interruption handling, checkpoint docs.
 
-**Network.** Stay in the default VPC for steps 1-3 (job security group with
+**Network.** (Superseded 2026-11-05: jobs run in the Talon VPC, `network.tf`.) Stay in the default VPC for steps 1-3 (job security group with
 no inbound; never allow it to reach the web server's group), but make VPC and
 subnet ids Terraform variables so a Talon-owned or LCPS VPC is a change of
 values. Open questions for LCPS IT: do they require their VPC, and which CIDR
@@ -929,7 +924,7 @@ instances running its own code. The vCPU alarms only notice. Options:
   actions real caps for Talon alone. SCPs can deny families, regions or
   untagged launches, but not counts.
 
-Suggested order: launcher Lambda with the queue work; ASG + SQS workers
+Suggested order (written before the 2026-11-07 Batch direction, see "Next up"): launcher Lambda with the queue work; ASG + SQS workers
 when moving to Spot or warm pools; ask LCPS for a dedicated account before
 real students.
 
@@ -955,7 +950,7 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
 `/api/admin/users|classes|budget/adjustments`, `/api/teacher/allocations`,
 `/api/auth/password`; logic in `backend/src/services/management.js`. Still to do:
 
-- Class sections (migration 009, branch `class-sections`, not merged yet):
+- ~~Class sections~~ done (migration 009, merged to `main`, d84af17):
   a class is one section, keyed by course name + teacher + block, with its
   own roster ("Calculus" with Tom in block 5, Tom in block 6 and Greg in
   block 5 are three classes). `classes.teacher_id` replaces teacher rows in
@@ -1068,7 +1063,10 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
 - Application logs are in CloudWatch Logs (CloudWatch agent: backend JSON,
   nginx JSON access, nginx error, syslog, bootstrap; see "Logs"). Job
   instance boot logs also go to `/talon/demo/jobs` (shipped with the AWS
-  CLI, no agent). SSM session logging and a CloudTrail trail are not set up.
+  CLI, no agent). SSM session logging is not set up, and no CloudTrail trail
+  is defined in this repo's Terraform. The account has exactly one trail, a
+  management-events trail created outside Talon (`aws cloudtrail
+  list-trails` shows only that one, confirmed 2026-11-07).
 - CI/CD: tests run on every push and pull request (done 2026-11-05, item
   0d); deploys are still manual SSM runs. Next: automated deploys through
   an OIDC role.
@@ -1134,9 +1132,9 @@ Phase 2, network and database (2026-11-05; applied, cut over and merged to
 
 - `network.tf`: VPC `10.20.0.0/16`; public, app and data subnets in 1a and
   1b, jobs subnets (/20, public IP on launch) in 1a-1d; one NAT gateway in
-  1a; S3 gateway endpoint on all route tables; default security group
+  1a (one per zone since 0c); S3 gateway endpoint on all route tables; default security group
   emptied.
-- `rds.tf`: Postgres 16 `db.t4g.micro`, 20 GB gp3 (autoscaling to 50),
+- `rds.tf`: Postgres 16 `db.t4g.micro` (now `db.t4g.small`, Multi-AZ; 0c), 20 GB gp3 (autoscaling to 50),
   encrypted, private, `rds.force_ssl = 1`, 7-day backups, IAM auth on.
   Master user `talon_admin`, password managed by RDS in Secrets Manager.
   The web role gets `rds-db:connect` for `talon_app` and `talon_migrate`;
@@ -1222,7 +1220,7 @@ as the `talon-s3-prefix` tag; the launch's ClientToken uses the random part
 too (a token from a reused id could return the old instance). Older jobs
 keep `jobs/<id>`. Roll out with `terraform apply` (new job template
 versions) BEFORE deploying the app: the new boot script falls back to the
-old folder, but the old one ignores the tag. Applied and deployed 2026-11-05;
+old folder (fallback removed later, 0b), but the old one ignores the tag. Applied and deployed 2026-11-05;
 verified on the box: `job-1002` wrote only to `jobs/job-1002-<random>/`;
 with the counter set back so a new `job-58` reused an id whose old folder
 held a succeeded status and model snapshots, the new job ran normally and
@@ -1325,7 +1323,7 @@ runs configure itself (talon-deploy does, once per server).
   concurrent syncs was fixed; billing was never doubled); boot logs and
   summaries arrived for CPU (m7g, c7g: about 12-22 s boot, 42 s setup) and
   GPU (g4dn: 67 s boot, 6 s setup), and `boot.log` reached S3. Still to do:
-  CloudTrail trail (ask LCPS IT about an organization trail first), SSM
+  a Talon-managed CloudTrail trail (ask LCPS IT about an organization trail first), SSM
   session logging, a database audit log for admin actions.
 - 2026-11-04: Hardening (`harden-ec2-cloudwatch`), applied, deployed and
   checked on the box. Local runs refused in production for everyone and
@@ -1374,8 +1372,8 @@ runs configure itself (talon-deploy does, once per server).
   lost-job billing change, the log panel on EC2 jobs, and the new error
   messages; check them on the box now that it is deployed.
 - 2026-11-03: GitHub App sign-in replaces PATs (item 13); merged to `main`.
-- 2026-11-06: Connections and sources (branch `connections`): Connections panel, generic connection store and routes, job inputs with source and snapshot (migration 011); plan in `docs/connections-and-sources-plan.md`.
+- 2026-11-06: Connections and sources (merged, PR #8): Connections panel, generic connection store and routes, job inputs with source and snapshot (migration 011); plan in `docs/connections-and-sources-plan.md`.
 - 2026-11-03: Code-source choice (GitHub / public / Drive mock-up), job folders (migration 007), admin GitHub unlink, revoked-token handling; merged to `main`.
 - 2026-11-03: Script arguments (migration 008) and a branch menu; merged to `main`.
-- 2026-11-04: Class sections (migration 009) on branch `class-sections`, not merged: a class is name + teacher + block; see Management screens.
-- `infra_2/` is the older EKS design, kept for reference only.
+- 2026-11-04: Class sections (migration 009), merged to `main` (d84af17): a class is name + teacher + block; see Management screens.
+- `infra_2/` (the older EKS design) was deleted 2026-11-05 (0b).

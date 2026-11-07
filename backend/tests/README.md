@@ -24,10 +24,10 @@ From `backend/`:
 
 ## Current coverage
 
-- `health.test.mjs` checks `/api/health`.
-- `hybrid-artifacts.test.mjs` verifies `/api/jobs/:id/files` returns artifacts from both:
-  - `output_dir`
-  - `repo_changed`
+One file per case in `cases/` (28 today): sign-in and sessions, roles and
+roster access, header spoofing, job visibility and budgets, EC2 access and
+cancel, connections, logging and proxy trust, management and roster import.
+List them with `ls cases`.
 
 ## Add a new regression test
 
