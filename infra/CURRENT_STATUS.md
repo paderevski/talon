@@ -8,6 +8,20 @@ it differs from v7 and a short what-comes-next; v7 kept for history).
 
 ## Next up (as of 2026-11-05)
 
+-5. **EC2 launches in the background** (branch `async-launch`,
+   2026-11-07): submit now answers as soon as the job is reserved (checks,
+   source access, budget, limits); fetching the code (clone or Drive copy),
+   packing, the S3 upload and RunInstances run in the background on the
+   same web server (`services/ec2Jobs.js` `startEc2Job` / `runEc2Launch`).
+   Each step is saved as the job's launch progress (migration 013,
+   `jobs.launch_progress[_at]`) and shown in the Jobs page's first step.
+   Before, a big Drive folder could outlast the 180 s nginx/ALB timeout.
+   Cancel while preparing finishes the job in the database (refund), so it
+   works whichever server gets it; the launcher checks before
+   RunInstances. The reconciler fails and refunds a launch with no
+   progress for 10 minutes (the server preparing it restarted, e.g. a
+   deploy). This is the first half of item 1 (queue): the background work
+   can move to a queue worker later with the same API and UI.
 -4. **Google Drive live on the box** (2026-11-07): `main` deployed
    (`--keep-data`, migration 012), `infra/ec2/google.tf` applied (3 SSM
    settings + read policy, no server replaced), client secret set by hand;

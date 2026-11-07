@@ -2,6 +2,9 @@ import { overrunGraceSeconds } from "../execution/adapters/ec2ExecutionAdapter.j
 import { log as defaultLog } from "../utils/log.js";
 
 // Keeps EC2 jobs honest without anyone watching. Every tick it
+//   0. fails jobs whose launch stopped: still being prepared (no execution
+//      ref) with no launch progress for staleLaunchMs, because the web server
+//      doing it restarted or died. Nothing ran, so all is refunded.
 //   1. syncs each unfinished EC2 job, which stores the result and settles the
 //      cost once the job has ended (it does not wait for someone to load it),
 //   2. terminates job instances that should not be running: no job row for
@@ -15,11 +18,29 @@ import { log as defaultLog } from "../utils/log.js";
 // holds the lock. Without it, every tick runs.
 const runAlways = async (fn) => ({ skipped: false, result: await fn() });
 
-export function createEc2Reconciler({ jobsRepository, adapter, sync, markLost, exclusive = runAlways, now = () => Date.now(), log = defaultLog }) {
+// A launch reports progress at least every few seconds while copying and
+// at each step; 10 minutes of silence means it is gone.
+export const staleLaunchMs = 10 * 60 * 1000;
+
+export function createEc2Reconciler({ jobsRepository, adapter, sync, markLost, exclusive = runAlways, now = () => Date.now(), log = defaultLog, launchTimeoutMs = staleLaunchMs }) {
   const isFinal = (job) => job.status === "completed" || job.status === "failed" || Boolean(job.resultSyncKey);
 
   async function tick() {
     for (const job of await jobsRepository.listUnfinished("ec2")) {
+      if (!job.executionRef) {
+        const lastSign = Date.parse(job.launch?.at || job.submittedAt || "");
+        if (Number.isFinite(lastSign) && now() - lastSign > launchTimeoutMs) {
+          await jobsRepository.finalize(job.id, {
+            syncKey: "launch-interrupted",
+            status: "failed",
+            neverRan: true,
+            error: "The launch was interrupted (the web server preparing it restarted). Nothing ran and the reservation was returned; submit it again.",
+            finalizedAt: new Date(now()).toISOString(),
+          });
+          log.warn("reconciler failed an interrupted launch", { event: "ec2.launch_interrupted", jobId: job.id, lastProgress: job.launch?.progress });
+        }
+        continue; // still being prepared: nothing to sync yet
+      }
       try {
         await sync(job);
       } catch (error) {

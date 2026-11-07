@@ -76,7 +76,8 @@ export async function resolveSourceAccess(userId, source) {
 }
 
 // Fetches a code source and packs it as the job's snapshot (EC2 jobs).
-// spec: { source: { type, ref }, credential, folder, entryScript }
+// spec: { source: { type, ref, label }, credential, folder, entryScript,
+//         onProgress?, signal? } (progress lines for the job; abort = cancelled)
 // Returns { workDir, archive, bytes, sha256, ref } (ref with fetch results,
 // e.g. the commit). The caller removes workDir.
 export async function prepareCodeSnapshot(spec, limits = snapshotLimits()) {
@@ -84,7 +85,12 @@ export async function prepareCodeSnapshot(spec, limits = snapshotLimits()) {
   const workDir = await mkdtemp(path.join(os.tmpdir(), "talon-input-"));
   try {
     const codeDir = path.join(workDir, "repo");
-    const fetched = await source.fetchInto(spec.source.ref, codeDir, spec.credential ?? null);
+    const onProgress = typeof spec.onProgress === "function" ? spec.onProgress : () => {};
+    onProgress(`Fetching ${spec.source.label || source.label}`);
+    const fetched = await source.fetchInto(spec.source.ref, codeDir, spec.credential ?? null, { onProgress, signal: spec.signal });
+    if (spec.signal?.aborted) {
+      throw Object.assign(new Error("Cancelled"), { status: 499 });
+    }
 
     // The entry script must exist, inside the code folder.
     const folder = String(spec.folder || "");
@@ -96,6 +102,7 @@ export async function prepareCodeSnapshot(spec, limits = snapshotLimits()) {
       throw Object.assign(new Error(`Entry script not found: ${folder ? `${folder}/` : ""}${spec.entryScript}`), { status: 400 });
     });
 
+    onProgress("Packing the code");
     const packed = await packSnapshot(codeDir, path.join(workDir, "repo.tgz"), limits);
     return { workDir, archive: packed.archive, bytes: packed.bytes, sha256: packed.sha256, ref: { ...spec.source.ref, ...(fetched ?? {}) } };
   } catch (error) {
