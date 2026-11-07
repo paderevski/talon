@@ -16,8 +16,13 @@ it differs from v7 and a short what-comes-next; v7 kept for history).
    project first (External, Testing), LCPS Internal project later. Local
    dev: `GOOGLE_*` in `backend/.env` (see `.env.example`). Box:
    `infra/ec2/google.tf` (SSM settings and read permission; not applied)
-   plus `google-oauth-client-secret` by hand. Running jobs from Drive is
-   the next step. Details: `docs/connections-and-sources-plan.md`, step 2.
+   plus `google-oauth-client-secret` by hand. Merged (PRs #9, #10);
+   `google.tf` not applied. **Jobs from Drive** (branch `drive-jobs`,
+   2026-11-07): a `drive` source copies the chosen folder only; the New Job
+   form has a built-in file browser for GitHub and Drive (the Repo Browser
+   panel is gone); the local runner takes non-git sources. Notebooks
+   (`.ipynb`) cannot be entry scripts yet. Details:
+   `docs/connections-and-sources-plan.md`, steps 2 and 3.
 -2. ~~**Connections and sources**~~ merged (PR #8) and deployed to the box
    with `--keep-data` 2026-11-06 (59 jobs and 1 GitHub link converted;
    GitHub reconnect checked on the box). Plan and source of truth:

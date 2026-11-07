@@ -84,17 +84,56 @@ export function assertRepoPath(
 // the cleaned folder, or null when it is not allowed.
 const folderSegmentPattern = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/;
 
+// Longest path either normalizer accepts; longer input is refused before any
+// other work (these run on request input).
+const maxPathLength = 4096;
+
+// Strips leading and trailing "/" with a loop: a regex like /^\/+|\/+$/ can
+// take quadratic time on input made of many slashes.
+function trimSlashes(text) {
+  let start = 0;
+  let end = text.length;
+  while (start < end && text[start] === "/") start += 1;
+  while (end > start && text[end - 1] === "/") end -= 1;
+  return text.slice(start, end);
+}
+
 export function normalizeFolder(value) {
-  const cleaned = String(value ?? "")
-    .trim()
-    .replace(/\\/g, "/")
-    .replace(/^\.\/+/, "")
-    .replace(/^\/+|\/+$/g, "");
+  const raw = String(value ?? "").trim();
+  if (raw.length > maxPathLength) {
+    return null;
+  }
+  let cleaned = trimSlashes(raw.replace(/\\/g, "/"));
+  if (cleaned.startsWith("./")) {
+    cleaned = trimSlashes(cleaned.slice(2));
+  }
   if (!cleaned || cleaned === ".") {
     return "";
   }
   const segments = cleaned.split("/");
   if (segments.some((segment) => !folderSegmentPattern.test(segment) || segment === "..")) {
+    return null;
+  }
+  return segments.join("/");
+}
+
+// A path inside a Google Drive folder ("ML 2026/week 3"). Looser than
+// normalizeFolder: Drive names often have spaces and punctuation, and the
+// path is only matched against Drive names (a job runs from the top of the
+// copied folder, so it never reaches the job's run script). No "." or ".."
+// segments, control characters or backslashes; "" = the top; null if bad.
+export function normalizeDrivePath(value) {
+  const input = String(value ?? "").trim();
+  if (input.length > maxPathLength) {
+    return null;
+  }
+  const raw = trimSlashes(input);
+  if (!raw) {
+    return "";
+  }
+  const segments = raw.split("/").map((segment) => segment.trim());
+  const bad = (segment) => !segment || segment === "." || segment === ".." || segment.length > 255 || /[\u0000-\u001f\u007f\\]/.test(segment);
+  if (segments.length > 20 || segments.some(bad)) {
     return null;
   }
   return segments.join("/");

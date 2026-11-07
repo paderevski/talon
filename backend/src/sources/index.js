@@ -1,6 +1,7 @@
 import { mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createDriveSource } from "./drive.js";
 import { createGithubSource } from "./github.js";
 import { packSnapshot, snapshotLimits } from "./snapshot.js";
 
@@ -14,19 +15,24 @@ import { packSnapshot, snapshotLimits } from "./snapshot.js";
 //   parse(input)        submit payload -> ref (plain JSON, stored on the
 //                       job's input); throws 400 on bad input
 //   describe(ref)       short label for lists ("owner/repo")
-//   resolveAccess(userId, ref)      credential for fetchInto, or null;
-//                                   throws 4xx when the user may not use it
-//   fetchInto(ref, dir, credential) fills dir with the files; returns
-//                                   extra ref fields to record ({ commit })
+//   resolveAccess(userId, ref)      { credential, ref? }: what fetchInto
+//                                   needs (or null), plus ref fields found
+//                                   on the way (names, ids); throws 4xx when
+//                                   the user may not use it
+//   fetchInto(ref, dir, credential, { onProgress? })
+//                                   fills dir with the files; returns extra
+//                                   ref fields to record ({ commit });
+//                                   onProgress(text) for the job's log
 //
-// Planned types (not registered yet): 'git' (any host), 'drive', 'upload',
-// 'home'. An unknown type is a 400.
+// Planned types (not registered yet): 'git' (any host), 'upload', 'home'.
+// An unknown type is a 400.
 
 const registry = new Map();
 export function registerSource(source) {
   registry.set(source.type, source);
 }
 registerSource(createGithubSource());
+registerSource(createDriveSource());
 
 export const listSourceTypes = () => [...registry.values()];
 
@@ -56,6 +62,17 @@ export function parseCodeSource(payload = {}) {
   }
   const ref = source.parse(input);
   return { type: source.type, ref, label: source.describe(ref) };
+}
+
+// Checks the user may use the source and gets what fetching needs.
+// source: { type, ref, label } from parseCodeSource. Returns { source,
+// credential } with ref fields the check found merged in and the label
+// recomputed (a Drive folder's name is only known after asking Drive).
+export async function resolveSourceAccess(userId, source) {
+  const type = getSourceType(source.type);
+  const access = (await type.resolveAccess(userId, source.ref)) ?? {};
+  const ref = { ...source.ref, ...(access.ref ?? {}) };
+  return { source: { type: source.type, ref, label: type.describe(ref) }, credential: access.credential ?? null };
 }
 
 // Fetches a code source and packs it as the job's snapshot (EC2 jobs).

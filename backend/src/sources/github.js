@@ -37,7 +37,7 @@ export function createGithubSource({ app = null } = {}) {
 
     // The token to clone with, or null (anonymous). Throws 4xx when the
     // user may not use the repo.
-    resolveAccess: (userId, ref) => github().resolveCloneToken(userId, ref.repo),
+    resolveAccess: async (userId, ref) => ({ credential: await github().resolveCloneToken(userId, ref.repo) }),
 
     // Fills `dir` with the repo's files. Returns { commit }.
     fetchInto: (ref, dir, credential) => cloneInto({ host: ref.host, repoPath: ref.repo, branch: ref.branch, token: credential, dir }),

@@ -2,6 +2,8 @@ import { ConnectionInUseError, createConnectionsStore } from "../store.js";
 import { createSettingsLoader } from "../settings.js";
 import { tokenPurposes } from "../tokenPurposes.js";
 import { log } from "../../utils/log.js";
+import { normalizeDrivePath } from "talon-shared/repo";
+import { createDriveClient, folderMime, isNativeGoogleFile, isSkippedFolder, safeName } from "../../sources/fetchers/drive.js";
 
 // Google Drive as a connection provider (plan:
 // docs/connections-and-sources-plan.md, "Google Drive").
@@ -203,6 +205,54 @@ export function createGoogleDriveProvider({
     return { accessToken, apiKey: cfg.pickerApiKey, appId: pickerAppId(cfg) };
   }
 
+  // A place inside something the user picked: the picked item (it must be
+  // in their list, which is what limits Talon to what they chose), and for
+  // a folder the subfolder at relPath. Returns { token, drive, root, folderId }
+  // (root: { id, label, kind }; folderId null for a picked file).
+  async function locate(userId, itemId, relPath = "") {
+    const token = await requireAccessToken(userId);
+    const root = (await accounts().listPicked(userId)).find((item) => item.id === String(itemId ?? ""));
+    if (!root) {
+      throw httpError("Choose this Drive item in Connections first", 403);
+    }
+    const folder = normalizeDrivePath(relPath);
+    if (folder === null) {
+      throw httpError("That is not a folder path inside the Drive folder (like week3 or ML 2026/cnn)", 400);
+    }
+    const drive = createDriveClient({ token, fetch: fetchImpl });
+    if (root.kind !== "folder") {
+      if (folder) {
+        throw httpError("A single file has no folders inside it", 400);
+      }
+      return { token, drive, root, folderId: null };
+    }
+    return { token, drive, root, folderId: await drive.resolveFolder(root.id, folder) };
+  }
+
+  // One folder inside a picked folder, for the file browser:
+  // { root, path, items: [{ name, type: dir | file, path, size, native }] }.
+  async function browse(userId, itemId, relPath = "") {
+    const { drive, root, folderId } = await locate(userId, itemId, relPath);
+    const folder = normalizeDrivePath(relPath) ?? "";
+    if (!folderId) {
+      const file = await drive.getFile(root.id);
+      return { root, path: "", items: [{ name: safeName(file.name), type: "file", path: safeName(file.name), size: Number(file.size || 0), native: isNativeGoogleFile(file.mimeType) }] };
+    }
+    // Folders a job never gets (.git, .venv, __pycache__...) are not shown.
+    const children = (await drive.listChildren(folderId)).filter((file) => !(file.mimeType === folderMime && isSkippedFolder(file.name)));
+    const items = children.map((file) => {
+      const name = safeName(file.name);
+      return {
+        name,
+        type: file.mimeType === folderMime ? "dir" : "file",
+        path: folder ? `${folder}/${name}` : name,
+        size: Number(file.size || 0),
+        native: isNativeGoogleFile(file.mimeType),
+      };
+    });
+    return { root, path: folder, items };
+  }
+
   const provider = {
     id: "google_drive",
     label: "Google Drive",
@@ -328,6 +378,8 @@ export function createGoogleDriveProvider({
     },
 
     pickerConfig,
+    locate,
+    browse,
 
     extendRouter(router, { requireAuth }) {
       router.get("/picker", requireAuth, async (req, res) => {
@@ -344,6 +396,14 @@ export function createGoogleDriveProvider({
           return res.json({ items: await provider.addPickedItems(req.user.id, req.body?.ids) });
         } catch (error) {
           return res.status(error.status || 500).json({ message: error.status ? error.message : "Could not save the chosen items" });
+        }
+      });
+      // ?item=<picked id>&path=week3/cnn
+      router.get("/browse", requireAuth, async (req, res) => {
+        try {
+          return res.json(await browse(req.user.id, req.query.item, req.query.path));
+        } catch (error) {
+          return res.status(error.status || 500).json({ message: error.status ? error.message : "Could not read the Drive folder" });
         }
       });
       router.delete("/items/:itemId", requireAuth, async (req, res) => {

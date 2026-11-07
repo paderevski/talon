@@ -18,7 +18,7 @@ import { ec2JobLimits, gpuAllowed, launchEc2Job, launchErrorStatus } from "../se
 import { defaultMaxRuntimeSeconds, listInstanceOptions, runtimeOptions } from "../execution/ec2Rates.js";
 import { markJobAsExecutionLost, synchronizeJobFromExecution } from "../services/jobSync.js";
 import { getJobsRepository } from "../repositories/jobsRepository.js";
-import { getSourceType, parseCodeSource } from "../sources/index.js";
+import { getSourceType, parseCodeSource, resolveSourceAccess } from "../sources/index.js";
 import { normalizeFolder } from "talon-shared/repo";
 import { parseScriptArgs } from "../utils/scriptArgs.js";
 import { attachAccessScope, canModify, hasRole, narrowScopeToOwner, scopeAllows } from "../auth/access.js";
@@ -193,13 +193,13 @@ router.get("/compute-options", (req, res) => {
 // bad or the user may not use that source.
 async function codeSourceOr4xx(req, res, payload, runner) {
   try {
-    const source = parseCodeSource(payload);
-    if (!getSourceType(source.type).runners.includes(runner)) {
-      res.status(400).json({ message: `${getSourceType(source.type).label} jobs cannot run ${runner === "local" ? "on the web server" : "here"}. Choose a machine.` });
+    const parsed = parseCodeSource(payload);
+    const type = getSourceType(parsed.type);
+    if (!type.runners.includes(runner)) {
+      res.status(400).json({ message: `${type.label} jobs cannot run ${runner === "local" ? "on the web server" : "here"}. Choose a machine.` });
       return undefined;
     }
-    const credential = await getSourceType(source.type).resolveAccess(req.user.id, source.ref);
-    return { source, credential: credential ?? null };
+    return await resolveSourceAccess(req.user.id, parsed);
   } catch (error) {
     res.status(error?.status || 500).json({ message: error?.status ? error.message : "Could not check the code source" });
     return undefined;
@@ -287,19 +287,23 @@ router.post("/", async (req, res) => {
     return undefined;
   }
 
-  // The local runner clones in place (it needs the git checkout), so it
-  // takes git fields rather than a snapshot; only git sources reach it.
+  // The local runner clones git sources in place (it reports changed files
+  // with git status). Other sources are fetched straight into its folder,
+  // which it then commits so git status still works.
+  const isGit = code.source.type === "github";
+  const sourceType = getSourceType(code.source.type);
   const spec = {
     name: payload.name || "untitled-job",
-    repo: code.source.ref.repo,
-    branch: code.source.ref.branch,
+    ...(isGit
+      ? { repo: code.source.ref.repo, branch: code.source.ref.branch, gitToken: code.credential }
+      : { fetchInput: (dir, options) => sourceType.fetchInto(code.source.ref, dir, code.credential, options), sourceLabel: code.source.label }),
     entryScript: payload.entryScript || "train.py",
     folder,
     scriptArgs,
     maxRuntimeSeconds: jobMaxRuntimeSeconds(),
   };
 
-  const executionRef = await submitExecution({ ...spec, gitToken: code.credential });
+  const executionRef = await submitExecution(spec);
   const savedJob = await jobsRepository.create({
     ownerUserId: req.user.id,
     name: spec.name,

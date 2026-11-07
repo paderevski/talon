@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { fetchConnectionItems, fetchRepoBranches, fetchRepoTree } from "../api/client";
-import { normalizeFolder, normalizeRepoInput, parseGithubUrl } from "../utils/repo";
+import { fetchConnectionItems, fetchDriveFolder, fetchRepoBranches, fetchRepoTree } from "../api/client";
+import FileBrowser from "./FileBrowser";
+import { normalizeDrivePath, normalizeFolder, normalizeRepoInput, parseGithubUrl } from "../utils/repo";
 import { formatDollars } from "../utils/format";
 import { formatRuntime, machineLabel, planJob } from "../utils/jobPlan";
 
@@ -62,13 +63,19 @@ function consumeNextJobName(repo) {
   return `${toRepoNameBase(repo)}-${next}`;
 }
 
-// Where the job's code comes from. Only GitHub and public repos run today;
-// Google Drive is a placeholder to show how the form adapts.
+// Where the job's code comes from. "GitHub" and "Public repository" are
+// both the github source on the server; Google Drive is the drive source
+// (a folder the student chose in Connections, or a folder inside it).
 const codeSources = [
-  { id: "github", label: "GitHub", detail: (linked, login) => (linked ? login || "connected" : "not connected") },
+  { id: "github", label: "GitHub", detail: (c) => (c.githubLinked ? c.githubLogin || "connected" : "not connected") },
   { id: "public", label: "Public repository", detail: () => "any GitHub URL" },
-  { id: "drive", label: "Google Drive", detail: () => "coming soon" },
+  { id: "drive", label: "Google Drive", detail: (c) => (c.driveLinked ? c.driveLogin || "connected" : "not connected") },
 ];
+
+// A .py file that can be an entry script. The name goes into the job's run
+// script, so it must be plain (the server checks the same).
+export const isRunnableScript = (item) =>
+  item?.type === "file" && !item.native && /^[A-Za-z0-9_][A-Za-z0-9_.-]*\.py$/i.test(item.name);
 
 function makeInitialForm(defaultRepo, defaultBranch) {
   const repo = String(defaultRepo ?? "").trim();
@@ -78,6 +85,7 @@ function makeInitialForm(defaultRepo, defaultBranch) {
     branch: defaultBranch || "main",
     entryScript: "train.py",
     folder: "",
+    driveItem: "",
     scriptArgs: "",
     runOn: "",
     maxRuntimeSeconds: 3600,
@@ -87,7 +95,7 @@ function makeInitialForm(defaultRepo, defaultBranch) {
   };
 }
 
-export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, githubLinked = false, githubLogin = "", onRepoBranchChange, compute = null, budgetDollars = null }) {
+export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, githubLinked = false, githubLogin = "", driveLinked = false, driveLogin = "", compute = null, budgetDollars = null }) {
   const [form, setForm] = useState(makeInitialForm(defaultRepo, defaultBranch));
   const [isAutoName, setIsAutoName] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -95,36 +103,39 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
   const [repoOptions, setRepoOptions] = useState([]);
   const [isLoadingRepos, setIsLoadingRepos] = useState(false);
   const [repoError, setRepoError] = useState("");
-  const [scriptOptions, setScriptOptions] = useState([]);
-  const [isLoadingScripts, setIsLoadingScripts] = useState(false);
-  const [scriptError, setScriptError] = useState("");
   const [source, setSource] = useState(githubLinked ? "github" : "public");
   const isDrive = source === "drive";
-  // The repo the rest of the form (scripts, repo browser) works from.
+  // The repo the rest of the form (scripts, file browser) works from.
   const activeRepo = isDrive ? "" : form.repo;
+  // Drive: what the student chose in Connections (folders and files).
+  const [driveItems, setDriveItems] = useState(null);
+  const [driveError, setDriveError] = useState("");
+  const driveItem = (driveItems || []).find((item) => item.id === form.driveItem) || null;
+  const driveIsFile = driveItem?.kind === "file";
+  // What job names are made from: the repo, or the Drive item's name.
+  const nameBase = isDrive ? (driveItem?.label || "drive") : form.repo;
 
   // Default to GitHub once the link status arrives.
   useEffect(() => {
     setSource((current) => (current === "drive" ? current : githubLinked ? "github" : "public"));
   }, [githubLinked]);
 
-  // Each source keeps its own repo, so switching back and forth does not put
-  // a private GitHub repo into the public URL box (or the reverse).
-  const repoBySource = useRef({});
+  // Each source keeps its own repo and folder, so switching back and forth
+  // does not put a private GitHub repo into the public URL box (or the
+  // reverse), or a Drive path into a repo.
+  const stateBySource = useRef({});
   const chooseSource = (next) => {
     if (next === source) {
       return;
     }
-    repoBySource.current[source] = form.repo;
+    stateBySource.current[source] = { repo: form.repo, folder: form.folder };
     setSource(next);
-    if (next === "drive") {
-      return;
-    }
-    let repo = repoBySource.current[next] ?? "";
+    const saved = stateBySource.current[next] ?? {};
+    let repo = saved.repo ?? "";
     if (next === "github" && !repoOptions.some((r) => r.fullName === normalizeRepoInput(repo))) {
       repo = repoOptions[0]?.fullName ?? "";
     }
-    setForm((prev) => ({ ...prev, repo }));
+    setForm((prev) => ({ ...prev, repo: next === "drive" ? prev.repo : repo, folder: saved.folder ?? "" }));
   };
 
   // Machines come from the server; see utils/jobPlan.js.
@@ -150,7 +161,7 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
         return prev;
       }
 
-      const nextName = getNextJobName(prev.repo);
+      const nextName = getNextJobName(nameBase);
       if (nextName === prev.name) {
         return prev;
       }
@@ -160,21 +171,34 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
         name: nextName,
       };
     });
-  }, [form.repo, isAutoName]);
+  }, [nameBase, isAutoName]);
 
+  // Drive items, once Drive is linked.
   useEffect(() => {
-    if (typeof onRepoBranchChange !== "function") {
-      return;
+    setDriveItems(null);
+    setDriveError("");
+    if (!driveLinked) {
+      return undefined;
     }
-
-    const timeoutId = window.setTimeout(() => {
-      onRepoBranchChange(activeRepo, form.branch, normalizeFolder(form.folder) ?? "");
-    }, 250);
-
+    let cancelled = false;
+    fetchConnectionItems("google_drive")
+      .then((items) => {
+        if (cancelled) {
+          return;
+        }
+        setDriveItems(items);
+        setForm((prev) => (items.some((i) => i.id === prev.driveItem) ? prev : { ...prev, driveItem: items[0]?.id ?? "" }));
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setDriveItems([]);
+          setDriveError(error.message || "Could not load your Drive items");
+        }
+      });
     return () => {
-      window.clearTimeout(timeoutId);
+      cancelled = true;
     };
-  }, [activeRepo, form.branch, form.folder, onRepoBranchChange]);
+  }, [driveLinked]);
 
   const update = (field) => (event) => {
     setForm((prev) => ({ ...prev, [field]: event.target.value }));
@@ -240,7 +264,8 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
     };
   }, [githubLinked]);
 
-  const folder = normalizeFolder(form.folder);
+  // Drive paths may have spaces; repo folders go into the run script, so stricter.
+  const folder = isDrive ? normalizeDrivePath(form.folder) : normalizeFolder(form.folder);
   const folderInvalid = folder === null;
 
   // Branch menu: the repo's branches, default branch first. When the repo
@@ -275,68 +300,69 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
     };
   }, [branchRepo]);
 
+  // The job's folder, loaded once for both the file browser and the entry
+  // script menu: a repo folder on a branch, or a folder inside a Drive item.
+  // { key, rootLabel, items, error }; items null while loading.
+  const [listing, setListing] = useState({ key: "", rootLabel: "", items: null, error: "" });
+  const listingRepo = normalizeRepoInput(activeRepo);
+  const listingBranch = String(form.branch ?? "").trim() || "main";
+  const listingFolder = driveIsFile ? "" : folder;
+  const listingKey = folderInvalid
+    ? ""
+    : isDrive
+      ? (form.driveItem ? `drive:${form.driveItem}:${listingFolder}` : "")
+      : (listingRepo ? `git:${listingRepo}@${listingBranch}:${listingFolder}` : "");
   useEffect(() => {
-    const normalizedRepo = normalizeRepoInput(activeRepo);
-    const branch = String(form.branch ?? "").trim() || "main";
-
-    if (!normalizedRepo || folderInvalid) {
-      setScriptOptions([]);
-      setIsLoadingScripts(false);
-      setScriptError("");
-      return;
+    if (!listingKey) {
+      setListing({ key: "", rootLabel: "", items: [], error: "" });
+      return undefined;
     }
-
     let cancelled = false;
-    setIsLoadingScripts(true);
-    setScriptError("");
-
-    // Scripts directly in the job's folder (the repo root when there is none).
-    const prefix = folder ? `${folder}/` : "";
-    fetchRepoTree(normalizedRepo, branch, { path: folder })
-      .then((repoData) => {
-        if (cancelled) {
-          return;
-        }
-
-        const pythonFiles = (repoData.items || [])
-          .filter((item) => item?.type === "file")
-          .map((item) => String(item.path || item.rawName || item.name || "").trim())
-          .filter((filePath) => filePath.startsWith(prefix) && filePath.toLowerCase().endsWith(".py"))
-          .map((filePath) => filePath.slice(prefix.length))
-          .filter((name) => name && !name.includes("/"));
-
-        setScriptOptions(pythonFiles);
-        setForm((prev) => {
-          if (!pythonFiles.length || (prev.entryScript && pythonFiles.includes(prev.entryScript))) {
-            return prev;
+    setListing((prev) => ({ key: listingKey, rootLabel: prev.key && prev.rootLabel, items: null, error: "" }));
+    // Typed folders: wait for a pause before asking.
+    const timeoutId = window.setTimeout(() => {
+      const request = isDrive
+        ? fetchDriveFolder(form.driveItem, listingFolder).then((data) => ({ rootLabel: data.root?.label || driveItem?.label || "", items: data.items || [] }))
+        : fetchRepoTree(listingRepo, listingBranch, { path: listingFolder }).then((data) => ({
+          rootLabel: listingRepo,
+          // GitHub items carry full paths; the browser wants names in this folder.
+          items: (data.items || [])
+            .filter((item) => item?.type === "dir" || item?.type === "file")
+            .map((item) => ({ name: String(item.path || item.name || "").split("/").pop(), type: item.type, size: item.size })),
+        }));
+      request
+        .then((data) => {
+          if (cancelled) {
+            return;
           }
-
-          return {
-            ...prev,
-            entryScript: pythonFiles[0],
-          };
+          setListing({ key: listingKey, rootLabel: data.rootLabel, items: data.items, error: "" });
+          const scripts = data.items.filter(isRunnableScript).map((item) => item.name);
+          setForm((prev) => (!scripts.length || scripts.includes(prev.entryScript) ? prev : { ...prev, entryScript: scripts[0] }));
+        })
+        .catch((error) => {
+          if (cancelled) {
+            return;
+          }
+          const notFound = /not found|404/i.test(error.message || "");
+          setListing({
+            key: listingKey,
+            rootLabel: isDrive ? driveItem?.label || "" : listingRepo,
+            items: [],
+            error: notFound && listingFolder
+              ? `Folder '${listingFolder}' was not found${isDrive ? "" : " on this branch"}.`
+              : error.message || "Unable to load this folder",
+          });
         });
-      })
-      .catch((error) => {
-        if (cancelled) {
-          return;
-        }
-
-        setScriptOptions([]);
-        setScriptError(folder && /not found|404/i.test(error.message || "")
-          ? `Folder '${folder}' was not found on this branch.`
-          : error.message || "Unable to load Python scripts");
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setIsLoadingScripts(false);
-        }
-      });
-
+    }, 250);
     return () => {
       cancelled = true;
+      window.clearTimeout(timeoutId);
     };
-  }, [activeRepo, form.branch, folder, folderInvalid]);
+  }, [listingKey]);
+
+  const scriptOptions = (listing.items || []).filter(isRunnableScript).map((item) => item.name);
+  const isLoadingScripts = Boolean(listingKey) && listing.items === null;
+  const scriptError = listing.error;
 
   // A pasted github.com/.../tree/<branch>/<folder> (or /blob/.../script.py)
   // URL also fills in the branch, folder and script.
@@ -364,30 +390,35 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
     const normalizedRepo = normalizeRepoInput(form.repo) || form.repo;
     const trimmedName = String(form.name ?? "").trim();
     const shouldUseAutoName = isAutoName || !trimmedName;
-    const generatedName = shouldUseAutoName ? getNextJobName(normalizedRepo) : "";
+    const generatedName = shouldUseAutoName ? getNextJobName(nameBase) : "";
     const nameForSubmit = shouldUseAutoName ? generatedName : trimmedName;
 
     try {
-      const { runOn: _ignored, maxRuntimeSeconds: _chosen, ...fields } = form;
+      const { runOn: _ignored, maxRuntimeSeconds: _chosen, repo: _repo, branch: _branch, driveItem: _item, folder: _folder, ...fields } = form;
+      // Drive: only the chosen folder is copied and the job runs from its
+      // top, so the folder is part of the source, not the job's folder.
       await onSubmit({
         ...fields,
-        repo: normalizedRepo,
-        folder: folder ?? "",
+        source: isDrive
+          ? { type: "drive", itemId: form.driveItem, path: driveIsFile ? "" : folder ?? "" }
+          : { type: "github", repo: normalizedRepo, branch: form.branch },
+        folder: isDrive ? "" : folder ?? "",
         name: nameForSubmit,
         ...(selectedMachine ? { compute: "ec2", instanceType: runOn, maxRuntimeSeconds: Number(runtimeSeconds) } : {}),
       });
 
       if (shouldUseAutoName) {
-        consumeNextJobName(normalizedRepo);
+        consumeNextJobName(nameBase);
       }
 
       setMessage("Job submitted to queue.");
       setForm((prev) => ({
         ...makeInitialForm(defaultRepo, defaultBranch),
-        name: getNextJobName(prev.repo),
+        name: getNextJobName(nameBase),
         repo: prev.repo,
         branch: prev.branch,
         folder: prev.folder,
+        driveItem: prev.driveItem,
         entryScript: prev.entryScript,
         scriptArgs: prev.scriptArgs,
       }));
@@ -418,7 +449,7 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
                 onClick={() => chooseSource(option.id)}
               >
                 <span className="source-option-label">{option.label}</span>
-                <span className="source-option-detail">{option.detail(githubLinked, githubLogin)}</span>
+                <span className="source-option-detail">{option.detail({ githubLinked, githubLogin, driveLinked, driveLogin })}</span>
               </button>
             ))}
           </div>
@@ -462,8 +493,30 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
           {isDrive ? (
             <>
               <label className="form-label">Google Drive folder</label>
-              <button type="button" className="source-placeholder" disabled>Choose a folder…</button>
-              <span className="form-hint">Coming soon: run a script or notebook from a Google Drive folder.</span>
+              {driveLinked ? (
+                <select className="form-select" value={form.driveItem} onChange={(event) => setForm((prev) => ({ ...prev, driveItem: event.target.value, folder: "" }))} disabled={driveItems === null || !driveItems.length}>
+                  {driveItems === null ? <option>Loading...</option> : null}
+                  {driveItems && !driveItems.length ? <option value="">Nothing chosen yet</option> : null}
+                  {[["folder", "Folders"], ["file", "Files"]].map(([kind, groupLabel]) => {
+                    const options = (driveItems || []).filter((item) => (kind === "folder" ? item.kind === "folder" : item.kind !== "folder"));
+                    return options.length ? (
+                      <optgroup key={kind} label={groupLabel}>
+                        {options.map((item) => (
+                          <option key={item.id} value={item.id} disabled={item.kind === "google-doc"}>{item.label}</option>
+                        ))}
+                      </optgroup>
+                    ) : null;
+                  })}
+                </select>
+              ) : (
+                <a className="source-placeholder" href="#connections">Connect Google Drive to choose a folder →</a>
+              )}
+              <span className="form-hint">
+                {driveError
+                  || (!driveLinked
+                    ? "Connect Google Drive in Connections and choose the folders Talon may use."
+                    : (driveItems && !driveItems.length ? "Choose folders in Connections." : "Folders and files you chose in Connections."))}
+              </span>
             </>
           ) : null}
         </div>
@@ -491,15 +544,17 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
           <label className="form-label">Folder</label>
           <input
             className="form-input"
-            value={isDrive ? "" : form.folder}
+            value={driveIsFile ? "" : form.folder}
             onChange={update("folder")}
-            placeholder="(repository root)"
-            disabled={isDrive}
+            placeholder={isDrive ? (driveIsFile ? "(a single file)" : "(top of the Drive folder)") : "(repository root)"}
+            disabled={isDrive && (driveIsFile || !driveItem)}
           />
           <span className="form-hint">
             {folderInvalid
-              ? "Use a plain path inside the repository, like mnist or src/train."
-              : "The job runs from here and installs its requirements.txt."}
+              ? (isDrive ? "That is not a folder path inside the Drive folder." : "Use a plain path inside the repository, like mnist or src/train.")
+              : isDrive
+                ? "Talon copies this folder and everything in it; files outside it are not available to the job. Its requirements.txt is installed."
+                : "The job runs from here and installs its requirements.txt."}
           </span>
         </div>
         <div className="form-group form-group-inline">
@@ -514,17 +569,30 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
             <input className="form-input" value={form.entryScript} onChange={update("entryScript")} placeholder="train.py" />
           )}
           <span className="form-hint">
-            {isDrive
-              ? "Path to the script inside the folder."
-              : scriptError
+            {scriptError
               ? scriptError
               : (isLoadingScripts
-                ? "Loading top-level Python files..."
+                ? "Loading Python files..."
                 : (scriptOptions.length
-                  ? `Any .py file in ${folder ? `${folder}/` : "the repository root"}.`
-                  : `No .py files in ${folder ? `${folder}/` : "the repository root"} on this branch. You can type one.`))}
+                  ? "Or click a .py file below."
+                  : `No .py files in ${listingFolder ? `${listingFolder}/` : `the ${isDrive ? "Drive folder" : "repository root"}`}. You can type one.`))}
           </span>
         </div>
+        {listingKey ? (
+          <div className="form-group full">
+            <FileBrowser
+              rootLabel={listing.rootLabel || (isDrive ? driveItem?.label : listingRepo)}
+              path={listingFolder}
+              items={listing.items}
+              error={listing.error}
+              onNavigate={(next) => setForm((prev) => ({ ...prev, folder: next }))}
+              onChooseFile={(item) => setForm((prev) => ({ ...prev, entryScript: item.name }))}
+              selectedFile={form.entryScript}
+              emptyText={isDrive ? "This folder is empty." : "No files in this folder on this branch."}
+              disabled={isDrive && driveIsFile}
+            />
+          </div>
+        ) : null}
         {ec2 ? (
           <>
             <div className="form-group form-group-half">
@@ -577,7 +645,6 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
               value={form.scriptArgs}
               onChange={update("scriptArgs")}
               placeholder="--save-model --epochs 3"
-              disabled={isDrive}
               spellCheck={false}
             />
             <span className="form-hint">
@@ -597,10 +664,9 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
           </div>
         </div>
         <div className="form-group full form-actions submit-actions-row">
-          <button className="btn btn-primary" type="submit" disabled={submitting || overBudget || nowhereToRun || isDrive || folderInvalid || !normalizeRepoInput(activeRepo)}>
+          <button className="btn btn-primary" type="submit" disabled={submitting || overBudget || nowhereToRun || folderInvalid || (isDrive ? !driveItem || driveItem.kind === "google-doc" : !normalizeRepoInput(activeRepo))}>
             {submitting ? "Submitting..." : "Submit Job"}
           </button>
-          {isDrive ? <span className="form-hint">Google Drive is not available yet.</span> : null}
         </div>
         {message ? <div className="form-group full"><span className="form-hint">{message}</span></div> : null}
       </form>

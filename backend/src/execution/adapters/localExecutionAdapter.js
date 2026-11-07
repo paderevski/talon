@@ -251,6 +251,18 @@ async function listOutputArtifacts(record) {
   return merged;
 }
 
+// A git repo whose one commit is the job's starting files, so changed
+// files can be found with git status as for a clone.
+async function gitBaseline(dir) {
+  const env = childEnv({ GIT_AUTHOR_NAME: "talon", GIT_AUTHOR_EMAIL: "talon@localhost", GIT_COMMITTER_NAME: "talon", GIT_COMMITTER_EMAIL: "talon@localhost" });
+  for (const args of [["init", "-q"], ["add", "-A"], ["commit", "-q", "--allow-empty", "-m", "Talon input"]]) {
+    const result = await runProcess(gitBin, args, { cwd: dir, env });
+    if (result?.code !== 0) {
+      throw new Error(`git ${args[0]} failed`);
+    }
+  }
+}
+
 export default function createLocalExecutionAdapter() {
   const executionRecords = new Map();
   const queue = [];
@@ -279,95 +291,138 @@ export default function createLocalExecutionAdapter() {
       await mkdir(path.join(record.runDir, "scratch"), { recursive: true });
       await writeFile(record.combinedLogPath, "", "utf8");
 
-      const cloneUrl = `https://github.com/${record.jobSpec.repo}.git`;
-      const cloneSpawn = spawn(
-        gitBin,
-        [
-          "clone",
-          "--depth",
-          "1",
-          "--branch",
-          record.jobSpec.branch,
-          cloneUrl,
-          record.repoDir,
-        ],
-        {
-          cwd: record.runDir,
-          env: childEnv({
-            GIT_TERMINAL_PROMPT: "0",
-            GIT_ASKPASS: "echo",
-            ...gitAuthEnv(record.gitToken),
-          }),
-        },
-      );
-
-      cloneSpawn.stdout?.on("data", (chunk) => {
-        splitIntoLines(chunk.toString("utf8")).forEach((line) => {
-          void persistLine(record, line, "git");
-        });
-      });
-
-      cloneSpawn.stderr?.on("data", (chunk) => {
-        splitIntoLines(chunk.toString("utf8")).forEach((line) => {
-          void persistLine(record, line, "git");
-        });
-      });
-
-      const cloneExit = await new Promise((resolve) => {
-        let settled = false;
-
-        const timeoutId = setTimeout(() => {
-          if (settled) {
+      if (record.fetchInput) {
+        // A non-git source (Google Drive...): fetch it into the repo folder,
+        // then commit it so git status can report what the job changed.
+        const fetchInput = record.fetchInput;
+        record.fetchInput = null; // holds a token: drop it once used
+        try {
+          await persistLine(record, `Copying ${record.jobSpec.sourceLabel || "the code"}...`, "system");
+          // Progress lines are logged in order, without holding up the copy.
+          let logged = Promise.resolve();
+          record.fetchAbort = new AbortController();
+          await fetchInput(record.repoDir, {
+            signal: record.fetchAbort.signal,
+            onProgress: (text) => {
+              logged = logged.then(() => persistLine(record, text, "system")).catch(() => {});
+            },
+          });
+          await logged;
+          await gitBaseline(record.repoDir);
+        } catch (error) {
+          if (record.cancelRequested) {
+            record.state = "cancelled";
+            record.exitCode = 1;
+            record.endedAt = new Date().toISOString();
+            await persistLine(record, "Cancelled while copying the code", "system");
             return;
           }
+          record.state = "failed";
+          record.exitCode = 1;
+          record.endedAt = new Date().toISOString();
+          await persistLine(record, `Could not copy the code: ${error.message}`, "system");
+          return;
+        }
+      } else {
+        const cloneUrl = `https://github.com/${record.jobSpec.repo}.git`;
+        const cloneSpawn = spawn(
+          gitBin,
+          [
+            "clone",
+            "--depth",
+            "1",
+            "--branch",
+            record.jobSpec.branch,
+            cloneUrl,
+            record.repoDir,
+          ],
+          {
+            cwd: record.runDir,
+            env: childEnv({
+              GIT_TERMINAL_PROMPT: "0",
+              GIT_ASKPASS: "echo",
+              ...gitAuthEnv(record.gitToken),
+            }),
+          },
+        );
 
-          settled = true;
-          cloneSpawn.kill("SIGKILL");
-          resolve({ code: 1, signal: "SIGKILL", timedOut: true });
-        }, cloneTimeoutMs);
-
-        cloneSpawn.on("close", (code, signal) => {
-          if (settled) {
-            return;
-          }
-
-          settled = true;
-          clearTimeout(timeoutId);
-          resolve({
-            code: Number(code ?? 1),
-            signal: signal || null,
-            timedOut: false,
+        cloneSpawn.stdout?.on("data", (chunk) => {
+          splitIntoLines(chunk.toString("utf8")).forEach((line) => {
+            void persistLine(record, line, "git");
           });
         });
 
-        cloneSpawn.on("error", () => {
-          if (settled) {
-            return;
-          }
-
-          settled = true;
-          clearTimeout(timeoutId);
-          resolve({ code: 1, signal: null, timedOut: false });
+        cloneSpawn.stderr?.on("data", (chunk) => {
+          splitIntoLines(chunk.toString("utf8")).forEach((line) => {
+            void persistLine(record, line, "git");
+          });
         });
-      });
 
-      record.gitToken = null;
-      if (cloneExit.code !== 0) {
-        record.state = "failed";
-        record.exitCode = cloneExit.code;
-        record.endedAt = new Date().toISOString();
-        if (cloneExit.timedOut) {
-          await persistLine(
-            record,
-            `Git clone timed out after ${cloneTimeoutMs}ms`,
-            "system",
-          );
-        } else {
-          const gitOutput = record.logLines.filter((line) => line.includes("[git]")).join("\n");
-          if (/could not read Username|Authentication failed|Repository not found|terminal prompts disabled/i.test(gitOutput)) {
-            await persistLine(record, describeCloneError(gitOutput), "system");
+        const cloneExit = await new Promise((resolve) => {
+          let settled = false;
+
+          const timeoutId = setTimeout(() => {
+            if (settled) {
+              return;
+            }
+
+            settled = true;
+            cloneSpawn.kill("SIGKILL");
+            resolve({ code: 1, signal: "SIGKILL", timedOut: true });
+          }, cloneTimeoutMs);
+
+          cloneSpawn.on("close", (code, signal) => {
+            if (settled) {
+              return;
+            }
+
+            settled = true;
+            clearTimeout(timeoutId);
+            resolve({
+              code: Number(code ?? 1),
+              signal: signal || null,
+              timedOut: false,
+            });
+          });
+
+          cloneSpawn.on("error", () => {
+            if (settled) {
+              return;
+            }
+
+            settled = true;
+            clearTimeout(timeoutId);
+            resolve({ code: 1, signal: null, timedOut: false });
+          });
+        });
+
+        record.gitToken = null;
+        if (cloneExit.code !== 0) {
+          record.state = "failed";
+          record.exitCode = cloneExit.code;
+          record.endedAt = new Date().toISOString();
+          if (cloneExit.timedOut) {
+            await persistLine(
+              record,
+              `Git clone timed out after ${cloneTimeoutMs}ms`,
+              "system",
+            );
+          } else {
+            const gitOutput = record.logLines.filter((line) => line.includes("[git]")).join("\n");
+            if (/could not read Username|Authentication failed|Repository not found|terminal prompts disabled/i.test(gitOutput)) {
+              await persistLine(record, describeCloneError(gitOutput), "system");
+            }
           }
+          return;
         }
+      }
+
+      // Cancelled while the code was being fetched or cloned: do not run it.
+      if (record.cancelRequested) {
+        record.state = "cancelled";
+        record.exitCode = 1;
+        record.endedAt = new Date().toISOString();
+        await persistLine(record, "Cancelled before the script started", "system");
         return;
       }
 
@@ -490,7 +545,8 @@ export default function createLocalExecutionAdapter() {
     provider: "local",
 
     async start(jobSpec) {
-      const normalizedRepo = assertRepoPath(jobSpec?.repo);
+      const fetchInput = typeof jobSpec?.fetchInput === "function" ? jobSpec.fetchInput : null;
+      const normalizedRepo = fetchInput ? "" : assertRepoPath(jobSpec?.repo);
       const normalizedBranch =
         String(jobSpec?.branch || "main").trim() || "main";
       const normalizedEntryScript = assertEntryScriptPath(jobSpec?.entryScript);
@@ -526,7 +582,10 @@ export default function createLocalExecutionAdapter() {
         // memory only, dropped once the clone is done. It expires after an
         // hour, so a job queued longer than that fails to clone.
         gitToken: jobSpec?.gitToken || null,
+        // Non-git sources: fills the repo folder (holds a token; in memory only).
+        fetchInput,
         jobSpec: {
+          sourceLabel: String(jobSpec?.sourceLabel || ""),
           name: String(jobSpec?.name || "untitled-job"),
           repo: normalizedRepo,
           branch: normalizedBranch,
@@ -628,6 +687,13 @@ export default function createLocalExecutionAdapter() {
 
       if (record.state === "running" && record.process) {
         record.process.kill("SIGTERM");
+        return { ok: true, state: "cancelling" };
+      }
+
+      // Still fetching the code: stop the copy; the runner then ends the
+      // job as cancelled instead of starting the script.
+      if (record.state === "running") {
+        record.fetchAbort?.abort();
         return { ok: true, state: "cancelling" };
       }
 
