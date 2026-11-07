@@ -460,7 +460,84 @@ toward two servers)
 ## Probably to do (not scheduled)
 
 Ideas worth doing that are not in the ordered list yet. Move one up into
-"To-do (in order)" when it is scheduled.
+"To-do (in order)" when it is scheduled. Most come from the EC2 runner
+security review (2026-11-07), listed roughly in the order it suggested.
+
+- **Cap the job log; read it with a byte range** (review #3, availability).
+  `getLogs` (`ec2ExecutionAdapter.js`) downloads the whole `logs/job.log`
+  on every poll, and the log has no size limit: a script printing in a
+  loop can make it gigabytes and exhaust both web servers' memory while
+  people watch. Cap it on the box (keep the first and last N MB, say so in
+  the log) and have the server read a byte range with a size limit. Small,
+  and protects everyone.
+- **Outbound data quota per job** (review #2, cost). The budget covers
+  instance time, not data sent to the internet (about $0.09/GB); a job
+  uploading for 24 h on a large machine could cost thousands of dollars.
+  iptables quota for the `student` user (`-m owner --uid-owner student -m
+  quota --quota 20G`, then reject); downloads barely count (only ACKs go
+  out). Or the reconciler checks each instance's `NetworkOut` and ends jobs
+  over a limit.
+- **Attribution and network audit** (review, auditing). AWS abuse reports
+  give an IP and a time, and job public IPs change per launch: record each
+  instance's public IPv4 in the boot summary and `executionRef`. Add VPC
+  Flow Logs on the jobs subnets (to S3) and Route 53 Resolver query
+  logging, kept 90 days or more (job files in S3 expire after 30). Confirm
+  the account has an organization CloudTrail (not in our Terraform).
+  Decide who may read these logs and for how long (students are minors),
+  and say in the acceptable-use terms that jobs are monitored.
+- **Narrow the job role** (review #4). `AmazonSSMManagedInstanceCore`
+  grants `ssm:GetParameter(s)` on `*` (any parameter in the shared
+  account; Talon's secrets are safe on the customer KMS key, but any plain
+  or default-key parameter added later is readable from a job with root).
+  Replace it with Session Manager's minimum (`ssmmessages:*`,
+  `ec2messages:*`, `ssm:UpdateInstanceInformation`) or drop it, and deny
+  use of the role's credentials outside the VPC (`aws:EC2InstanceSourceVPC`;
+  check the key name). Superseded for S3 by presigned URLs (below).
+- **Keep job AMIs patched** (review #4). The Ubuntu AMI moves only on
+  `terraform apply`, so the kernel goes stale and local root exploits
+  matter more over time: refresh monthly, or bake an AMI with unattended
+  security upgrades (also removes the boot-time AWS CLI install).
+- **DNS only through the VPC resolver; DNS Firewall** (review #5). The job
+  security group allows port 53 to anywhere, so jobs can use any DNS
+  server and send UDP 53 anywhere. Traffic to the Amazon resolver is not
+  filtered by security groups (verify), so removing both DNS rules should
+  keep DNS working and force lookups through the resolver, where Route 53
+  Resolver DNS Firewall (AWS managed threat lists, tunnel and mining
+  domains) and query logging apply.
+- **Kill student processes before the final upload** (review, low). A
+  `setsid` daemon outlives `timeout` and keeps running through the final
+  uploads, where it could swap a file for a symlink between `find` and the
+  upload (root then uploads a root-readable file). `pkill -KILL -u student`
+  before the last `sync_all`.
+- **Egress proxy with an allow list** (follow-up to the review). Jobs in
+  private subnets, no public IPs; the job security group reaches only a
+  Squid proxy (CONNECT allow list: PyPI, PyTorch, Hugging Face, Kaggle,
+  GitHub) and S3 through the gateway endpoint; iptables lets `student`
+  reach only the proxy; `run.sh` sets `HTTPS_PROXY`. Gives the allow list,
+  a per-job log of every connection and its bytes, one egress IP for
+  attribution, and blocks reverse tunnels. Design notes: one proxy per job
+  zone (each in an Auto Scaling group of one, size as a variable; jobs use
+  their own zone's proxy, so no cross-zone charges), stop when no EC2 job
+  has been unfinished for 4 h and start at submit, never behind NAT and
+  never on a web server. Rough cost (us-east-1 on-demand, 2026-11-07):
+  c7gn.medium (3.125 Gbps baseline) $45.55/month always on, about $16 with
+  stop-when-idle, plus about $6 for disk, IP and logs. Watch: Hugging Face
+  rate-limits anonymous requests per IP.
+- **Caches** (after the proxy, past about 20 jobs). A pip cache (devpi on
+  the proxy, or CodeArtifact) and S3 staging for class datasets (a teacher
+  uploads once; jobs read through the S3 gateway endpoint, skipping the
+  proxy). This is also the open "large-file S3 cache" decision. Caching
+  HTTPS in Squid itself (SslBump) is not worth it: per-tool trust stores
+  and signed, expiring CDN URLs.
+- **GuardDuty, and a separate AWS account for jobs** (review #1; needs LCPS
+  IT). Jobs can reach the internet from the shared LCPS account, so abuse
+  reports land on that account. `enable_guardduty` exists but is
+  account-wide. A jobs-only account is the one fix that limits the damage
+  to Talon.
+- **Spot as an opt-in** ("cheaper, may restart"). RunInstances can ask for
+  Spot today (`InstanceMarketOptions`); Batch adds automatic retries.
+  Decide whether students pay for interrupted runs; class scripts rarely
+  checkpoint.
 
 - **Presigned S3 URLs for job instances, so jobs hold no AWS credentials**
   (from the EC2 runner security review, 2026-11-07). Today every job
