@@ -99,6 +99,8 @@ export function buildStages({ job, events = [], lastOutput = "" }) {
   const first = events[0] || null;
   const runEvent = find(/running the job/);
   const endEvent = find(/^job ended after/);
+  // The exit code as text ("0", "124"), undefined when the line has none.
+  const endCode = endEvent ? /exit code (\d+)/.exec(endEvent.text)?.[1] : undefined;
   const doneEvent = find(/^done \(/);
   const claimed = Boolean(ref.instanceId);
   const instanceUp = Boolean(first) || job?.status === "running";
@@ -157,11 +159,11 @@ export function buildStages({ job, events = [], lastOutput = "" }) {
       done: Boolean(endEvent),
       startedAt: runEvent?.at ?? null,
       endedAt: endEvent?.at ?? null,
-      exitCode: endEvent ? Number(/exit code (\d+)/.exec(endEvent.text)?.[1]) : null,
+      exitCode: endCode === undefined ? null : Number(endCode),
       detail: (() => {
         if (endEvent) {
-          const code = /exit code (\d+)/.exec(endEvent.text)?.[1];
-          return code === "0" ? "Exited normally (code 0)" : code === "124" ? "Stopped at the time limit" : `Exited with code ${code}`;
+          if (endCode === undefined) return "Ended";
+          return endCode === "0" ? "Exited normally (code 0)" : endCode === "124" ? "Stopped at the time limit" : `Exited with code ${endCode}`;
         }
         return runEvent && lastOutput ? lastOutput : "As the job user, under the time limit";
       })(),

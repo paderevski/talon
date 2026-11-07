@@ -140,3 +140,24 @@ test("machine labels name the GPU", () => {
   assert.equal(machineLabel(gpu("g4dn.xlarge", {}, [])), "NVIDIA T4 (16 GB GPU), 8 GB memory, 2 CPUs (g4dn.xlarge) - $0.080/hour");
   assert.equal(machineLabel(machine("c7g.large", {})), "8 GB memory, 2 CPUs (c7g.large) - $0.080/hour");
 });
+
+test("an overdrawn budget affords nothing; the default machine is still chosen and shown over budget", () => {
+  const plan = planJob({ compute: compute(), maxRuntimeSeconds: 1800, budgetDollars: -0.5 });
+  assert.ok(plan.machines.every((m) => !m.affordable));
+  assert.equal(plan.runOn, "m7g.large");
+  assert.equal(plan.overBudget, true);
+});
+
+test("a budget exactly equal to the reservation is enough", () => {
+  const plan = planJob({ compute: compute(), runOn: "c7g.large", maxRuntimeSeconds: 3600, budgetDollars: 0.09 });
+  assert.equal(plan.runtimeSeconds, 3600);
+  assert.equal(plan.overBudget, false);
+});
+
+test("formatRuntime and machineLabel for fractional hours and GPUs", () => {
+  assert.equal(formatRuntime(5400), "1.5 hours");
+  assert.equal(
+    machineLabel({ instanceType: "g4dn.xlarge", gpu: "NVIDIA T4", gpuMemoryGb: 16, memoryGb: 16, vcpus: 4, hourlyRateCents: 54.1 }),
+    "NVIDIA T4 (16 GB GPU), 16 GB memory, 4 CPUs (g4dn.xlarge) - $0.541/hour",
+  );
+});

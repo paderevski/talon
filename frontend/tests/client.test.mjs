@@ -3,8 +3,13 @@ import test from "node:test";
 import {
   cancelJob,
   disconnectConnection,
+  fetchConnections,
+  fetchCurrentUser,
+  fetchJobs,
   GatewayError,
+  getJobFileDownloadUrl,
   hideJob,
+  login,
   setUnauthorizedHandler,
   unhideJob,
 } from "../src/api/client.js";
@@ -53,4 +58,35 @@ test("writes send the session cookie; a 401 outside /api/auth signs the user out
   assert.equal(calls[0].init.credentials, "same-origin");
   assert.equal(signedOut, 1);
   setUnauthorizedHandler(null);
+});
+
+test("a 401 from /api/auth (bad login, session check) does not trigger sign-out", async () => {
+  let signedOut = 0;
+  setUnauthorizedHandler(() => { signedOut += 1; });
+  answer(401, JSON.stringify({ message: "Invalid username or password" }));
+  await assert.rejects(login("a", "b"), /Invalid username or password/);
+  answer(401, JSON.stringify({ message: "Not signed in" }));
+  assert.equal(await fetchCurrentUser(), null);
+  assert.equal(signedOut, 0);
+  setUnauthorizedHandler(null);
+});
+
+test("job list and download URLs are built with encoding; owner is only passed to the server", async () => {
+  const calls = answer(200, JSON.stringify({ items: [] }));
+  await fetchJobs("hidden", { owner: "a b&c" });
+  const url = new URL(calls[0].url, "http://x");
+  assert.equal(url.pathname, "/api/jobs");
+  assert.deepEqual(Object.fromEntries(url.searchParams), { status: "hidden", owner: "a b&c", includeHidden: "1" });
+  await fetchJobs("running");
+  assert.equal(new URL(calls[1].url, "http://x").searchParams.has("includeHidden"), false);
+
+  const download = new URL(getJobFileDownloadUrl("job/1", "a&b#c.txt", "repo_changed"), "http://x");
+  assert.equal(download.pathname, "/api/jobs/job%2F1/files/download");
+  assert.equal(download.searchParams.get("name"), "a&b#c.txt");
+  assert.equal(download.searchParams.get("source"), "repo_changed");
+});
+
+test("fetchConnections tolerates a body without a list", async () => {
+  answer(200, JSON.stringify({ items: null }));
+  assert.deepEqual(await fetchConnections(), []);
 });

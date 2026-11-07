@@ -24,11 +24,13 @@ export async function run({ baseUrl }) {
   const studentOwners = new Set(studentList.items.map((item) => item.ownerUsername));
   assert(studentOwners.size === 1 && studentOwners.has("jane_smith"), `Student saw owners ${[...studentOwners]}`);
 
+  // A job you cannot see reads as "no data" (200, like a stale reference), never the job.
   const peek = await student.fetch(`${baseUrl}/api/jobs/${adminJob.id}`);
   const peekBody = await peek.json().catch(() => ({}));
   assert(
-    peek.status === 404 || !peekBody?.job,
-    `Student must not read another user's job (status ${peek.status})`,
+    peek.status === 200 && peekBody.job === null && peekBody.execution === null && peekBody.noData === true
+      && !JSON.stringify(peekBody).includes("admin-private"),
+    `Student must not read another user's job: ${peek.status} ${JSON.stringify(peekBody)}`,
   );
 
   const hide = await student.fetch(`${baseUrl}/api/jobs/${adminJob.id}`, { method: "DELETE" });
@@ -55,6 +57,9 @@ export async function run({ baseUrl }) {
   const adminIds = new Set(adminList.items.map((item) => item.id));
   assert(adminIds.has(adminJob.id) && adminIds.has(janeJob.id), "Admin should see all jobs");
 
-  await student.fetch(`${baseUrl}/api/jobs/${janeJob.id}/cancel`, { method: "POST" });
-  await apiFetch(`${baseUrl}/api/jobs/${adminJob.id}/cancel`, { method: "POST" });
+  // Stop both (they may already have finished: the clone can fail fast).
+  for (const [fetcher, id] of [[student.fetch, janeJob.id], [apiFetch, adminJob.id]]) {
+    const stopped = await fetcher(`${baseUrl}/api/jobs/${id}/cancel`, { method: "POST" });
+    assert(stopped.ok || stopped.status === 409, `cancel ${id}: ${stopped.status}`);
+  }
 }

@@ -9,7 +9,7 @@ import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promise
 import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { assert, createCookieJar, login, resetTestDatabase, startBackendForTests, testDatabaseUrl, waitFor } from "../lib/harness.mjs";
+import { assert, createCookieJar, insertTestJob, login, resetTestDatabase, startBackendForTests, testDatabaseUrl, waitFor } from "../lib/harness.mjs";
 import { runMigrations } from "../../src/db/migrate.js";
 import { assertSecureDatabaseUrl, connectionConfig, databaseTransport, useMigrationRole, withTransaction } from "../../src/db/pool.js";
 import { withTryAdvisoryLock } from "../../src/db/advisoryLock.js";
@@ -811,8 +811,8 @@ const tests = [
     let message = "";
     try {
       await launchEc2Job({
-        jobsRepository: jobs, user, isAdmin: false, maxRuntimeSeconds: 1800,
-        payload: { name: "fails", repo: "x/y", instanceType: "c7g.large" },
+        jobsRepository: jobs, user, isAdmin: false,
+        payload: { name: "fails", repo: "x/y", instanceType: "c7g.large", maxRuntimeSeconds: 1800 },
         adapter: { async start() { throw new Error("InsufficientInstanceCapacity"); } },
       });
     } catch (error) {
@@ -825,11 +825,11 @@ const tests = [
 
     let startedWith = null;
     const ok = await launchEc2Job({
-      jobsRepository: jobs, user, isAdmin: false, maxRuntimeSeconds: 1800,
-      payload: { name: "works", repo: "x/y", instanceType: "c7g.large", folder: "mnist", entryScript: "main.py", scriptArgs: "--save-model --epochs 2" },
+      jobsRepository: jobs, user, isAdmin: false,
+      payload: { name: "works", repo: "x/y", instanceType: "c7g.large", maxRuntimeSeconds: 1800, folder: "mnist", entryScript: "main.py", scriptArgs: "--save-model --epochs 2" },
       adapter: { async start(spec) { startedWith = spec; return { provider: "ec2", executionId: spec.jobId, jobId: spec.jobId, instanceId: "i-1" }; } },
     });
-    assert(ok.executionRef.instanceId === "i-1" && ok.reservedCents > 0 && ok.computeType === undefined, `launched job ${JSON.stringify(ok)}`);
+    assert(ok.executionRef.instanceId === "i-1" && ok.reservedCents > 0 && ok.gpu === "c7g.large" && ok.maxRuntimeSeconds === 1800, `launched job ${JSON.stringify(ok)}`);
     assert(ok.folder === "mnist" && startedWith.folder === "mnist", `folder not stored or passed: ${ok.folder} / ${startedWith?.folder}`);
     assert(ok.scriptArgs === "--save-model --epochs 2" && JSON.stringify(startedWith.scriptArgs) === JSON.stringify(["--save-model", "--epochs", "2"]), `args: ${ok.scriptArgs} / ${JSON.stringify(startedWith.scriptArgs)}`);
   }],
@@ -2506,6 +2506,42 @@ tests.push(
   }],
 );
 
+// Second pass of the test review: provider outages.
+tests.push(
+  ["github app and google drive: a provider outage during refresh leaves the link alone", async () => {
+    const userId = await scalar("SELECT id FROM users WHERE username = 'student_k1'");
+    const past = new Date(Date.now() - 1000);
+
+    const githubStore = createGithubAccountsStore({ pool });
+    const githubLink = () => githubStore.saveLink(userId, { githubUserId: 4001, githubLogin: "k1hub", tokens: { accessToken: "ghu_old", refreshToken: "ghr_old", accessExpiresAt: past } });
+    const throws = async () => { throw new Error("connect ECONNREFUSED"); };
+    for (const fetch of [makeFakeGithub({ "POST /login/oauth/access_token": { status: 500, data: { message: "down" } } }).fetch, throws]) {
+      await githubLink();
+      const app = createGithubApp({ config: fakeGithubConfig(), store: githubStore, fetch });
+      let rejected = false;
+      try { await app.getUserAccessToken(userId); } catch { rejected = true; }
+      assert(rejected, "an outage should be an error, not 'not linked'");
+      assert((await githubStore.getLink(userId)) !== null, "GitHub link must survive an outage");
+    }
+    await githubStore.deleteLink(userId);
+
+    const store = driveStore();
+    const driveLink = () => store.saveLink(userId, { externalId: "g-outage", login: "k1@example.com", clientId: "client-1", tokens: { accessToken: "ya29.old", refreshToken: "1//old", scope: driveScope, accessExpiresAt: past } });
+    for (const fetch of [makeFakeGoogle({ "POST oauth2.googleapis.com/token": () => ({ __status: 503, message: "backend error" }) }).fetch, throws]) {
+      await driveLink();
+      const drive = createGoogleDriveProvider({ store, settings: fakeGoogleSettings(), fetch });
+      let rejected = false;
+      try { await drive.getAccessToken(userId); } catch { rejected = true; }
+      assert(rejected, "a Google outage should be an error");
+      assert((await drive.getLink(userId)) !== null, "Drive link must survive an outage");
+    }
+    // A client Google no longer accepts is a dead link (reconnect), not an outage.
+    await driveLink();
+    const rejectedClient = createGoogleDriveProvider({ store, settings: fakeGoogleSettings(), fetch: makeFakeGoogle({ "POST oauth2.googleapis.com/token": () => ({ error: "unauthorized_client" }) }).fetch });
+    assert((await rejectedClient.getAccessToken(userId)) === null && (await rejectedClient.getLink(userId)) === null, "unauthorized_client unlinks");
+  }],
+);
+
 // HTTP tests against a real backend using the Postgres provider and
 // Postgres session store. `server` is started after the repository tests.
 let server = null;
@@ -2628,6 +2664,89 @@ httpTests.push(
     assert(finished.status === 409, `finished cancel: expected 409, got ${finished.status}`);
     assert((await jobs.findById(launched.id)).resultSyncKey === "status:done", "result unchanged");
     assert((await ledgerCount(job.id, "refund")) === 1, "still one refund");
+  }],
+);
+
+httpTests.push(
+  ["session: an expired session and a tampered cookie are signed out", async () => {
+    const jar = createCookieJar();
+    await login(jar, server.baseUrl, "student_k2", "student123");
+    const cookie = jar.get("talon.sid");
+    const sid = decodeURIComponent(cookie).replace(/^s:/, "").split(".")[0];
+    assert((await jar.fetch(`${server.baseUrl}/api/auth/me`)).ok, "signed in");
+
+    // Same session id, wrong signature.
+    const tampered = createCookieJar();
+    tampered.set("talon.sid", cookie.slice(0, -2) + (cookie.endsWith("AA") ? "BB" : "AA"));
+    assert((await tampered.fetch(`${server.baseUrl}/api/auth/me`)).status === 401, "tampered cookie must not sign in");
+    // A forged id with no signature.
+    const unsigned = createCookieJar();
+    unsigned.set("talon.sid", encodeURIComponent(sid));
+    assert((await unsigned.fetch(`${server.baseUrl}/api/auth/me`)).status === 401, "unsigned cookie must not sign in");
+
+    await pool.query("UPDATE sessions SET expire = now() - interval '1 second' WHERE sid = $1", [sid]);
+    assert((await jar.fetch(`${server.baseUrl}/api/auth/me`)).status === 401, "expired session must be signed out");
+  }],
+
+  ["security: a teacher stops seeing a student's jobs when the student leaves, the class moves or is archived", async () => {
+    const classId = await scalar("SELECT c.id FROM classes c JOIN users t ON t.id = c.teacher_id WHERE t.username = 'teacher_grace' AND c.archived_at IS NULL");
+    const studentId = await scalar("SELECT id FROM users WHERE username = 'student_g4'");
+    const graceId = await scalar("SELECT id FROM users WHERE username = 'teacher_grace'");
+    const adaId = await scalar("SELECT id FROM users WHERE username = 'teacher_ada'");
+    const jobId = await insertTestJob(pool, { owner: "student_g4", name: "scope-check", status: "completed", executionId: "scope-check" });
+
+    const sees = async (username) => {
+      const jar = createCookieJar();
+      await login(jar, server.baseUrl, username, "teach123");
+      const list = await (await jar.fetch(`${server.baseUrl}/api/jobs?status=all`)).json();
+      const one = await (await jar.fetch(`${server.baseUrl}/api/jobs/${jobId}`)).json();
+      const inList = list.items.some((item) => item.id === jobId);
+      assert(inList === Boolean(one.job), `${username}: list ${inList} but single read ${Boolean(one.job)}`);
+      return inList;
+    };
+
+    assert(await sees("teacher_grace"), "Grace sees her student's job");
+    try {
+      await pool.query("DELETE FROM class_members WHERE class_id = $1 AND user_id = $2", [classId, studentId]);
+      assert(!(await sees("teacher_grace")), "removed from the class: Grace must not see it");
+    } finally {
+      await pool.query("INSERT INTO class_members (class_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", [classId, studentId]);
+    }
+    try {
+      await pool.query("UPDATE classes SET teacher_id = $2 WHERE id = $1", [classId, adaId]);
+      assert(!(await sees("teacher_grace")), "class moved: Grace must not see it");
+      assert(await sees("teacher_ada"), "class moved: Ada sees it");
+    } finally {
+      await pool.query("UPDATE classes SET teacher_id = $2 WHERE id = $1", [classId, graceId]);
+    }
+    try {
+      await pool.query("UPDATE classes SET archived_at = now() WHERE id = $1", [classId]);
+      assert(!(await sees("teacher_grace")), "class archived: Grace must not see it");
+    } finally {
+      await pool.query("UPDATE classes SET archived_at = NULL WHERE id = $1", [classId]);
+    }
+    assert(await sees("teacher_grace"), "restored");
+  }],
+);
+
+// Last: whatever the tests above did, money still adds up.
+httpTests.push(
+  ["budget: after every test, balances equal the ledger and finished jobs cost what the ledger took", async () => {
+    const drift = await pool.query(
+      `SELECT a.id, a.balance_cents, COALESCE(SUM(l.amount_cents), 0) AS ledger
+         FROM budget_accounts a LEFT JOIN budget_ledger l ON l.account_id = a.id
+        GROUP BY a.id HAVING a.balance_cents <> COALESCE(SUM(l.amount_cents), 0)`,
+    );
+    assert(drift.rows.length === 0, `balance differs from the ledger: ${JSON.stringify(drift.rows)}`);
+    const jobs = await pool.query(
+      `SELECT j.id, j.cost_cents, j.reserved_cents, -COALESCE(SUM(l.amount_cents), 0) AS taken
+         FROM jobs j LEFT JOIN budget_ledger l ON l.job_id = j.id
+        WHERE j.result_sync_key IS NOT NULL
+        GROUP BY j.id HAVING j.cost_cents <> -COALESCE(SUM(l.amount_cents), 0)`,
+    );
+    assert(jobs.rows.length === 0, `job cost differs from its ledger entries: ${JSON.stringify(jobs.rows)}`);
+    const checked = Number(await scalar("SELECT count(*) FROM jobs WHERE result_sync_key IS NOT NULL AND reserved_cents > 0"));
+    assert(checked > 5, `expected the earlier tests to leave settled reserved jobs, found ${checked}`);
   }],
 );
 

@@ -89,11 +89,21 @@ test("script failed: run marked failed, output still saved", () => {
   assert.match(result.stages.find((stage) => stage.id === "run").detail, /code 1/);
 });
 
+// A cancelled job is stored as failed with the cancel as its error (the
+// database has no "cancelled" status).
 test("cancelled during setup: setup stopped, later stages waiting", () => {
-  const result = buildStages({ job: job({ status: "cancelled" }), events: events(...fullLog.slice(0, 3)) });
+  const result = buildStages({ job: job({ status: "failed", error: "Job cancelled" }), events: events(...fullLog.slice(0, 3)) });
   assert.equal(states(result).setup, "failed");
-  assert.equal(result.stages.find((stage) => stage.id === "setup").detail, "Cancelled");
+  assert.equal(result.stages.find((stage) => stage.id === "setup").detail, "Job cancelled");
   assert.equal(states(result).run, "waiting");
+});
+
+test("cancelled before launch: the first step stopped with the reason", () => {
+  const result = buildStages({ job: job({ status: "failed", error: "Cancelled before it started", executionRef: undefined }) });
+  const failed = result.stages.filter((stage) => stage.state === "failed");
+  assert.equal(failed.length, 1);
+  assert.equal(failed[0].id, result.stages[0].id);
+  assert.equal(failed[0].detail, "Cancelled before it started");
 });
 
 test("an old completed job without step lines shows as done", () => {
@@ -135,4 +145,39 @@ test("a launch that failed shows its reason on the step where it stopped", () =>
   const { stages } = buildStages({ job: failed, events: [] });
   assert.equal(stages[0].state, "failed");
   assert.match(stages[0].detail, /Niagara 01\.mp4 \(169 MB\)/);
+});
+
+test("an end line without an exit code says it ended, never 'undefined'", () => {
+  const log = [...fullLog.slice(0, 7), "[talon] 14:02:10 job ended after 68s; saving output"];
+  const result = buildStages({ job: job({ status: "running" }), events: events(...log) });
+  const run = result.stages.find((stage) => stage.id === "run");
+  assert.equal(run.exitCode, null);
+  assert.ok(!/undefined|NaN/.test(run.detail), run.detail);
+  assert.equal(run.state, "done");
+});
+
+test("exit code 124 is the time limit, and fails the run", () => {
+  const log = [...fullLog.slice(0, 7), "[talon] 14:31:02 job ended after 1800s with exit code 124; saving output", "[talon] 14:31:04 done (timeout); shutting down"];
+  const result = buildStages({ job: job({ status: "failed" }), events: events(...log) });
+  const run = result.stages.find((stage) => stage.id === "run");
+  assert.equal(run.state, "failed");
+  assert.equal(run.detail, "Stopped at the time limit");
+});
+
+test("a job with no launch time yet does not throw and has no start", () => {
+  const result = buildStages({ job: job({ executionRef: { provider: "ec2", instanceId: "i-1" } }), events: [] });
+  assert.equal(result.startedAt, null);
+});
+
+test("log times wrap to the nearest day of the reference", () => {
+  const justAfterMidnight = Date.parse("2026-11-06T00:00:05Z");
+  assert.equal(new Date(parseTalonLine("[talon] 23:59:50 x", justAfterMidnight).at).toISOString(), "2026-11-05T23:59:50.000Z");
+  assert.equal(new Date(parseTalonLine("[talon] 00:00:10 x", Date.parse("2026-11-05T23:59:55Z")).at).toISOString(), "2026-11-06T00:00:10.000Z");
+});
+
+test("formatElapsed edge cases", () => {
+  assert.equal(formatElapsed(NaN), "");
+  assert.equal(formatElapsed(-1), "");
+  assert.equal(formatElapsed(0), "0s");
+  assert.equal(formatElapsed(59400), "59s");
 });

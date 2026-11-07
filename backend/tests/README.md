@@ -24,10 +24,15 @@ From `backend/`:
 
 ## Current coverage
 
-One file per case in `cases/` (32 today): sign-in, sessions and password
-changes, roles and roster access, header spoofing, job visibility, files and
-budgets, EC2 access and cancel, connections, logging and proxy trust,
-management and roster import.
+One file per case in `cases/` (34 today): sign-in, sessions, password
+changes and login throttling, roles and roster access, header spoofing, job
+visibility, files and budgets, EC2 access and cancel, connections, logging
+and proxy trust, management and roster import.
+
+Jobs clone their code from local fixture repositories, never github.com:
+the backend's git (`TALON_GIT_BIN`) is a wrapper that points
+`https://github.com/` at repos the harness builds in the temp folder
+(`gitFixtures` in `lib/harness.mjs`; add a repo there if a test needs one).
 List them with `ls cases`.
 
 ## Add a new regression test
