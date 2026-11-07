@@ -15,7 +15,7 @@ import {
   updateUser,
 } from "../services/management.js";
 import { importRoster } from "../services/rosterImport.js";
-import { getGithubApp } from "../services/githubApp.js";
+import { getConnectionRegistry } from "../connections/registry.js";
 import { log } from "../utils/log.js";
 
 // Mounted behind requireRole("admin") in server.js.
@@ -76,24 +76,28 @@ router.post("/users/:userId/unlock", handle(async (req, res) => {
   return res.json({ ok: true });
 }));
 
-// Unlinks the user's GitHub account (same as their own Disconnect: Talon's
-// grant is revoked on GitHub too), e.g. when a student linked it to the
-// wrong Talon account. They can connect again afterwards.
-router.delete("/users/:userId/github", handle(async (req, res) => {
-  const github = getGithubApp();
-  const link = await github.getLink(req.params.userId);
-  if (!link) {
-    return res.status(404).json({ message: "This user has no GitHub account linked" });
+// Unlinks one of the user's outside accounts (same as their own Disconnect:
+// for GitHub, Talon's grant is revoked on GitHub too), e.g. when a student
+// linked the wrong account. They can connect again afterwards.
+router.delete("/users/:userId/connections/:provider", handle(async (req, res) => {
+  const provider = getConnectionRegistry().get(req.params.provider);
+  if (!provider) {
+    return res.status(404).json({ message: "Unknown connection" });
   }
-  await github.unlink(req.params.userId);
-  log.info(`admin ${req.user.username} unlinked GitHub account ${link.githubLogin}`, {
-    event: "admin.github_unlinked",
+  const link = await provider.getLink(req.params.userId);
+  if (!link) {
+    return res.status(404).json({ message: `This user has no ${provider.label} account linked` });
+  }
+  await provider.unlink(req.params.userId);
+  log.info(`admin ${req.user.username} unlinked ${provider.label} account ${link.login}`, {
+    event: "admin.connection_unlinked",
     requestId: req.id,
     userId: req.user.id,
     targetUserId: req.params.userId,
-    githubLogin: link.githubLogin,
+    provider: provider.id,
+    login: link.login,
   });
-  return res.json({ ok: true, githubLogin: link.githubLogin });
+  return res.json({ ok: true, provider: provider.id, login: link.login });
 }));
 
 // CSV roster import. { csv, defaultRole, dryRun }; dryRun defaults to true so

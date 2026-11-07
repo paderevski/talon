@@ -220,7 +220,7 @@ export function createGithubApp({
     if (!me.ok || !me.data?.id || !me.data?.login) {
       throw httpError(`Could not read the GitHub account (${me.status})`, 502);
     }
-    await accounts().saveLink(userId, { githubUserId: me.data.id, githubLogin: me.data.login, tokens });
+    await accounts().saveLink(userId, { githubUserId: me.data.id, githubLogin: me.data.login, clientId: cfg.clientId, tokens });
     return { githubLogin: me.data.login };
   }
 

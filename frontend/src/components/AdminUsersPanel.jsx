@@ -3,7 +3,7 @@ import {
   createAdminUser,
   resetAdminUserPassword,
   unlockAdminUser,
-  unlinkAdminUserGithub,
+  unlinkAdminUserConnection,
   updateAdminUser,
 } from "../api/client";
 import CredentialsNotice from "./CredentialsNotice";
@@ -227,7 +227,7 @@ export default function AdminUsersPanel({ users, classes, authUser, onChanged, t
                 disabled={isBusy}
                 title="Forget this user's GitHub link so they can connect again (for example with the right account)"
                 onClick={async () => {
-                  const done = await run(() => unlinkAdminUserGithub(editing.id), `Unlinked GitHub account ${editing.githubLogin} from ${editing.username}`);
+                  const done = await run(() => unlinkAdminUserConnection(editing.id, "github"), `Unlinked GitHub account ${editing.githubLogin} from ${editing.username}`);
                   if (done) {
                     setEditing({ ...editing, githubLogin: "" });
                   }

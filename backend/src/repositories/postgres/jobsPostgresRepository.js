@@ -13,11 +13,32 @@ import {
 export const justFinalized = Symbol("justFinalized");
 
 const jobSelect = `
-  SELECT j.*, o.username AS owner_username, h.username AS hidden_by_username
+  SELECT j.*, o.username AS owner_username, h.username AS hidden_by_username,
+         ci.source_type AS code_source_type, ci.source_ref AS code_source_ref,
+         ci.snapshot_sha256 AS code_snapshot_sha256, ci.snapshot_bytes AS code_snapshot_bytes
   FROM jobs j
   JOIN users o ON o.id = j.owner_user_id
   LEFT JOIN users h ON h.id = j.hidden_by_user_id
+  LEFT JOIN job_inputs ci ON ci.job_id = j.id AND ci.role = 'code'
 `;
+
+// The job's code source as given to create(): { type, ref, label }. Callers
+// that still pass repo/branch get a GitHub source (the repository does not
+// validate; routes do, through sources/index.js parseCodeSource).
+function codeSourceFrom({ source, repo, branch }) {
+  if (source?.type) {
+    return { type: source.type, ref: source.ref ?? {}, label: source.label ?? "" };
+  }
+  const repoPath = String(repo ?? "");
+  return { type: "github", ref: { host: "github.com", repo: repoPath, branch: branch || "main" }, label: repoPath };
+}
+
+async function insertCodeInput(client, jobId, source) {
+  await client.query(
+    "INSERT INTO job_inputs (job_id, role, source_type, source_ref) VALUES ($1, 'code', $2, $3::jsonb)",
+    [jobId, source.type, JSON.stringify(source.ref ?? {})],
+  );
+}
 
 // The job shape the API and frontend have always used.
 function mapJobRow(row) {
@@ -28,8 +49,14 @@ function mapJobRow(row) {
   return {
     id: row.id,
     name: row.name,
-    repo: row.repo,
-    branch: row.branch,
+    // Where the code came from: { type, label, ref } (ref per type; github:
+    // { host, repo, branch, commit }). type is null for a job without one.
+    source: {
+      type: row.code_source_type ?? null,
+      label: row.source_label || "",
+      ref: row.code_source_ref ?? {},
+      ...(row.code_snapshot_sha256 ? { snapshot: { sha256: row.code_snapshot_sha256, bytes: Number(row.code_snapshot_bytes) } } : {}),
+    },
     entryScript: row.entry_script,
     folder: row.folder || "",
     scriptArgs: row.script_args || "",
@@ -68,7 +95,7 @@ function mapResultRow(row) {
     ownerUsername: row.owner_username,
     name: row.name,
     status: row.status,
-    repo: row.repo,
+    sourceLabel: row.source_label,
     duration: formatDuration(row.duration_seconds),
     output: row.output,
     files: row.files,
@@ -113,8 +140,9 @@ export function createJobsPostgresRepository({ pool } = {}) {
   async function create({
     ownerUserId,
     name,
+    source = null,
     repo,
-    branch = "main",
+    branch,
     entryScript = "train.py",
     folder = "",
     scriptArgs = "",
@@ -125,19 +153,24 @@ export function createJobsPostgresRepository({ pool } = {}) {
     hourlyRateCents = 0,
     maxRuntimeSeconds = null,
   }) {
-    const result = await db().query(
-      `INSERT INTO jobs
-         (owner_user_id, name, repo, branch, entry_script, status, execution_provider,
-          execution_ref, compute_type, hourly_rate_cents, max_runtime_seconds, folder, script_args)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-       RETURNING id`,
-      [
-        ownerUserId, name, repo, branch, entryScript, status, executionProvider,
-        executionRef ? JSON.stringify(executionRef) : null,
-        computeType, hourlyRateCents, maxRuntimeSeconds, folder, scriptArgs,
-      ],
-    );
-    return findById(result.rows[0].id);
+    const code = codeSourceFrom({ source, repo, branch });
+    const jobId = await withTransaction(async (client) => {
+      const result = await client.query(
+        `INSERT INTO jobs
+           (owner_user_id, name, source_label, entry_script, status, execution_provider,
+            execution_ref, compute_type, hourly_rate_cents, max_runtime_seconds, folder, script_args)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         RETURNING id`,
+        [
+          ownerUserId, name, code.label, entryScript, status, executionProvider,
+          executionRef ? JSON.stringify(executionRef) : null,
+          computeType, hourlyRateCents, maxRuntimeSeconds, folder, scriptArgs,
+        ],
+      );
+      await insertCodeInput(client, result.rows[0].id, code);
+      return result.rows[0].id;
+    }, { pool: db() });
+    return findById(jobId);
   }
 
   // Creates a job and reserves its maximum cost in one transaction: the
@@ -149,8 +182,9 @@ export function createJobsPostgresRepository({ pool } = {}) {
   async function createWithReservation({
     ownerUserId,
     name,
+    source = null,
     repo,
-    branch = "main",
+    branch,
     entryScript = "train.py",
     folder = "",
     scriptArgs = "",
@@ -214,18 +248,20 @@ export function createJobsPostgresRepository({ pool } = {}) {
           }
         }
 
+        const code = codeSourceFrom({ source, repo, branch });
         const inserted = await client.query(
           `INSERT INTO jobs
-             (owner_user_id, name, repo, branch, entry_script, status, execution_provider,
+             (owner_user_id, name, source_label, entry_script, status, execution_provider,
               compute_type, hourly_rate_cents, max_runtime_seconds, reserved_cents, folder, script_args)
-           VALUES ($1, $2, $3, $4, $5, 'queued', $6, $7, $8, $9, $10, $11, $12)
+           VALUES ($1, $2, $3, $4, 'queued', $5, $6, $7, $8, $9, $10, $11)
            RETURNING id`,
           [
-            ownerUserId, name, repo, branch, entryScript, executionProvider,
+            ownerUserId, name, code.label, entryScript, executionProvider,
             computeType, hourlyRateCents, maxRuntimeSeconds, reserveCents, folder, scriptArgs,
           ],
         );
         const id = inserted.rows[0].id;
+        await insertCodeInput(client, id, code);
         await charge(client, { accountId, amountCents: reserveCents, jobId: id, note: `Reserved for job ${id}` });
         return id;
       },
@@ -239,6 +275,21 @@ export function createJobsPostgresRepository({ pool } = {}) {
     await db().query(
       "UPDATE jobs SET execution_ref = $2::jsonb, updated_at = now() WHERE id = $1",
       [jobId, JSON.stringify(executionRef)],
+    );
+    return findById(jobId);
+  }
+
+  // What a job's input actually ran from, once packed: the snapshot's S3
+  // key, sha256 and size, and fetch results merged into the ref (the git
+  // commit). role: 'code' (one per job) for now.
+  async function recordInputSnapshot(jobId, role, { snapshotKey = null, sha256 = null, bytes = null, ref = null } = {}) {
+    await db().query(
+      `UPDATE job_inputs
+       SET snapshot_key = $3, snapshot_sha256 = $4, snapshot_bytes = $5,
+           source_ref = CASE WHEN $6::jsonb IS NULL THEN source_ref ELSE source_ref || $6::jsonb END,
+           updated_at = now()
+       WHERE job_id = $1 AND role = $2`,
+      [jobId, role, snapshotKey, sha256, bytes, ref ? JSON.stringify(ref) : null],
     );
     return findById(jobId);
   }
@@ -282,15 +333,15 @@ export function createJobsPostgresRepository({ pool } = {}) {
 
         await client.query(
           `INSERT INTO results
-             (id, job_id, execution_id, name, repo, status, duration_seconds, output, files, error, finalized_at)
+             (id, job_id, execution_id, name, source_label, status, duration_seconds, output, files, error, finalized_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11)
            ON CONFLICT (job_id) DO UPDATE SET
-             execution_id = EXCLUDED.execution_id, name = EXCLUDED.name, repo = EXCLUDED.repo,
+             execution_id = EXCLUDED.execution_id, name = EXCLUDED.name, source_label = EXCLUDED.source_label,
              status = EXCLUDED.status, duration_seconds = EXCLUDED.duration_seconds,
              output = EXCLUDED.output, files = EXCLUDED.files, error = EXCLUDED.error,
              finalized_at = EXCLUDED.finalized_at, updated_at = now()`,
           [
-            `result-${jobId}`, jobId, executionId, job.name, job.repo, status,
+            `result-${jobId}`, jobId, executionId, job.name, job.source_label, status,
             durationSeconds ?? job.duration_seconds, output, JSON.stringify(files), error, finalizedAt,
           ],
         );
@@ -375,5 +426,5 @@ export function createJobsPostgresRepository({ pool } = {}) {
     return result.rows.length ? Number(result.rows[0].balance_cents) : 0;
   }
 
-  return { list, findById, create, createWithReservation, setExecutionRef, listUnfinished, recordProgress, finalize, setHidden, listResults, personalBalanceCents };
+  return { list, findById, create, createWithReservation, setExecutionRef, recordInputSnapshot, listUnfinished, recordProgress, finalize, setHidden, listResults, personalBalanceCents };
 }

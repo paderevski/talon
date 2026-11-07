@@ -161,7 +161,7 @@ export default function JobStatusPanel({
               {jobs.map((job) => (
                 <tr key={job.id}>
                   <td className="job-name-cell">{job.name}</td>
-                  <td className="repo-cell">{job.repo}</td>
+                  <td className="repo-cell">{job.source?.label}</td>
                   <td>
                     <span className={`status-pill ${job.status}`}>
                       <span className="sdot" />

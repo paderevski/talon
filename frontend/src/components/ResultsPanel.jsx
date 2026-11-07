@@ -35,7 +35,7 @@ export default function ResultsPanel({ results, jobs, filesByJobId }) {
       jobId: job.id,
       name: job.name,
       status: job.status,
-      repo: job.repo,
+      sourceLabel: job.source?.label || "",
       duration: job.duration,
       output: "Run output files",
       files: filesByJobId?.[job.id] || [],
@@ -57,8 +57,8 @@ export default function ResultsPanel({ results, jobs, filesByJobId }) {
             </div>
             <div className="result-meta">
               <div className="result-meta-row">
-                <span className="result-meta-label">Repo</span>
-                <span className="result-meta-value">{result.repo}</span>
+                <span className="result-meta-label">Source</span>
+                <span className="result-meta-value">{result.sourceLabel}</span>
               </div>
               <div className="result-meta-row">
                 <span className="result-meta-label">Duration</span>

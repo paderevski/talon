@@ -4,7 +4,7 @@ import jobsRouter from "./routes/jobs.js";
 import repoRouter from "./routes/repo.js";
 import resultsRouter from "./routes/results.js";
 import authRouter from "./routes/auth.js";
-import githubRouter from "./routes/github.js";
+import { mountConnectionRoutes } from "./routes/connections.js";
 import adminRouter from "./routes/admin.js";
 import teacherRouter from "./routes/teacher.js";
 import { createSessionMiddleware } from "./auth/session.js";
@@ -86,7 +86,9 @@ app.use("/api/auth", authRouter);
 app.use("/api/jobs", requireAuth, jobsRouter);
 app.use("/api/repos", requireAuth, repoRouter);
 app.use("/api/results", requireAuth, resultsRouter);
-app.use("/api/github", githubRouter); // its own auth: the callback redirects instead of 401
+// /api/connections (and /api/github, where the GitHub App's callback is
+// registered). Its own auth: the callbacks redirect instead of answering 401.
+mountConnectionRoutes(app);
 app.use("/api/admin", requireRole("admin"), adminRouter);
 app.use("/api/teacher", requireRole("teacher"), teacherRouter);
 

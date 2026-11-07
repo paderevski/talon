@@ -308,29 +308,34 @@ export async function fetchTeacherRoster() {
   return response.json();
 }
 
-// GitHub App link: { configured, linked, login, linkedAt }.
-export function getGithubStatus() {
-  return getJson("/api/github");
-}
-
-// Repositories the Talon app can see for the signed-in user:
-// [{ fullName, private }]. Not cached: the list belongs to whoever is signed in.
-export async function fetchGithubRepos() {
-  const body = await getJson("/api/github/repos");
+// Linked outside accounts (GitHub now; Google Drive and others later):
+// [{ provider, label, auth, roles, configured, linked, account: { login, linkedAt } | null, needsReconnect }].
+export async function fetchConnections() {
+  const body = await getJson("/api/connections");
   return Array.isArray(body?.items) ? body.items : [];
 }
 
-export async function disconnectGithub() {
-  const response = await apiFetch("/api/github", { method: "DELETE" });
+// What the provider lets Talon see for the signed-in user (GitHub: the
+// repositories): [{ id, label, private }]. Not cached: the list belongs to
+// whoever is signed in.
+export async function fetchConnectionItems(provider) {
+  const body = await getJson(`/api/connections/${encodeURIComponent(provider)}/items`);
+  return Array.isArray(body?.items) ? body.items : [];
+}
+
+export async function disconnectConnection(provider, label = provider) {
+  const response = await apiFetch(`/api/connections/${encodeURIComponent(provider)}`, { method: "DELETE" });
   if (!response.ok) {
-    throw new Error(`Unable to disconnect GitHub (${response.status})`);
+    throw new Error(`Unable to disconnect ${label} (${response.status})`);
   }
   return response.json();
 }
 
-// Full-page navigations (the server redirects to GitHub and back).
-export const githubConnectUrl = "/api/github/connect";
-export const githubChooseReposUrl = "/api/github/connect?mode=install";
+// Full-page navigation: the server redirects to the provider and back to
+// /?connection=<provider>&result=<code>#connections. GitHub's modes:
+// "authorize" (sign in) and "install" (choose repositories).
+export const connectUrl = (provider, mode = "") =>
+  `/api/connections/${encodeURIComponent(provider)}/connect${mode ? `?mode=${encodeURIComponent(mode)}` : ""}`;
 
 export async function fetchCurrentUser() {
   const response = await fetch("/api/auth/me", { credentials: "same-origin" });
@@ -383,8 +388,8 @@ export const resetAdminUserPassword = (id) =>
 export const unlockAdminUser = (id) =>
   requestJson("POST", `/api/admin/users/${encodeURIComponent(id)}/unlock`);
 
-export const unlinkAdminUserGithub = (id) =>
-  requestJson("DELETE", `/api/admin/users/${encodeURIComponent(id)}/github`);
+export const unlinkAdminUserConnection = (id, provider) =>
+  requestJson("DELETE", `/api/admin/users/${encodeURIComponent(id)}/connections/${encodeURIComponent(provider)}`);
 
 export const fetchAdminClasses = () => requestJson("GET", "/api/admin/classes");
 export const createAdminClass = (classInfo) => requestJson("POST", "/api/admin/classes", classInfo);

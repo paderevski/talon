@@ -114,7 +114,10 @@ export async function listUsers({ pool = getPool() } = {}) {
            ARRAY(SELECT r.role::text FROM user_roles r WHERE r.user_id = u.id ORDER BY r.role) AS roles,
            personal.balance_cents AS personal_cents,
            pool.balance_cents AS pool_cents,
-           (SELECT g.github_login FROM github_accounts g WHERE g.user_id = u.id) AS github_login,
+           COALESCE((
+             SELECT json_agg(json_build_object('provider', k.provider, 'login', k.external_login) ORDER BY k.provider)
+             FROM connections k WHERE k.user_id = u.id
+           ), '[]'::json) AS connections,
            COALESCE((
              SELECT json_agg(json_build_object('id', c.id, 'name', c.name, 'block', c.block,
                                                'memberRole', CASE WHEN c.teacher_id = u.id THEN 'teacher' ELSE 'student' END)
@@ -138,7 +141,10 @@ export async function listUsers({ pool = getPool() } = {}) {
     status: row.status,
     roles: row.roles,
     lastLoginAt: row.last_login_at,
-    githubLogin: row.github_login ?? "",
+    // Linked outside accounts: [{ provider, login }]. githubLogin is kept for
+    // the user list's search and the Unlink GitHub button.
+    connections: row.connections,
+    githubLogin: row.connections.find((c) => c.provider === "github")?.login ?? "",
     personalBalance: centsToDollars(row.personal_cents ?? 0),
     poolBalance: row.pool_cents === null ? null : centsToDollars(row.pool_cents),
     classes: row.classes,

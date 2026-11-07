@@ -18,7 +18,7 @@ import { ec2JobLimits, gpuAllowed, launchEc2Job, launchErrorStatus } from "../se
 import { defaultMaxRuntimeSeconds, listInstanceOptions, runtimeOptions } from "../execution/ec2Rates.js";
 import { markJobAsExecutionLost, synchronizeJobFromExecution } from "../services/jobSync.js";
 import { getJobsRepository } from "../repositories/jobsRepository.js";
-import { getGithubApp } from "../services/githubApp.js";
+import { getSourceType, parseCodeSource } from "../sources/index.js";
 import { normalizeFolder } from "talon-shared/repo";
 import { parseScriptArgs } from "../utils/scriptArgs.js";
 import { attachAccessScope, canModify, hasRole, narrowScopeToOwner, scopeAllows } from "../auth/access.js";
@@ -187,14 +187,21 @@ router.get("/compute-options", (req, res) => {
   });
 });
 
-// The token to clone the job's repo with (null: anonymous, public repos),
-// checked before anything is reserved. Sends the error response itself and
-// returns undefined when the user may not use that repo.
-async function cloneTokenOr4xx(req, res, repo) {
+// The job's code source and the credential to fetch it with (null:
+// anonymous, e.g. a public repo), checked before anything is reserved.
+// Sends the error response itself and returns undefined when the input is
+// bad or the user may not use that source.
+async function codeSourceOr4xx(req, res, payload, runner) {
   try {
-    return await getGithubApp().resolveCloneToken(req.user.id, repo);
+    const source = parseCodeSource(payload);
+    if (!getSourceType(source.type).runners.includes(runner)) {
+      res.status(400).json({ message: `${getSourceType(source.type).label} jobs cannot run ${runner === "local" ? "on the web server" : "here"}. Choose a machine.` });
+      return undefined;
+    }
+    const credential = await getSourceType(source.type).resolveAccess(req.user.id, source.ref);
+    return { source, credential: credential ?? null };
   } catch (error) {
-    res.status(error?.status || 500).json({ message: error?.status ? error.message : "Could not check the repository on GitHub" });
+    res.status(error?.status || 500).json({ message: error?.status ? error.message : "Could not check the code source" });
     return undefined;
   }
 }
@@ -220,8 +227,8 @@ router.post("/", async (req, res) => {
       });
     }
 
-    const gitToken = await cloneTokenOr4xx(req, res, payload.repo || "unknown/repo");
-    if (gitToken === undefined) {
+    const code = await codeSourceOr4xx(req, res, payload, "ec2");
+    if (code === undefined) {
       return undefined;
     }
 
@@ -232,7 +239,8 @@ router.post("/", async (req, res) => {
         user: req.user,
         isAdmin: hasRole(req.user, "admin"),
         payload: { ...payload, folder, scriptArgs: scriptArgsText },
-        gitToken,
+        source: code.source,
+        credential: code.credential,
       });
       log.info("job submitted", {
         event: "job.submitted",
@@ -274,27 +282,28 @@ router.post("/", async (req, res) => {
     }
   }
 
+  const code = await codeSourceOr4xx(req, res, payload, "local");
+  if (code === undefined) {
+    return undefined;
+  }
+
+  // The local runner clones in place (it needs the git checkout), so it
+  // takes git fields rather than a snapshot; only git sources reach it.
   const spec = {
     name: payload.name || "untitled-job",
-    repo: payload.repo || "unknown/repo",
-    branch: payload.branch || "main",
+    repo: code.source.ref.repo,
+    branch: code.source.ref.branch,
     entryScript: payload.entryScript || "train.py",
     folder,
     scriptArgs,
     maxRuntimeSeconds: jobMaxRuntimeSeconds(),
   };
 
-  const gitToken = await cloneTokenOr4xx(req, res, spec.repo);
-  if (gitToken === undefined) {
-    return undefined;
-  }
-
-  const executionRef = await submitExecution({ ...spec, gitToken });
+  const executionRef = await submitExecution({ ...spec, gitToken: code.credential });
   const savedJob = await jobsRepository.create({
     ownerUserId: req.user.id,
     name: spec.name,
-    repo: spec.repo,
-    branch: spec.branch,
+    source: code.source,
     entryScript: spec.entryScript,
     folder: spec.folder,
     scriptArgs: scriptArgsText,

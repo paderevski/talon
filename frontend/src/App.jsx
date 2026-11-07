@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { GatewayError, cancelJob, fetchComputeOptions, fetchCurrentUser, fetchJobFiles, fetchJobs, fetchRepoTree, fetchResults, getGithubStatus, hideJob, login, logout, setUnauthorizedHandler, submitJob, unhideJob } from "./api/client";
+import { GatewayError, cancelJob, fetchComputeOptions, fetchCurrentUser, fetchJobFiles, fetchJobs, fetchRepoTree, fetchConnections, fetchResults, hideJob, login, logout, setUnauthorizedHandler, submitJob, unhideJob } from "./api/client";
 import NewJobPanel from "./components/NewJobPanel";
 import RepoBrowserPanel from "./components/RepoBrowserPanel";
 import JobStatusPanel from "./components/JobStatusPanel";
 import ResultsPanel from "./components/ResultsPanel";
-import GitHubPanel, { githubResultMessage } from "./components/GitHubPanel";
+import ConnectionsPanel from "./components/ConnectionsPanel";
 import AdminConsole from "./components/AdminConsole";
 import ChangePasswordDialog from "./components/ChangePasswordDialog";
 import TeacherStudentsPanel from "./components/TeacherStudentsPanel";
@@ -29,7 +29,7 @@ function getViews(role, teacherStudent) {
   const jobViews = [
     { id: "jobs", label: "Jobs", showCount: true },
     { id: "new-job", label: "New Job" },
-    { id: "github", label: "GitHub" },
+    { id: "connections", label: "Connections" },
   ];
 
   if (normalizedRole === "admin") {
@@ -46,9 +46,12 @@ function getViews(role, teacherStudent) {
 }
 
 // "#users/teachers" -> { view: "users", sub: "teachers" }
+// Old links to #github (the panel before Connections) still land there.
+const viewAliases = { github: "connections" };
+
 function readHashRoute() {
   const [view = "", sub = ""] = window.location.hash.replace(/^#\/?/, "").split("/");
-  return { view, sub };
+  return { view: viewAliases[view] || view, sub };
 }
 
 function clearHash() {
@@ -125,29 +128,32 @@ try {
   // Storage unavailable: nothing to clean up.
 }
 
-// ?github=<code> is set by the server after the GitHub sign-in round trip.
-// Read it once and remove it from the address bar.
-function takeGithubResult() {
+// ?connection=<provider>&result=<code> is set by the server after a sign-in
+// round trip (GitHub, later others). Read it once and remove it from the
+// address bar. Returns { provider, code } or null.
+function takeConnectionResult() {
   const params = new URLSearchParams(window.location.search);
-  const code = params.get("github") || "";
-  if (code) {
-    params.delete("github");
+  const provider = params.get("connection") || "";
+  const code = params.get("result") || "";
+  if (provider || code || params.has("github")) {
+    ["connection", "result", "github"].forEach((name) => params.delete(name));
     const query = params.toString();
     window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
   }
-  return code;
+  return provider && code ? { provider, code } : null;
 }
 
 // Once per page load (not in a state initializer: StrictMode runs those twice).
-const githubResultOnLoad = takeGithubResult();
+const connectionResultOnLoad = takeConnectionResult();
 
 export default function App() {
   const [authUser, setAuthUser] = useState(getStoredAuthUser);
-  // Coming back from GitHub sign-in the server redirects to #github.
+  // Coming back from a sign-in the server redirects to #connections.
   const [route, setRoute] = useState(readHashRoute);
   const [focusJobId, setFocusJobId] = useState(null);
-  const [githubStatus, setGithubStatus] = useState(null);
-  const githubResult = githubResultOnLoad;
+  const [connections, setConnections] = useState(null); // null while loading
+  const connectionResult = connectionResultOnLoad;
+  const githubConnection = connections?.find((c) => c.provider === "github") || null;
   const [selectedStudentView, setSelectedStudentView] = useState(null);
   const [budgetBalance, setBudgetBalance] = useState(null);
   const [username, setUsername] = useState("");
@@ -501,10 +507,13 @@ export default function App() {
 
   const onSubmitJob = async (form) => {
     const normalizedRepo = normalizeRepoInput(form.repo);
-    // The server assigns the job to whoever is signed in.
+    // The server assigns the job to whoever is signed in. The code source is
+    // GitHub for both the "GitHub" and "Public repository" choices (the
+    // server decides whether a token is needed).
+    const { repo, branch, ...fields } = form;
     const payload = {
-      ...form,
-      repo: normalizedRepo || form.repo,
+      ...fields,
+      source: { type: "github", repo: normalizedRepo || repo, branch },
     };
 
     let result;
@@ -579,15 +588,15 @@ export default function App() {
       .then((data) => setComputeOptions(data))
       .catch(() => setComputeOptions(null));
   }, [signedInUsername]);
-  const loadGithubStatus = () => {
-    getGithubStatus()
-      .then((data) => setGithubStatus(data))
-      .catch(() => setGithubStatus({ configured: false, linked: false, login: "" }));
+  const loadConnections = () => {
+    fetchConnections()
+      .then((items) => setConnections(items))
+      .catch(() => setConnections([]));
   };
   useEffect(() => {
-    setGithubStatus(null);
+    setConnections(null);
     if (signedInUsername) {
-      loadGithubStatus();
+      loadConnections();
     }
   }, [signedInUsername]);
   const isTeacher = normalizeUserRole(authUser?.role) === "teacher";
@@ -766,8 +775,8 @@ export default function App() {
               >
                 Change password
               </button>
-              <a className="user-menu-item" href="#github" role="menuitem" onClick={() => setIsUserMenuOpen(false)}>
-                GitHub
+              <a className="user-menu-item" href="#connections" role="menuitem" onClick={() => setIsUserMenuOpen(false)}>
+                Connections
               </a>
               <button type="button" className="user-menu-item" role="menuitem" onClick={onLogout}>
                 Logout
@@ -852,8 +861,8 @@ export default function App() {
                 onSubmit={onSubmitJob}
                 defaultRepo={repoPath}
                 defaultBranch={repoBranch}
-                githubLinked={Boolean(githubStatus?.linked)}
-                githubLogin={githubStatus?.login || ""}
+                githubLinked={Boolean(githubConnection?.configured && githubConnection?.linked)}
+                githubLogin={githubConnection?.account?.login || ""}
                 onRepoBranchChange={onRepoBranchChange}
                 compute={computeOptions}
                 budgetDollars={normalizeUserRole(authUser?.role) === "student" ? budgetBalance : null}
@@ -869,11 +878,11 @@ export default function App() {
             </>
           ) : null}
 
-          {activeView === "github" ? (
-            <GitHubPanel
-              status={githubStatus}
-              resultMessage={githubResultMessage(githubResult)}
-              onChanged={loadGithubStatus}
+          {activeView === "connections" ? (
+            <ConnectionsPanel
+              connections={connections}
+              result={connectionResult}
+              onChanged={loadConnections}
             />
           ) : null}
         </main>

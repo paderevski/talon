@@ -81,6 +81,15 @@ function assertDemoSeedAllowed() {
 const demoRepos = ["paderevski/minimal-rnn", "octocat/Hello-World", "paderevski/bert-nlp"];
 const demoJobNames = ["finetune-bert", "mnist-baseline", "essay-generator", "image-classifier"];
 
+// Demo jobs ran from GitHub repos (job_inputs holds a job's code source).
+async function insertDemoCodeInput(client, jobId, repo) {
+  await client.query(
+    `INSERT INTO job_inputs (job_id, role, source_type, source_ref)
+     VALUES ($1, 'code', 'github', jsonb_build_object('host', 'github.com', 'repo', $2::text, 'branch', 'main'))`,
+    [jobId, repo],
+  );
+}
+
 // Gives a student a small history of finished jobs whose costs add up to what
 // they have "spent", so the budget ledger, job list and results all agree.
 async function seedStudentJobs(client, { studentId, accountId, spentCents }) {
@@ -95,19 +104,20 @@ async function seedStudentJobs(client, { studentId, accountId, spentCents }) {
 
     const job = await client.query(
       `INSERT INTO jobs
-         (owner_user_id, name, repo, status, execution_provider, duration_seconds, cost_cents, created_at, updated_at)
+         (owner_user_id, name, source_label, status, execution_provider, duration_seconds, cost_cents, created_at, updated_at)
        VALUES ($1, $2, $3, 'completed', 'local', $4, $5,
                now() - make_interval(hours => $6), now() - make_interval(hours => $6))
        RETURNING id`,
       [studentId, name, repo, durationSeconds, costCents, hoursAgo],
     );
     const jobId = job.rows[0].id;
+    await insertDemoCodeInput(client, jobId, repo);
     const files = [
       { name: "metrics.json", size: "1.2 KB", source: "output_dir" },
       { name: "model.pt", size: "48 MB", source: "output_dir" },
     ];
     await client.query(
-      `INSERT INTO results (id, job_id, name, repo, status, duration_seconds, output, files, finalized_at)
+      `INSERT INTO results (id, job_id, name, source_label, status, duration_seconds, output, files, finalized_at)
        VALUES ($1, $2, $3, $4, 'completed', $5, 'Run output files', $6::jsonb, now() - make_interval(hours => $7))`,
       [`result-${jobId}`, jobId, name, repo, durationSeconds, JSON.stringify(files), hoursAgo],
     );
@@ -122,13 +132,14 @@ async function seedStudentJobs(client, { studentId, accountId, spentCents }) {
   // One failed run with no cost, so the list shows more than successes.
   const failedName = `${demoJobNames[spentCents % demoJobNames.length]}-failed`;
   const failed = await client.query(
-    `INSERT INTO jobs (owner_user_id, name, repo, status, execution_provider, duration_seconds, created_at, updated_at)
+    `INSERT INTO jobs (owner_user_id, name, source_label, status, execution_provider, duration_seconds, created_at, updated_at)
      VALUES ($1, $2, $3, 'failed', 'local', 12, now() - interval '3 hours', now() - interval '3 hours')
      RETURNING id`,
     [studentId, failedName, demoRepos[spentCents % demoRepos.length]],
   );
+  await insertDemoCodeInput(client, failed.rows[0].id, demoRepos[spentCents % demoRepos.length]);
   await client.query(
-    `INSERT INTO results (id, job_id, name, repo, status, duration_seconds, output, files, error, finalized_at)
+    `INSERT INTO results (id, job_id, name, source_label, status, duration_seconds, output, files, error, finalized_at)
      VALUES ($1, $2, $3, $4, 'failed', 12, 'Run output files', '[]'::jsonb, 'Execution failed (exit code 1)', now() - interval '3 hours')`,
     [`result-${failed.rows[0].id}`, failed.rows[0].id, failedName, demoRepos[spentCents % demoRepos.length]],
   );
