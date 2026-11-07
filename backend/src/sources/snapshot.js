@@ -47,11 +47,18 @@ export function formatBytes(bytes) {
   return `${value.toFixed(value < 10 ? 1 : 0)} ${units[unit]}`;
 }
 
-// Walks `root` and enforces the rules above. Returns { files, unpackedBytes }.
+// "Niagara.mp4 (169 MB), data/x.csv (12 MB)": the biggest files, for
+// size errors (so students know what to move out).
+const describeBiggest = (biggest) =>
+  biggest.map((f) => `${f.path} (${formatBytes(f.size)})`).join(", ");
+
+// Walks `root` and enforces the rules above. Returns { files, unpackedBytes,
+// biggest: the 3 largest files [{ path, size }] }.
 export async function checkTree(root, { maxFiles, maxUnpackedBytes } = snapshotLimits()) {
   const base = path.resolve(root);
   let files = 0;
   let unpackedBytes = 0;
+  const biggest = [];
   const pending = [base];
   while (pending.length) {
     const dir = pending.pop();
@@ -71,16 +78,19 @@ export async function checkTree(root, { maxFiles, maxUnpackedBytes } = snapshotL
           throw httpError(`${rel} links outside the code folder`);
         }
       } else if (entry.isFile()) {
-        unpackedBytes += (await lstat(full)).size;
+        const size = (await lstat(full)).size;
+        unpackedBytes += size;
+        biggest.push({ path: rel.split(path.sep).join("/"), size });
+        biggest.sort((a, b) => b.size - a.size).splice(3);
         if (unpackedBytes > maxUnpackedBytes) {
-          throw httpError(`The code is larger than ${formatBytes(maxUnpackedBytes)} unpacked`);
+          throw httpError(`The code is larger than ${formatBytes(maxUnpackedBytes)} unpacked; biggest files: ${describeBiggest(biggest)}`);
         }
       } else {
         throw httpError(`${rel} is not a regular file`);
       }
     }
   }
-  return { files, unpackedBytes };
+  return { files, unpackedBytes, biggest };
 }
 
 async function sha256File(file) {
@@ -94,11 +104,11 @@ async function sha256File(file) {
 // Checks `dir` and packs it into `archive` (.tgz, paths relative to dir).
 // Returns { archive, bytes, sha256, files }.
 export async function packSnapshot(dir, archive, limits = snapshotLimits()) {
-  const { files } = await checkTree(dir, limits);
+  const { files, biggest } = await checkTree(dir, limits);
   await execFileAsync("tar", ["-czf", archive, "-C", dir, "."], { timeout: 60 * 1000 });
   const bytes = (await stat(archive)).size;
   if (bytes > limits.maxBytes) {
-    throw httpError(`The code is larger than ${formatBytes(limits.maxBytes)}`);
+    throw httpError(`The code is larger than ${formatBytes(limits.maxBytes)} packed (${formatBytes(bytes)}); biggest files: ${describeBiggest(biggest)}. Move large data or videos out of the folder.`);
   }
   return { archive, bytes, sha256: await sha256File(archive), files };
 }

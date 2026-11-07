@@ -129,3 +129,10 @@ test("an EC2 job still being prepared shows the launcher's latest step", () => {
   assert.equal(stages[0].detail, "Copied 200 of 584 files (12 s)");
   assert.equal(stages[1].state, "waiting");
 });
+
+test("a launch that failed shows its reason on the step where it stopped", () => {
+  const failed = { id: "44", status: "failed", executionProvider: "ec2", source: { type: "drive", label: "Colab Notebooks/minimal-rnn", ref: {} }, error: "Could not start the job: The code is larger than 100 MB packed (165 MB); biggest files: Niagara 01.mp4 (169 MB)" };
+  const { stages } = buildStages({ job: failed, events: [] });
+  assert.equal(stages[0].state, "failed");
+  assert.match(stages[0].detail, /Niagara 01\.mp4 \(169 MB\)/);
+});
