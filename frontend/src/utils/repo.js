@@ -1,6 +1,7 @@
 export {
   assertRepoPath,
   isValidRepoPath,
+  normalizeDrivePath,
   normalizeFolder,
   normalizeRepoInput,
   normalizeRepoPath,

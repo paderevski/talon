@@ -100,6 +100,24 @@ export function normalizeFolder(value) {
   return segments.join("/");
 }
 
+// A path inside a Google Drive folder ("ML 2026/week 3"). Looser than
+// normalizeFolder: Drive names often have spaces and punctuation, and the
+// path is only matched against Drive names (a job runs from the top of the
+// copied folder, so it never reaches the job's run script). No "." or ".."
+// segments, control characters or backslashes; "" = the top; null if bad.
+export function normalizeDrivePath(value) {
+  const raw = String(value ?? "").trim().replace(/^\/+|\/+$/g, "");
+  if (!raw) {
+    return "";
+  }
+  const segments = raw.split("/").map((segment) => segment.trim());
+  const bad = (segment) => !segment || segment === "." || segment === ".." || segment.length > 255 || /[\u0000-\u001f\u007f\\]/.test(segment);
+  if (segments.length > 20 || segments.some(bad)) {
+    return null;
+  }
+  return segments.join("/");
+}
+
 // Reads a GitHub URL pasted from the browser:
 //   https://github.com/o/r                      -> { repo }
 //   https://github.com/o/r/tree/<branch>/a/b    -> { repo, branch, folder: "a/b" }

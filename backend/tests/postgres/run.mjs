@@ -34,7 +34,10 @@ import { createJobSync } from "../../src/services/jobSync.js";
 import { createConnectionsStore, ConnectionInUseError } from "../../src/connections/store.js";
 import { createConnectionRegistry } from "../../src/connections/registry.js";
 import { createGoogleDriveProvider, driveScope, pickerAppId } from "../../src/connections/providers/googleDrive.js";
-import { getSourceType, parseCodeSource, prepareCodeSnapshot, registerSource } from "../../src/sources/index.js";
+import { getSourceType, parseCodeSource, prepareCodeSnapshot, registerSource, resolveSourceAccess } from "../../src/sources/index.js";
+import { createDriveClient, safeName } from "../../src/sources/fetchers/drive.js";
+import { createDriveSource } from "../../src/sources/drive.js";
+import createLocalExecutionAdapter from "../../src/execution/adapters/localExecutionAdapter.js";
 import { checkTree, packSnapshot } from "../../src/sources/snapshot.js";
 import { cloneInto } from "../../src/sources/fetchers/git.js";
 import { jobLaunchPrefix, userHomePrefix, userPrefix } from "../../src/storage/keys.js";
@@ -90,6 +93,62 @@ function makeFakeGoogle(routes) {
   };
   return { fetch, calls };
 }
+// An in-memory Google Drive for the Drive client, provider and source tests.
+// tree: { id: { name, mimeType?, parent, content? } }; folders have the
+// folder mime type. Answers files.list (by parent), files.get and alt=media.
+function makeFakeDrive(tree) {
+  const folder = "application/vnd.google-apps.folder";
+  const calls = [];
+  const meta = (id) => {
+    const f = tree[id];
+    const content = f.content ?? "";
+    return { id, name: f.name, mimeType: f.mimeType || "text/plain", size: f.mimeType === folder ? undefined : String(Buffer.byteLength(content)), md5Checksum: `md5-${id}`, modifiedTime: "2026-11-07T00:00:00Z", trashed: Boolean(f.trashed) };
+  };
+  const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
+  const fetch = async (url) => {
+    const u = new URL(url);
+    calls.push(u.pathname + u.search);
+    const match = /^\/drive\/v3\/files(?:\/([^/]+))?$/.exec(u.pathname);
+    if (!match) return json({ error: "nope" }, 404);
+    if (!match[1]) {
+      const parent = /^'(.+)' in parents/.exec(u.searchParams.get("q") || "")?.[1];
+      const files = Object.keys(tree).filter((id) => tree[id].parent === parent && !tree[id].trashed).map(meta)
+        .sort((a, b) => (a.mimeType === folder ? 0 : 1) - (b.mimeType === folder ? 0 : 1) || a.name.localeCompare(b.name));
+      return json({ files });
+    }
+    const id = decodeURIComponent(match[1]);
+    if (!tree[id]) return json({ error: { message: "not found" } }, 404);
+    if (u.searchParams.get("alt") === "media") return new Response(tree[id].content ?? "", { status: 200 });
+    return json(meta(id));
+  };
+  return { fetch, calls };
+}
+const driveFolderMime = "application/vnd.google-apps.folder";
+const sampleDriveTree = () => ({
+  rootFolder01: { name: "ML Club", mimeType: driveFolderMime, parent: "my-drive" },
+  week3Folder1: { name: "week3", mimeType: driveFolderMime, parent: "rootFolder01" },
+  cnnFolder001: { name: "cnn", mimeType: driveFolderMime, parent: "week3Folder1" },
+  trainFile001: { name: "train.py", parent: "cnnFolder001", content: "print('hello from drive')\nopen('made.txt', 'w').write('x')\n" },
+  reqsFile0001: { name: "requirements.txt", parent: "cnnFolder001", content: "" },
+  dataFolder01: { name: "data", mimeType: driveFolderMime, parent: "cnnFolder001" },
+  csvFile00001: { name: "a.csv", parent: "dataFolder01", content: "1,2\n" },
+  slashFile001: { name: "odd/name.txt", parent: "dataFolder01", content: "s" },
+  dupeFile0001: { name: "notes.txt", parent: "dataFolder01", content: "one" },
+  dupeFile0002: { name: "notes.txt", parent: "dataFolder01", content: "two" },
+  gdocFile0001: { name: "Plan", mimeType: "application/vnd.google-apps.document", parent: "cnnFolder001" },
+  gitFolder001: { name: ".git", mimeType: driveFolderMime, parent: "cnnFolder001" },
+  gitConfig001: { name: "config", parent: "gitFolder001", content: "[core]" },
+  envFolder001: { name: "myenv", mimeType: driveFolderMime, parent: "cnnFolder001" },
+  envCfg000001: { name: "pyvenv.cfg", parent: "envFolder001", content: "home = /usr" },
+  envLib000001: { name: "lib.py", parent: "envFolder001", content: "x" },
+  cacheFolder1: { name: "__pycache__", mimeType: driveFolderMime, parent: "cnnFolder001" },
+  cacheFile001: { name: "a.pyc", parent: "cacheFolder1", content: "x" },
+  spaceFolder1: { name: "ML 2026", mimeType: driveFolderMime, parent: "rootFolder01" },
+  spaceFile001: { name: "train.py", parent: "spaceFolder1", content: "print(1)\n" },
+  outside00001: { name: "secret.py", parent: "my-drive", content: "no" },
+  singleFile01: { name: "solo.py", parent: "my-drive", content: "print('solo')\n" },
+});
+
 const driveStore = () => createConnectionsStore({ provider: "google_drive", tokenPurpose: "google-drive-tokens", pool });
 const fakeGoogleSettings = () => ({ clientId: "client-1", clientSecret: "secret-1", pickerApiKey: "picker-key", projectNumber: "123456", publicUrl: "http://localhost:5173" });
 
@@ -1270,6 +1329,158 @@ const tests = [
     assert(status === 503, `listing without settings should be 503, got ${status}`);
   }],
 
+  ["drive client: copies a folder tree, skips Google files, makes names safe and unique, enforces limits", async () => {
+    const fake = makeFakeDrive(sampleDriveTree());
+    const client = createDriveClient({ token: "t", fetch: fake.fetch });
+    assert((await client.resolveFolder("rootFolder01", "week3/cnn")) === "cnnFolder001", "resolve by names");
+    let message = "";
+    try { await client.resolveFolder("rootFolder01", "week3/nope"); } catch (error) { message = `${error.status} ${error.message}`; }
+    assert(/^400 Folder not found/.test(message), message);
+
+    const dir = await mkdtemp(path.join(os.tmpdir(), "talon-drive-"));
+    try {
+      const progress = [];
+      const copied = await client.copyFolder("cnnFolder001", path.join(dir, "out"), { maxFiles: 100, maxBytes: 10_000, onProgress: (line) => progress.push(line) });
+      assert(/^Found 6 files .* in 2 folders; not copying /.test(progress[0]) && /\.git\//.test(progress[0]) && /myenv\//.test(progress[0]) && /__pycache__\//.test(progress[0]), `progress ${JSON.stringify(progress)}`);
+      assert(/^Copied 6 of 6 files/.test(progress.at(-1)), `last progress ${progress.at(-1)}`);
+      const paths = copied.files.map((f) => f.path).sort();
+      assert(JSON.stringify(paths) === JSON.stringify(["data/a.csv", "data/notes (2).txt", "data/notes.txt", "data/odd_name.txt", "requirements.txt", "train.py"]), `paths ${paths}`);
+      assert(JSON.stringify([...copied.skipped].sort()) === '[".git/","Plan","__pycache__/","myenv/"]', `skipped ${copied.skipped}`);
+      const aborted = new AbortController();
+      aborted.abort();
+      let cancelled = "";
+      try { await client.copyFolder("cnnFolder001", path.join(dir, "cancelled"), { maxFiles: 100, maxBytes: 10_000, signal: aborted.signal }); } catch (error) { cancelled = `${error.status} ${error.message}`; }
+      assert(cancelled === "499 Cancelled", `abort: ${cancelled}`);
+      assert(copied.files.every((f) => f.md5 && f.modifiedTime && f.id), "fingerprints recorded");
+      const listing = execFileSync("find", [".", "-type", "f"], { cwd: path.join(dir, "out") }).toString().split("\n").filter(Boolean).sort();
+      assert(listing.length === 6 && !listing.some((f) => f.includes("secret")), `on disk ${listing}`);
+      const { readFile } = await import("node:fs/promises");
+      assert((await readFile(path.join(dir, "out", "data", "notes (2).txt"), "utf8")) === "two", "duplicate kept apart");
+
+      for (const [limits, pattern] of [[{ maxFiles: 3, maxBytes: 10_000 }, /more than 3 files/], [{ maxFiles: 100, maxBytes: 10 }, /larger than/]]) {
+        let refused = "";
+        try { await client.copyFolder("cnnFolder001", path.join(dir, `x${Math.random()}`), limits); } catch (error) { refused = error.message; }
+        assert(pattern.test(refused), `expected ${pattern}, got ${refused}`);
+      }
+      assert(safeName("..") === "_" && safeName("a/b\\c") === "a_b_c", "safe names");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }],
+
+  ["google drive: browse and locate stay inside picked items", async () => {
+    const userId = await scalar("SELECT id FROM users WHERE username = 'student_a1'");
+    const store = driveStore();
+    await store.saveLink(userId, { externalId: "g-browse", login: "a1@example.com", clientId: "client-1", tokens: { accessToken: "ya29.b", scope: driveScope, accessExpiresAt: new Date(Date.now() + 3600e3) } });
+    await store.addPicked(userId, [{ id: "rootFolder01", label: "ML Club", kind: "folder" }, { id: "singleFile01", label: "solo.py", kind: "file" }]);
+    const fake = makeFakeDrive(sampleDriveTree());
+    const drive = createGoogleDriveProvider({ store, settings: fakeGoogleSettings(), fetch: fake.fetch });
+    try {
+      const top = await drive.browse(userId, "rootFolder01", "");
+      assert(top.root.label === "ML Club" && top.path === "" && JSON.stringify(top.items.map((i) => i.path)) === '["ML 2026","week3"]', `top ${JSON.stringify(top)}`);
+      const spaced = await drive.browse(userId, "rootFolder01", " ML 2026 ");
+      assert(spaced.path === "ML 2026" && spaced.items[0]?.name === "train.py", `folder with a space ${JSON.stringify(spaced)}`);
+      const cnn = await drive.browse(userId, "rootFolder01", "/week3/cnn/");
+      const names = cnn.items.map((i) => `${i.type}:${i.name}${i.native ? "*" : ""}`);
+      assert(cnn.path === "week3/cnn" && JSON.stringify(names) === '["dir:data","dir:myenv","file:Plan*","file:requirements.txt","file:train.py"]', `cnn ${JSON.stringify(names)}`);
+      assert(cnn.items.find((i) => i.name === "train.py").path === "week3/cnn/train.py", "item paths");
+      const solo = await drive.browse(userId, "singleFile01", "");
+      assert(solo.items.length === 1 && solo.items[0].name === "solo.py", `solo ${JSON.stringify(solo)}`);
+
+      for (const [item, p, status] of [["outside00001", "", 403], ["rootFolder01", "../x", 400], ["rootFolder01", "week3/missing", 400], ["singleFile01", "sub", 400]]) {
+        let got = 0;
+        try { await drive.browse(userId, item, p); } catch (error) { got = error.status; }
+        assert(got === status, `${item} ${p}: expected ${status}, got ${got}`);
+      }
+    } finally {
+      await store.deleteLink(userId);
+    }
+  }],
+
+  ["drive source: a chosen subfolder becomes the job's snapshot, with its files recorded", async () => {
+    const userId = await scalar("SELECT id FROM users WHERE username = 'student_a1'");
+    const store = driveStore();
+    await store.saveLink(userId, { externalId: "g-src", login: "a1@example.com", clientId: "client-1", tokens: { accessToken: "ya29.s", scope: driveScope, accessExpiresAt: new Date(Date.now() + 3600e3) } });
+    await store.addPicked(userId, [{ id: "rootFolder01", label: "ML Club", kind: "folder" }]);
+    const fake = makeFakeDrive(sampleDriveTree());
+    const provider = createGoogleDriveProvider({ store, settings: fakeGoogleSettings(), fetch: fake.fetch });
+    const source = createDriveSource({ provider, fetch: fake.fetch });
+    try {
+      for (const bad of [{ itemId: "x" }, { itemId: "rootFolder01", path: "../up" }]) {
+        let status = 0;
+        try { source.parse(bad); } catch (error) { status = error.status; }
+        assert(status === 400, `${JSON.stringify(bad)} should be 400`);
+      }
+      registerSource(source); // the registry's drive source, with the fakes
+      const parsed = parseCodeSource({ source: { type: "drive", itemId: "rootFolder01", path: "week3/cnn" } });
+      const { source: resolved, credential } = await resolveSourceAccess(userId, parsed);
+      assert(credential === "ya29.s" && resolved.label === "ML Club/week3/cnn" && resolved.ref.folderId === "cnnFolder001", `resolved ${JSON.stringify(resolved)}`);
+
+      const prepared = await prepareCodeSnapshot({ source: resolved, credential, folder: "", entryScript: "train.py" });
+      try {
+        const listing = execFileSync("tar", ["-tzf", prepared.archive]).toString();
+        assert(/\.\/train\.py/.test(listing) && /\.\/data\/a\.csv/.test(listing) && !/week3|secret/.test(listing), `archive ${listing}`);
+        assert(prepared.ref.fileCount === 6 && prepared.ref.files.length === 6 && prepared.ref.skipped.includes("Plan") && prepared.ref.itemId === "rootFolder01", `ref ${JSON.stringify(prepared.ref)}`);
+      } finally {
+        await rm(prepared.workDir, { recursive: true, force: true });
+      }
+
+      let message = "";
+      try { await resolveSourceAccess(userId, parseCodeSource({ source: { type: "drive", itemId: "outside00001" } })); } catch (error) { message = `${error.status} ${error.message}`; }
+      assert(/^403 /.test(message), `unpicked item: ${message}`);
+    } finally {
+      registerSource(createDriveSource());
+      await store.deleteLink(userId);
+    }
+  }],
+
+  ["local runner: a non-git source is fetched, committed as a baseline, run, and its changes reported", async () => {
+    const adapter = createLocalExecutionAdapter();
+    const ref = await adapter.start({
+      name: "drive-local",
+      sourceLabel: "ML Club/week3/cnn",
+      fetchInput: async (dir) => {
+        await mkdir(dir, { recursive: true });
+        await writeFile(path.join(dir, "main.py"), "print('ran from drive')\nopen('made.txt', 'w').write('x')\n");
+      },
+      entryScript: "main.py",
+      folder: "",
+      maxRuntimeSeconds: 60,
+    });
+    await waitFor(async () => ["completed", "failed"].includes((await adapter.getStatus(ref)).state), { timeoutMs: 30000 });
+    const status = await adapter.getStatus(ref);
+    const logs = (await adapter.getLogs(ref)).lines.join("\n");
+    assert(status.state === "completed", `state ${status.state}\n${logs}`);
+    assert(/Copying ML Club\/week3\/cnn/.test(logs) && /ran from drive/.test(logs), `logs ${logs}`);
+    const files = await adapter.listOutputFiles(ref);
+    assert(files.some((f) => f.name === "made.txt" && f.source === "repo_changed") && !files.some((f) => f.name === "main.py"), `outputs ${JSON.stringify(files)}`);
+
+    // Cancelled while copying: the copy stops and the script never runs.
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const slow = await adapter.start({
+      name: "drive-cancel",
+      fetchInput: async (dir, { signal }) => {
+        await mkdir(dir, { recursive: true });
+        await writeFile(path.join(dir, "main.py"), "open('ran.txt', 'w').write('should not run')\n");
+        await gate;
+        if (signal.aborted) throw new Error("Cancelled");
+      },
+      entryScript: "main.py",
+      folder: "",
+    });
+    await waitFor(async () => (await adapter.getLogs(slow)).lines.some((l) => /Copying/.test(l)), { timeoutMs: 10000 });
+    const cancelReply = await adapter.cancel(slow);
+    release();
+    await waitFor(async () => (await adapter.getStatus(slow)).state === "cancelled", { timeoutMs: 10000 });
+    assert(cancelReply.state === "cancelling" && /Cancelled while copying/.test((await adapter.getLogs(slow)).lines.join("\n")), `cancel ${JSON.stringify(cancelReply)}`);
+    assert(!(await adapter.listOutputFiles(slow)).some((f) => f.name === "ran.txt"), "the script must not run after a cancel");
+
+    const broken = await adapter.start({ name: "drive-broken", fetchInput: async () => { throw new Error("Drive said no"); }, entryScript: "main.py", folder: "" });
+    await waitFor(async () => (await adapter.getStatus(broken)).state === "failed", { timeoutMs: 10000 });
+    assert(/Could not copy the code: Drive said no/.test((await adapter.getLogs(broken)).lines.join("\n")), "fetch failure is reported");
+  }],
+
   ["connections registry: describes every provider, configured or not", async () => {
     const fake = (id, configured, link) => ({
       id, label: id.toUpperCase(), auth: "oauth", roles: ["code"],
@@ -1292,6 +1503,10 @@ const tests = [
       assert(status === 400, `${JSON.stringify(payload)} should be 400, got ${status}`);
     }
     assert(getSourceType("github").runners.includes("ec2") && getSourceType("github").connection === "github", "github source metadata");
+    const { normalizeDrivePath } = await import("talon-shared/repo");
+    for (const [input, expected] of [["", ""], ["/ML 2026/week 3/", "ML 2026/week 3"], ["a//b", null], ["a/../b", null], ["./x", null], ["a\\b", null], ["tab\there", null]]) {
+      assert(normalizeDrivePath(input) === expected, `normalizeDrivePath(${JSON.stringify(input)}) = ${JSON.stringify(normalizeDrivePath(input))}`);
+    }
   }],
 
   ["snapshots: symlinks out of the tree, special files and size limits are refused", async () => {

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { GatewayError, cancelJob, fetchComputeOptions, fetchCurrentUser, fetchJobFiles, fetchJobs, fetchRepoTree, fetchConnections, fetchResults, hideJob, login, logout, setUnauthorizedHandler, submitJob, unhideJob } from "./api/client";
+import { GatewayError, cancelJob, fetchComputeOptions, fetchCurrentUser, fetchJobFiles, fetchJobs, fetchConnections, fetchResults, hideJob, login, logout, setUnauthorizedHandler, submitJob, unhideJob } from "./api/client";
 import NewJobPanel from "./components/NewJobPanel";
-import RepoBrowserPanel from "./components/RepoBrowserPanel";
 import JobStatusPanel from "./components/JobStatusPanel";
 import ResultsPanel from "./components/ResultsPanel";
 import ConnectionsPanel from "./components/ConnectionsPanel";
@@ -9,7 +8,6 @@ import AdminConsole from "./components/AdminConsole";
 import ChangePasswordDialog from "./components/ChangePasswordDialog";
 import TeacherStudentsPanel from "./components/TeacherStudentsPanel";
 import talonLogo from "../../assets/talon-logo.png";
-import { normalizeRepoInput } from "./utils/repo";
 import { formatDollars } from "./utils/format";
 
 // Each nav item is its own view, addressed by the URL hash (#jobs, #users/teachers).
@@ -58,7 +56,6 @@ function clearHash() {
   window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
 }
 
-const emptyRepo = { repository: "", branch: "", lastCommit: "", items: [] };
 const authStorageKey = "talon.authUser";
 const fallbackRepo = "";
 const fallbackBranch = "main";
@@ -154,6 +151,7 @@ export default function App() {
   const [connections, setConnections] = useState(null); // null while loading
   const connectionResult = connectionResultOnLoad;
   const githubConnection = connections?.find((c) => c.provider === "github") || null;
+  const driveConnection = connections?.find((c) => c.provider === "google_drive") || null;
   const [selectedStudentView, setSelectedStudentView] = useState(null);
   const [budgetBalance, setBudgetBalance] = useState(null);
   const [username, setUsername] = useState("");
@@ -163,13 +161,10 @@ export default function App() {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
-  const [repoPath, setRepoPath] = useState(
-    fallbackRepo
-  );
+  // The repo and branch of the last job submitted from GitHub: the New Job
+  // form starts from them.
+  const [repoPath, setRepoPath] = useState(fallbackRepo);
   const [repoBranch, setRepoBranch] = useState(fallbackBranch);
-  const [repoDirectoryPath, setRepoDirectoryPath] = useState("");
-  const [repoData, setRepoData] = useState(emptyRepo);
-  const [repoError, setRepoError] = useState("");
   const [jobs, setJobs] = useState([]);
   const [allJobs, setAllJobs] = useState([]);
   const [results, setResults] = useState([]);
@@ -180,7 +175,6 @@ export default function App() {
     hasRunning: false,
     hasQueued: false,
   });
-  const [isRefreshingRepo, setIsRefreshingRepo] = useState(false);
   const userMenuRef = useRef(null);
   const onLogoutRef = useRef(null);
 
@@ -265,20 +259,11 @@ export default function App() {
 
   const load = async () => {
     void refreshBudget();
-    const [repoResult, jobsResult, allJobsResult, resultsResult] = await Promise.allSettled([
-      fetchRepoTree(repoPath, repoBranch, { path: repoDirectoryPath }),
+    const [jobsResult, allJobsResult, resultsResult] = await Promise.allSettled([
       fetchJobs(activeFilter, { owner: viewedOwner }),
       fetchJobs("all", { owner: viewedOwner }),
       fetchResults({ owner: viewedOwner })
     ]);
-
-    if (repoResult.status === "fulfilled") {
-      setRepoData(repoResult.value);
-      setRepoError("");
-    } else {
-      setRepoData(emptyRepo);
-      setRepoError(repoResult.reason?.message || "Unable to load repository data");
-    }
 
     if (jobsResult.status === "fulfilled") {
       const items = jobsResult.value.items || [];
@@ -322,7 +307,7 @@ export default function App() {
     }
 
     load();
-  }, [authUser, repoPath, repoBranch, repoDirectoryPath, activeFilter, effectiveOwnerUsername]);
+  }, [authUser, activeFilter, effectiveOwnerUsername]);
 
   useEffect(() => {
     if (!authUser) {
@@ -488,33 +473,9 @@ export default function App() {
     }
   };
 
-  const onRefreshRepo = async () => {
-    setIsRefreshingRepo(true);
-    try {
-      const repo = await fetchRepoTree(repoPath, repoBranch, {
-        force: true,
-        path: repoDirectoryPath,
-      });
-      setRepoData(repo);
-      setRepoError("");
-    } catch (error) {
-      setRepoData(emptyRepo);
-      setRepoError(error?.message || "Unable to load repository data");
-    } finally {
-      setIsRefreshingRepo(false);
-    }
-  };
-
-  const onSubmitJob = async (form) => {
-    const normalizedRepo = normalizeRepoInput(form.repo);
-    // The server assigns the job to whoever is signed in. The code source is
-    // GitHub for both the "GitHub" and "Public repository" choices (the
-    // server decides whether a token is needed).
-    const { repo, branch, ...fields } = form;
-    const payload = {
-      ...fields,
-      source: { type: "github", repo: normalizedRepo || repo, branch },
-    };
+  // The form builds the payload, code source included; the server assigns
+  // the job to whoever is signed in.
+  const onSubmitJob = async (payload) => {
 
     let result;
     try {
@@ -526,12 +487,9 @@ export default function App() {
       }
       throw error;
     }
-    if (normalizedRepo && normalizedRepo !== repoPath) {
-      setRepoPath(normalizedRepo);
-      setRepoDirectoryPath("");
-    }
-    if (form.branch) {
-      setRepoBranch(form.branch);
+    if (payload.source?.type === "github" && payload.source.repo) {
+      setRepoPath(payload.source.repo);
+      setRepoBranch(payload.source.branch || fallbackBranch);
     }
     await refreshJobs();
     // An EC2 job: go to Jobs with its progress open, to watch it launch.
@@ -539,28 +497,6 @@ export default function App() {
       setFocusJobId(result.job.id);
       window.location.hash = "jobs";
     }
-  };
-
-  // From the submit form: repo, branch and the job's folder. The repo browser
-  // follows them (it opens the folder when the folder changes).
-  const lastFormFolder = useRef("");
-  const onRepoBranchChange = (nextRepo, nextBranch, nextFolder = "") => {
-    const normalizedRepo = normalizeRepoInput(nextRepo);
-    const nextRepoPath = normalizedRepo || "";
-    const normalizedBranch = String(nextBranch ?? "").trim() || fallbackBranch;
-
-    setRepoPath((previous) => (previous === nextRepoPath ? previous : nextRepoPath));
-    setRepoBranch((previous) => (previous === normalizedBranch ? previous : normalizedBranch));
-
-    const folder = String(nextFolder ?? "").trim();
-    if (nextRepoPath !== repoPath || normalizedBranch !== repoBranch || folder !== lastFormFolder.current) {
-      setRepoDirectoryPath(folder);
-    }
-    lastFormFolder.current = folder;
-  };
-
-  const onNavigateRepoPath = (nextPath) => {
-    setRepoDirectoryPath(String(nextPath ?? "").trim());
   };
 
   const statusCount = useMemo(() => visibleJobs.length, [visibleJobs]);
@@ -675,9 +611,6 @@ export default function App() {
     setUsername("");
     setPassword("");
     setAuthError("");
-    setRepoData(emptyRepo);
-    setRepoError("");
-    setRepoDirectoryPath("");
     setJobs([]);
     setResults([]);
     setFilesByJobId({});
@@ -863,17 +796,10 @@ export default function App() {
                 defaultBranch={repoBranch}
                 githubLinked={Boolean(githubConnection?.configured && githubConnection?.linked)}
                 githubLogin={githubConnection?.account?.login || ""}
-                onRepoBranchChange={onRepoBranchChange}
+                driveLinked={Boolean(driveConnection?.configured && driveConnection?.linked && !driveConnection?.needsReconnect)}
+                driveLogin={driveConnection?.account?.login || ""}
                 compute={computeOptions}
                 budgetDollars={normalizeUserRole(authUser?.role) === "student" ? budgetBalance : null}
-              />
-              <RepoBrowserPanel
-                repoData={repoData}
-                repoError={repoError}
-                onRefresh={onRefreshRepo}
-                onNavigatePath={onNavigateRepoPath}
-                isRefreshing={isRefreshingRepo}
-                canRefresh={Boolean(repoPath)}
               />
             </>
           ) : null}

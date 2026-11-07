@@ -342,6 +342,13 @@ export async function saveDrivePicks(ids) {
   return Array.isArray(body?.items) ? body.items : [];
 }
 
+// One folder inside a picked Drive folder (path "" = its top):
+// { root: { id, label, kind }, path, items: [{ name, type: dir | file, path, size, native }] }.
+export function fetchDriveFolder(itemId, folderPath = "") {
+  const query = new URLSearchParams({ item: itemId, path: folderPath });
+  return getJson(`/api/connections/google_drive/browse?${query}`);
+}
+
 export const removeConnectionItem = (provider, itemId) =>
   requestJson("DELETE", `/api/connections/${encodeURIComponent(provider)}/items/${encodeURIComponent(itemId)}`);
 

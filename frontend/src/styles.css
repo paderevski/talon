@@ -366,25 +366,6 @@ h3.panel-title { font-size: var(--fs-md); }
   display: none;
 }
 
-.repo-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 12px;
-  margin-bottom: 10px;
-}
-.repo-path { color: var(--accent-blue-text); font-family: "JetBrains Mono", monospace; font-size: var(--fs-base); }
-.repo-branch {
-  background: var(--accent-purple-dim);
-  color: var(--accent-purple);
-  border-radius: 12px;
-  font-size: var(--fs-sm);
-  padding: 3px 8px;
-}
-.repo-meta { margin-left: auto; color: var(--text-muted); font-size: var(--fs-sm); }
 .repo-error {
   margin-bottom: 10px;
   border: 1px solid var(--accent-red);
@@ -393,20 +374,6 @@ h3.panel-title { font-size: var(--fs-md); }
   border-radius: 8px;
   font-size: var(--fs-sm);
   padding: 8px 10px;
-}
-.repo-name-cell {
-  font-weight: inherit;
-}
-.repo-name-cell-navigable {
-  cursor: pointer;
-  user-select: none;
-}
-.repo-commit-cell {
-  color: var(--text-secondary);
-}
-.repo-empty-cell {
-  color: var(--text-muted);
-  text-align: center;
 }
 
 .table-card {
@@ -425,10 +392,6 @@ h3.panel-title { font-size: var(--fs-md); }
 }
 .scroll-focus-region.scroll-focus-active {
   box-shadow: inset 0 0 0 1px var(--accent-blue-glow);
-}
-.repo-browser-scroll-region {
-  height: 420px;
-  max-height: 420px;
 }
 .job-status-scroll-region {
   max-height: 420px;
@@ -1238,3 +1201,94 @@ button.source-placeholder:disabled { color: var(--text-muted); cursor: not-allow
   .job-log-split .job-log-pane { position: static; min-height: 0; }
   .job-log-split .job-log-body { position: static; max-height: 320px; }
 }
+
+/* File browser in the New Job form (components/FileBrowser.jsx). */
+.file-browser {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  overflow: hidden;
+}
+.file-browser.disabled { opacity: 0.6; }
+.fb-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+.fb-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; min-width: 0; flex: 1; }
+.fb-crumb-part { display: inline-flex; align-items: center; gap: 2px; min-width: 0; }
+.fb-crumb {
+  border: none;
+  background: transparent;
+  color: var(--accent-blue-text);
+  font: inherit;
+  font-size: var(--fs-sm);
+  padding: 2px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-crumb:hover:not(:disabled) { background: var(--bg-card-hover); }
+.fb-crumb:disabled { color: var(--text-primary); cursor: default; font-weight: 600; }
+.fb-sep { color: var(--text-muted); font-size: var(--fs-sm); }
+.fb-up {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--fs-sm);
+  padding: 2px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.fb-up:hover:not(:disabled) { border-color: var(--text-muted); }
+.fb-list { max-height: 320px; overflow-y: auto; overscroll-behavior: contain; }
+.fb-message { padding: 14px 12px; color: var(--text-muted); font-size: var(--fs-sm); }
+.fb-error { color: var(--accent-red); }
+.fb-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.fb-row:first-child { border-top: none; }
+.fb-row:hover:not(:disabled), .fb-row:focus-visible { background: var(--bg-card-hover); outline: none; }
+.fb-row:disabled { cursor: default; color: var(--text-muted); }
+.fb-row.fb-dir, .fb-row.fb-script { color: var(--text-primary); }
+.fb-row.selected { background: var(--accent-blue-glow); }
+.fb-name {
+  font-family: "JetBrains Mono", monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.fb-icon { width: 14px; height: 14px; flex: none; color: var(--text-muted); }
+.fb-icon-dir { color: var(--accent-blue-text); }
+.fb-icon-script { color: var(--text-primary); }
+.fb-tag {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.fb-tag-run { border-color: var(--accent-blue); color: var(--accent-blue-text); }
+.fb-size { margin-left: auto; flex: none; color: var(--text-muted); font-size: 11px; }
