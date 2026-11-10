@@ -324,6 +324,12 @@ resource "aws_launch_template" "job" {
     instance_metadata_tags      = "enabled" # job_boot.sh reads its job id from tags
   }
 
+  # One-minute CPU and network metrics instead of five (the job dashboards in
+  # infra/grafana). Billed per instance-hour while a job runs.
+  monitoring {
+    enabled = true
+  }
+
   block_device_mappings {
     device_name = "/dev/sda1"
     ebs {
@@ -392,6 +398,12 @@ resource "aws_launch_template" "job_gpu" {
     http_tokens                 = "required"
     http_put_response_hop_limit = 1
     instance_metadata_tags      = "enabled"
+  }
+
+  # One-minute CPU and network metrics instead of five (the job dashboards in
+  # infra/grafana). Billed per instance-hour while a job runs.
+  monitoring {
+    enabled = true
   }
 
   block_device_mappings {
