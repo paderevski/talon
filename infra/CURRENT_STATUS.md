@@ -190,7 +190,8 @@ fixes only. Items 1 and 2 below describe the current EC2 path.
    A Postgres queue (`FOR UPDATE SKIP LOCKED`, `not_before`) stays possible
    for the web server's own bookkeeping; job instances must never reach
    Postgres.
-2. **Baked CPU AMI** (boot stops installing the AWS CLI and pip each time).
+2. ~~**Baked CPU AMI**~~ _(done 2026-11-10: `image.tf`, EC2 Image Builder; see
+   "CPU job image" below.)_
 3. Downloaded data in "changed files": hidden paths (`.cache/`, `.git/`,
    dotfiles) are skipped since 2026-11-05 on both runners (job template
    v11, checked with `job-1052`). `data/` is still saved: how to handle
@@ -465,6 +466,40 @@ toward two servers)
 - Term end: return leftover teacher pool money to the admin (needs a
   small admin action; see "Gaps to production").
 
+## CPU job image (2026-11-10)
+
+CPU job instances boot from a custom AMI built by EC2 Image Builder
+(`infra/ec2/image.tf`): Ubuntu 24.04 arm64 plus the AWS CLI (snap, held),
+`python3-venv` and `python3-pip`, patched with `apt-get upgrade`, with
+`/etc/talon-image-release` (`cpu-<version>-<date>`). `job_boot.sh` still
+installs anything missing, so it runs on stock Ubuntu too; `job.boot_summary`
+carries `imageRelease` (`stock` when absent).
+
+- **Switch:** `cpu_job_image = "stock" | "baked"` (default stock; the demo's
+  `terraform.tfvars` says baked). Rollback: set it to stock and apply.
+- **Pipeline** `talon-demo-cpu-job`: monthly (`cron(0 6 1 * ? *)`), start
+  condition `EXPRESSION_MATCH_ONLY`, build and test instances in an app
+  subnet, tests fail the build. Start one by hand:
+  `aws imagebuilder start-image-pipeline-execution --image-pipeline-arn <arn>`
+  (output `cpu_image_pipeline_arn`). The AMI id is written to the SSM
+  parameter `/imagebuilder/talon-demo/cpu-job` (Image Builder's service-linked
+  role can write only under `/imagebuilder/`); the launch template follows
+  that parameter only on `terraform apply`, like the stock AMI. Bump
+  `cpu_image_version` when the component text changes (recipes and
+  components are immutable).
+- **No lifecycle policy** on purpose: deleting images on a schedule could
+  remove the one the template points at. Delete old AMIs and snapshots by
+  hand, after checking that no launch template uses them.
+- **Measured** (m7g.large, CPU job with a repo, `job.boot_summary`): stock
+  boot 11-13 s + setup 38-45 s (about 50-58 s until the script runs); baked
+  boot 25 s + setup 9 s (about 34 s). Setup fell by about 30 s but boot rose
+  by about 12 s (a volume made from a fresh snapshot loads its blocks lazily).
+- **User data is gzipped** (`base64gzip`, one local shared by both job
+  templates): EC2's 16 KB limit applies to the stored bytes; `job_boot.sh`
+  is about 16 KB raw and 6.8 KB gzipped.
+- Plan: `docs/talon-cpu-image-plan.md` (local). Not done: the GPU image, a
+  lifecycle policy, the CloudWatch agent for memory/disk/GPU metrics.
+
 ## Going public: ALB + WAF (likely needed for the first stakeholder demo)
 
 The ALB is for protection, not load. One instance is plenty for ~100 users.
@@ -705,7 +740,7 @@ done (below); the adapter and everything after it are not built yet.
    template default; denied a disallowed type, a launch without the template,
    IMDSv2 optional, and terminating the web server. Not tested: `PassRole`
    limit, and a private subnet with NAT. Boot installs the AWS CLI with snap
-   each time (billed boot time): bake an AMI later.
+   each time (billed boot time); the CPU template now boots a baked image (see "CPU job image").
 2. **Built, deployed to the demo box and verified on AWS (2026-10-27).** `ec2ExecutionAdapter.js` (stateless: clones the repo on
    the web server, ships `repo.tgz` and a generated `run.sh` to S3, launches
    from the launch template, reads `status.json`, logs and outputs back from
