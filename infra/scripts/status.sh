@@ -19,6 +19,7 @@ for arg in "$@"; do
 done
 
 NAME="talon-$TALON_ENV"
+PUBLIC_ALB="${TALON_PUBLIC_ALB_NAME:-talon-public}" # public_alb.tf; no environment in its name
 q() { aws "$@" --output text 2>/dev/null; }
 section() { printf '\n== %s\n' "$1"; }
 iso_ago() { date -u -v-"$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d "$1 ago" +%Y-%m-%dT%H:%M:%SZ; }
@@ -34,10 +35,15 @@ LT_LATEST="$(q ec2 describe-launch-templates --launch-template-names "$NAME-web"
 echo "desired $DESIRED (min $MIN, max $MAX), launch template latest v$LT_LATEST"
 TG="$(q elbv2 describe-target-groups --names "$NAME-web" --query 'TargetGroups[0].TargetGroupArn')"
 TARGETS="$(q elbv2 describe-target-health --target-group-arn "$TG" --query 'TargetHealthDescriptions[].[Target.Id,TargetHealth.State]')"
+# The public ALB has its own target group (a target group serves one ALB only).
+PUB_TG="$(q elbv2 describe-target-groups --names "$PUBLIC_ALB-web" --query 'TargetGroups[0].TargetGroupArn')"
+PUB_TARGETS=""
+[ -n "$PUB_TG" ] && PUB_TARGETS="$(q elbv2 describe-target-health --target-group-arn "$PUB_TG" --query 'TargetHealthDescriptions[].[Target.Id,TargetHealth.State]')"
 q autoscaling describe-auto-scaling-groups --auto-scaling-group-names "$NAME-web" \
   --query 'AutoScalingGroups[0].Instances[].[InstanceId,AvailabilityZone,LifecycleState,HealthStatus,LaunchTemplate.Version]' |
 while read -r id az state health ver; do
   alb="$(awk -v i="$id" '$1 == i {print $2}' <<<"$TARGETS")"
+  pub="$(awk -v i="$id" '$1 == i {print $2}' <<<"$PUB_TARGETS")"
   commit=""
   if [ "$DEEP" = 1 ]; then
     commit="$(aws ssm send-command --instance-ids "$id" --document-name AWS-RunShellScript \
@@ -45,28 +51,51 @@ while read -r id az state health ver; do
     sleep 3
     commit="commit $(q ssm get-command-invocation --command-id "$commit" --instance-id "$id" --query StandardOutputContent | tr -d '\n')"
   fi
-  printf '  %-20s %-11s %-10s asg:%-8s alb:%-10s v%s %s\n' "$id" "$az" "$state" "$health" "${alb:-none}" "$ver" "$commit"
+  printf '  %-20s %-11s %-10s asg:%-8s alb:%-10s public:%-10s v%s %s\n' "$id" "$az" "$state" "$health" "${alb:-none}" "${pub:-none}" "$ver" "$commit"
 done
 REFRESH="$(q autoscaling describe-instance-refreshes --auto-scaling-group-name "$NAME-web" --max-records 1 \
   --query 'InstanceRefreshes[0].[Status,StartTime]')"
 [ -n "$REFRESH" ] && echo "last instance refresh: $REFRESH"
 
-# ---------------------------------------------------------------- load balancer
-section "Load balancer (ALB $NAME-web)"
-read -r LB_ARN LB_STATE LB_SCHEME LB_DNS <<<"$(q elbv2 describe-load-balancers --names "$NAME-web" \
-  --query 'LoadBalancers[0].[LoadBalancerArn,State.Code,Scheme,DNSName]')"
-if [ -n "$LB_ARN" ]; then
-  IDLE="$(q elbv2 describe-load-balancer-attributes --load-balancer-arn "$LB_ARN" \
+# ---------------------------------------------------------------- load balancers
+# lb_status <load balancer name> <target group arn> <targets (id state lines)>
+lb_status() {
+  local lb_name="$1" tg="$2" targets="$3" lb_arn lb_state lb_scheme lb_dns idle listeners hc_path hc_int hc_bad healthy total
+  read -r lb_arn lb_state lb_scheme lb_dns <<<"$(q elbv2 describe-load-balancers --names "$lb_name" \
+    --query 'LoadBalancers[0].[LoadBalancerArn,State.Code,Scheme,DNSName]')"
+  if [ -z "$lb_arn" ]; then echo "  not found"; return; fi
+  idle="$(q elbv2 describe-load-balancer-attributes --load-balancer-arn "$lb_arn" \
     --query 'Attributes[?Key==`idle_timeout.timeout_seconds`].Value|[0]')"
-  LISTENERS="$(q elbv2 describe-listeners --load-balancer-arn "$LB_ARN" --query 'Listeners[].[Protocol,Port]' | awk '{printf "%s%s:%s", sep, $1, $2; sep=", "}')"
-  read -r HC_PATH HC_INT HC_BAD <<<"$(q elbv2 describe-target-groups --target-group-arns "$TG" \
+  listeners="$(q elbv2 describe-listeners --load-balancer-arn "$lb_arn" --query 'Listeners[].[Protocol,Port]' | awk '{printf "%s%s:%s", sep, $1, $2; sep=", "}')"
+  read -r hc_path hc_int hc_bad <<<"$(q elbv2 describe-target-groups --target-group-arns "$tg" \
     --query 'TargetGroups[0].[HealthCheckPath,HealthCheckIntervalSeconds,UnhealthyThresholdCount]')"
-  HEALTHY="$(awk '$2 == "healthy"' <<<"$TARGETS" | wc -l | tr -d ' ')"; TOTAL="$(sed '/^$/d' <<<"$TARGETS" | wc -l | tr -d ' ')"
-  echo "  $LB_STATE, $LB_SCHEME, listeners $LISTENERS, idle timeout ${IDLE}s"
-  echo "  targets $HEALTHY of $TOTAL healthy; health check $HC_PATH every ${HC_INT}s, unhealthy after $HC_BAD"
-  echo "  $LB_DNS"
-else
-  echo "  not found"
+  healthy="$(awk '$2 == "healthy"' <<<"$targets" | wc -l | tr -d ' ')"; total="$(sed '/^$/d' <<<"$targets" | wc -l | tr -d ' ')"
+  echo "  $lb_state, $lb_scheme, listeners ${listeners:-none}, idle timeout ${idle}s"
+  echo "  targets $healthy of $total healthy; health check $hc_path every ${hc_int}s, unhealthy after $hc_bad"
+  echo "  $lb_dns"
+}
+section "Load balancer, internal (ALB $NAME-web; the SSM tunnel's path)"
+lb_status "$NAME-web" "$TG" "$TARGETS"
+
+section "Load balancer, internet-facing (ALB $PUBLIC_ALB; public_alb.tf)"
+lb_status "$PUBLIC_ALB" "$PUB_TG" "$PUB_TARGETS"
+# Who may connect: the ALB's own security group, with NAT gateway IPs named.
+PUB_SG="$(q elbv2 describe-load-balancers --names "$PUBLIC_ALB" --query 'LoadBalancers[0].SecurityGroups[0]')"
+if [ -n "$PUB_SG" ]; then
+  NAT_IPS="$(q ec2 describe-nat-gateways --filter Name=state,Values=available --query 'NatGateways[].NatGatewayAddresses[0].PublicIp')"
+  OPEN="$(q ec2 describe-security-group-rules --filters "Name=group-id,Values=$PUB_SG" \
+    --query 'SecurityGroupRules[?IsEgress==`false`].[FromPort,CidrIpv4]')"
+  if awk '$2 == "0.0.0.0/0"' <<<"$OPEN" | grep -q .; then
+    echo "  reachable from: the whole internet (ports $(awk '$2 == "0.0.0.0/0" {printf "%s%s", sep, $1; sep=","}' <<<"$OPEN"))"
+  else
+    OUTSIDE=""
+    while read -r port cidr; do
+      [ -n "$cidr" ] || continue
+      case " $(echo $NAT_IPS) " in *" ${cidr%/32} "*) ;; *) OUTSIDE="$OUTSIDE${OUTSIDE:+, }$cidr" ;; esac
+    done <<<"$OPEN"
+    if [ -n "$OUTSIDE" ]; then echo "  reachable from: the NAT gateways and $OUTSIDE"
+    else echo "  reachable from: the NAT gateways only (SSM tunnel: TALON_ALB=public tunnel.sh)"; fi
+  fi
 fi
 
 # ---------------------------------------------------------------- database
