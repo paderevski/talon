@@ -111,12 +111,13 @@
           "rawSql": "SELECT status, owner_username AS student, coalesce(compute_type, 'local') AS machine,\n             coalesce(instance_id, '-') AS instance,\n             coalesce(duration_seconds::text || ' s', '-') AS duration,\n             '$' || to_char(cost_cents / 100.0, 'FM999990.00') AS cost,\n             '$' || to_char(reserved_cents / 100.0, 'FM999990.00') AS reserved\n      FROM reporting.jobs WHERE id = '$job_id'"
         }
       ],
+      "description": "Status, student, machine, instance, duration and cost of this job. Empty means the job id is not in the database.",
       "options": {
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
           ],
-          "fields": "",
+          "fields": "/.*/",
           "values": false
         },
         "textMode": "value_and_name",
@@ -210,7 +211,7 @@
       "gridPos": {
         "x": 0,
         "y": 8,
-        "w": 12,
+        "w": 10,
         "h": 7
       },
       "datasource": {
@@ -264,11 +265,11 @@
     {
       "id": 4,
       "type": "timeseries",
-      "title": "Machine CPU and network",
+      "title": "Machine CPU",
       "gridPos": {
-        "x": 12,
+        "x": 10,
         "y": 8,
-        "w": 12,
+        "w": 7,
         "h": 7
       },
       "datasource": {
@@ -297,31 +298,9 @@
           "label": "CPU %",
           "id": "",
           "expression": ""
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "cloudwatch",
-            "uid": "talon-cloudwatch"
-          },
-          "queryMode": "Metrics",
-          "metricQueryType": 0,
-          "metricEditorMode": 0,
-          "region": "default",
-          "namespace": "AWS/EC2",
-          "metricName": "NetworkIn",
-          "dimensions": {
-            "InstanceId": "$instance"
-          },
-          "statistic": "Sum",
-          "period": "",
-          "matchExact": true,
-          "label": "network in (bytes)",
-          "id": "",
-          "expression": ""
         }
       ],
-      "description": "Basic EC2 metrics (no agent on job machines: no memory or GPU use yet).",
+      "description": "EC2 metric, one point a minute (detailed monitoring on the job launch templates). No memory or GPU use yet.",
       "options": {
         "legend": {
           "displayMode": "list",
@@ -335,7 +314,8 @@
       },
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
+          "unit": "percent",
+          "min": 0,
           "links": [],
           "custom": {
             "drawStyle": "line",
@@ -354,6 +334,98 @@
     },
     {
       "id": 5,
+      "type": "timeseries",
+      "title": "Machine network",
+      "gridPos": {
+        "x": 17,
+        "y": 8,
+        "w": 7,
+        "h": 7
+      },
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "talon-cloudwatch"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "talon-cloudwatch"
+          },
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "default",
+          "namespace": "AWS/EC2",
+          "metricName": "NetworkIn",
+          "dimensions": {
+            "InstanceId": "$instance"
+          },
+          "statistic": "Sum",
+          "period": "",
+          "matchExact": true,
+          "label": "in",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "talon-cloudwatch"
+          },
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "default",
+          "namespace": "AWS/EC2",
+          "metricName": "NetworkOut",
+          "dimensions": {
+            "InstanceId": "$instance"
+          },
+          "statistic": "Sum",
+          "period": "",
+          "matchExact": true,
+          "label": "out",
+          "id": "",
+          "expression": ""
+        }
+      ],
+      "description": "Bytes per minute.",
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0,
+          "links": [],
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 6,
       "type": "logs",
       "title": "Job machine log (boot, setup, script output)",
       "gridPos": {
@@ -393,7 +465,7 @@
       }
     },
     {
-      "id": 6,
+      "id": 7,
       "type": "table",
       "title": "Backend events for this job",
       "gridPos": {

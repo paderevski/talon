@@ -53,10 +53,10 @@ function panel(type, title, gridPos, targets, extra = {}) {
   };
 }
 
-function stat(title, gridPos, targets, { unit = "short", decimals, thresholds, description, links, textMode = "value_and_name", calc = "lastNotNull", colorMode = "value" } = {}) {
+function stat(title, gridPos, targets, { unit = "short", decimals, thresholds, description, links, textMode = "value_and_name", calc = "lastNotNull", colorMode = "value", fields = "" } = {}) {
   return panel("stat", title, gridPos, targets, {
     description,
-    options: { reduceOptions: { calcs: [calc], fields: "", values: false }, textMode, colorMode, graphMode: "area", justifyMode: "auto", orientation: "auto" },
+    options: { reduceOptions: { calcs: [calc], fields, values: false }, textMode, colorMode, graphMode: "area", justifyMode: "auto", orientation: "auto" },
     fieldConfig: {
       defaults: {
         unit, decimals, links: links || [],
@@ -404,18 +404,21 @@ const job = dashboard("talon-job", "Talon job", {
              coalesce(duration_seconds::text || ' s', '-') AS duration,
              '$' || to_char(cost_cents / 100.0, 'FM999990.00') AS cost,
              '$' || to_char(reserved_cents / 100.0, 'FM999990.00') AS reserved
-      FROM reporting.jobs WHERE id = '$job_id'`)], { textMode: "value_and_name", colorMode: "none" }),
+      FROM reporting.jobs WHERE id = '$job_id'`)], { textMode: "value_and_name", colorMode: "none", fields: "/.*/", description: "Status, student, machine, instance, duration and cost of this job. Empty means the job id is not in the database." }),
     table("Details", g(0, 4, 24, 4), [sql(`
       SELECT name, repo, branch, folder, entry_script, provider, created_at AS started, finalized_at AS finished,
              max_runtime_seconds AS "time limit", error
       FROM reporting.jobs WHERE id = '$job_id'`)], { columns: { "time limit": { unit: "s" } } }),
-    table("Ledger entries", g(0, 8, 12, 7), [sql(`
+    table("Ledger entries", g(0, 8, 10, 7), [sql(`
       SELECT created_at, kind, amount_cents / 100.0 AS amount, account_owner AS account, note
       FROM reporting.ledger WHERE job_id = '$job_id' ORDER BY created_at`)], { columns: { amount: { unit: "currencyUSD" } } }),
-    timeseries("Machine CPU and network", g(12, 8, 12, 7), [
+    timeseries("Machine CPU", g(10, 8, 7, 7), [
       cw("AWS/EC2", "CPUUtilization", JOB, "Average", "CPU %"),
-      cw("AWS/EC2", "NetworkIn", JOB, "Sum", "network in (bytes)"),
-    ], { description: "Basic EC2 metrics (no agent on job machines: no memory or GPU use yet)." }),
+    ], { unit: "percent", min: 0, description: "EC2 metric, one point a minute (detailed monitoring on the job launch templates). No memory or GPU use yet." }),
+    timeseries("Machine network", g(17, 8, 7, 7), [
+      cw("AWS/EC2", "NetworkIn", JOB, "Sum", "in"),
+      cw("AWS/EC2", "NetworkOut", JOB, "Sum", "out"),
+    ], { unit: "bytes", min: 0, description: "Bytes per minute." }),
     logsPanel("Job machine log (boot, setup, script output)", g(0, 15, 24, 12), [logs([LOG("jobs")], `
       fields @timestamp, @message
       | filter @logStream like /^$job_id\\//
