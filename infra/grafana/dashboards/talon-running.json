@@ -632,7 +632,7 @@
       "gridPos": {
         "x": 0,
         "y": 12,
-        "w": 12,
+        "w": 8,
         "h": 8
       },
       "datasource": {
@@ -663,7 +663,7 @@
           "expression": ""
         }
       ],
-      "description": "Basic EC2 metrics: one point every 5 minutes. Instance ids match the table above.",
+      "description": "EC2 metric, one point a minute. Instance ids match the table above.",
       "options": {
         "legend": {
           "displayMode": "list",
@@ -698,11 +698,81 @@
     {
       "id": 9,
       "type": "timeseries",
+      "title": "Memory of running jobs",
+      "gridPos": {
+        "x": 8,
+        "y": 12,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "talon-cloudwatch"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "talon-cloudwatch"
+          },
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "default",
+          "namespace": "Talon/Jobs",
+          "metricName": "mem_used_percent",
+          "dimensions": {
+            "InstanceId": "$running"
+          },
+          "statistic": "Average",
+          "period": "",
+          "matchExact": true,
+          "label": "${PROP('Dim.InstanceId')}",
+          "id": "",
+          "expression": ""
+        }
+      ],
+      "description": "From the CloudWatch agent in the CPU job image, a point every 30 s. GPU jobs and jobs on the stock image show no line.",
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "links": [],
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
       "title": "Network of running jobs",
       "gridPos": {
-        "x": 12,
+        "x": 16,
         "y": 12,
-        "w": 12,
+        "w": 8,
         "h": 8
       },
       "datasource": {
@@ -786,7 +856,7 @@
       }
     },
     {
-      "id": 10,
+      "id": 11,
       "type": "table",
       "title": "Finished in the last 2 hours",
       "gridPos": {
@@ -942,7 +1012,7 @@
       }
     },
     {
-      "id": 11,
+      "id": 12,
       "type": "logs",
       "title": "Backend events for jobs (warnings and errors)",
       "gridPos": {

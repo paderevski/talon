@@ -276,6 +276,22 @@ data "aws_iam_policy_document" "job_access" {
     resources = [aws_cloudwatch_log_group.jobs.arn, "${aws_cloudwatch_log_group.jobs.arn}:log-stream:*"]
   }
 
+  # Memory and disk from the CloudWatch agent baked into the CPU image
+  # (image.tf). PutMetricData cannot be limited to one instance, only to the
+  # namespace. Root on a job machine could publish any metric name and
+  # dimension set there (each unique set is a billed metric); the budget
+  # alerts (alarms.tf) are the backstop.
+  statement {
+    sid       = "PutJobMetrics"
+    actions   = ["cloudwatch:PutMetricData"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "cloudwatch:namespace"
+      values   = ["Talon/Jobs"]
+    }
+  }
+
   statement {
     sid     = "WriteStatusLogsOutput"
     actions = ["s3:PutObject"]

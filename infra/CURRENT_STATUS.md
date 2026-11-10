@@ -497,8 +497,22 @@ carries `imageRelease` (`stock` when absent).
 - **User data is gzipped** (`base64gzip`, one local shared by both job
   templates): EC2's 16 KB limit applies to the stored bytes; `job_boot.sh`
   is about 16 KB raw and 6.8 KB gzipped.
+- **Job machine metrics (2026-11-10, applied and verified):** image 1.1.0 adds the CloudWatch agent (AWS's managed component installs it;
+  ours configures it: `Talon/Jobs` namespace, `mem_used_percent` and
+  `disk_used_percent` every 30 s, InstanceId dimension, no logs section),
+  the job role may `cloudwatch:PutMetricData` in that namespace only
+  (`jobs.tf`), `job_boot.sh` stops the agent before power off, and the job
+  and running-jobs dashboards get memory and disk panels. CPU jobs only; GPU
+  jobs and stock-image jobs show no data. Plan:
+  `docs/talon-cloudwatch-job-metrics-plan.md` (local). Verified with job-1131
+  (r7g.large, cancelled after 8 minutes): memory and disk points every minute
+  from about 40 s after launch, on the job dashboard; boot 25 s and setup
+  10 s, unchanged. The disk metric also exists with path, device and fstype
+  dimensions (the agent adds them); dashboards read the InstanceId-only
+  series. A cancel keeps everything published so far and settles the ledger
+  (charge, then a refund of the unused reservation).
 - Plan: `docs/talon-cpu-image-plan.md` (local). Not done: the GPU image, a
-  lifecycle policy, the CloudWatch agent for memory/disk/GPU metrics.
+  lifecycle policy, GPU use metrics.
 
 ## Going public: ALB + WAF (likely needed for the first stakeholder demo)
 

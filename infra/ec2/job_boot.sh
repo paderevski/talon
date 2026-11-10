@@ -196,6 +196,8 @@ finish() {
   if command -v aws >/dev/null && [ -n "${PREFIX:-}" ]; then
     stop_log_loop; ship_logs
   fi
+  # Flush the CloudWatch agent's last interval (baked CPU image; a no-op elsewhere).
+  timeout 15 systemctl stop amazon-cloudwatch-agent >/dev/null 2>&1 || true
   sync; shutdown -h now
 }
 trap finish EXIT

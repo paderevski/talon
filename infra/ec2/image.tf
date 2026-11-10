@@ -18,7 +18,7 @@
 variable "cpu_image_version" {
   description = "Version of the CPU image's component and recipe (semantic, three numbers). Both are immutable in Image Builder: bump this whenever the component text below changes."
   type        = string
-  default     = "1.0.0"
+  default     = "1.1.0"
 }
 
 variable "cpu_image_root_gb" {
@@ -40,6 +40,26 @@ variable "cpu_image_schedule" {
 }
 
 locals {
+  # The CloudWatch agent's config for job machines (job metrics plan): memory
+  # and disk to Talon/Jobs, InstanceId only. Like the web servers' config in
+  # monitoring.tf: the disk plugin adds path, device and fstype dimensions, and
+  # aggregation_dimensions publishes the InstanceId-only series Grafana reads.
+  # 30 s, so a short job leaves a few points. No logs section (talon-cwlog
+  # ships the boot log), so the agent opens no listener and reads no student file.
+  cpu_image_cw_agent_config = jsonencode({
+    agent = { metrics_collection_interval = 30 }
+    metrics = {
+      namespace              = "Talon/Jobs"
+      append_dimensions      = { InstanceId = "$${aws:InstanceId}" }
+      aggregation_dimensions = [["InstanceId"]]
+      force_flush_interval   = 30
+      metrics_collected = {
+        mem  = { measurement = ["mem_used_percent"] }
+        disk = { measurement = ["used_percent"], resources = ["/"] }
+      }
+    }
+  })
+
   # Image Builder's service-linked role may write SSM parameters only under
   # /imagebuilder/ (the first build failed at this step with /talon-images/).
   # Outside the app secrets prefix /talon/<env>/ either way.
@@ -57,7 +77,7 @@ resource "aws_imagebuilder_component" "cpu_job" {
   version               = var.cpu_image_version
   platform              = "Linux"
   supported_os_versions = ["Ubuntu 24"]
-  description           = "Talon CPU job image: AWS CLI, Python venv and pip"
+  description           = "Talon CPU job image: AWS CLI, Python venv and pip, CloudWatch agent config"
   change_description    = "Version ${var.cpu_image_version}"
 
   data = <<-YAML
@@ -85,6 +105,18 @@ resource "aws_imagebuilder_component" "cpu_job" {
                 - set -e
                 - snap install aws-cli --classic
                 - snap refresh --hold aws-cli
+          - name: CloudWatchAgentConfig
+            action: ExecuteBash
+            inputs:
+              commands:
+                - set -e
+                - mkdir -p /etc/talon
+                - |
+                  echo '${local.cpu_image_cw_agent_config}' > /etc/talon/cw-agent-jobs.json
+                # Translate only (no -s: the build instance must not publish),
+                # then enable, so the service starts on every boot of the image.
+                - /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/etc/talon/cw-agent-jobs.json
+                - systemctl enable amazon-cloudwatch-agent
           - name: Release
             action: ExecuteBash
             inputs:
@@ -110,6 +142,16 @@ resource "aws_imagebuilder_component" "cpu_job" {
                 - iptables -V
                 - test -s /etc/talon-image-release
                 - cat /etc/talon-image-release
+          - name: CloudWatchAgent
+            action: ExecuteBash
+            inputs:
+              commands:
+                - set -e
+                - systemctl is-enabled amazon-cloudwatch-agent
+                - test -s /etc/talon/cw-agent-jobs.json
+                - test -s /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.toml
+                - cat /opt/aws/amazon-cloudwatch-agent/bin/CWAGENT_VERSION || true
+                - 'if ss -lntup | grep -q amazon-cloudwatch; then echo "the agent listens on a port"; exit 1; fi'
           - name: NoStudent
             action: ExecuteBash
             inputs:
@@ -141,6 +183,13 @@ resource "aws_imagebuilder_image_recipe" "cpu_job" {
       volume_size           = var.cpu_image_root_gb
       volume_type           = "gp3"
     }
+  }
+
+  # AWS's own component installs the agent (latest at build time, so a
+  # rebuild also moves the agent; the pin only fixes the install recipe).
+  # Ours, listed second, configures it.
+  component {
+    component_arn = "arn:aws:imagebuilder:${var.aws_region}:aws:component/amazon-cloudwatch-agent-linux/1.0.1"
   }
 
   component {

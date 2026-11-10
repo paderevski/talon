@@ -300,7 +300,7 @@
           "expression": ""
         }
       ],
-      "description": "EC2 metric, one point a minute (detailed monitoring on the job launch templates). No memory or GPU use yet.",
+      "description": "EC2 metric, one point a minute (detailed monitoring on the job launch templates). Memory and disk are in the next panel; there is no GPU use yet.",
       "options": {
         "legend": {
           "displayMode": "list",
@@ -426,11 +426,103 @@
     },
     {
       "id": 6,
+      "type": "timeseries",
+      "title": "Machine memory and disk",
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 24,
+        "h": 7
+      },
+      "datasource": {
+        "type": "cloudwatch",
+        "uid": "talon-cloudwatch"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "talon-cloudwatch"
+          },
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "default",
+          "namespace": "Talon/Jobs",
+          "metricName": "mem_used_percent",
+          "dimensions": {
+            "InstanceId": "$instance"
+          },
+          "statistic": "Average",
+          "period": "",
+          "matchExact": true,
+          "label": "memory %",
+          "id": "",
+          "expression": ""
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "cloudwatch",
+            "uid": "talon-cloudwatch"
+          },
+          "queryMode": "Metrics",
+          "metricQueryType": 0,
+          "metricEditorMode": 0,
+          "region": "default",
+          "namespace": "Talon/Jobs",
+          "metricName": "disk_used_percent",
+          "dimensions": {
+            "InstanceId": "$instance"
+          },
+          "statistic": "Maximum",
+          "period": "",
+          "matchExact": true,
+          "label": "disk %",
+          "id": "",
+          "expression": ""
+        }
+      ],
+      "description": "From the CloudWatch agent baked into the CPU job image (namespace Talon/Jobs), a point every 30 s. GPU jobs and jobs that booted the stock image show no data here.",
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "links": [],
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 7,
       "type": "logs",
       "title": "Job machine log (boot, setup, script output)",
       "gridPos": {
         "x": 0,
-        "y": 15,
+        "y": 22,
         "w": 24,
         "h": 12
       },
@@ -465,12 +557,12 @@
       }
     },
     {
-      "id": 7,
+      "id": 8,
       "type": "table",
       "title": "Backend events for this job",
       "gridPos": {
         "x": 0,
-        "y": 27,
+        "y": 34,
         "w": 24,
         "h": 8
       },
