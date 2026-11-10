@@ -660,7 +660,7 @@
           "rawSql": "SELECT count(*) FILTER (WHERE status = 'running') AS running,\n             count(*) FILTER (WHERE status = 'queued')  AS queued,\n             count(*) FILTER (WHERE status = 'running' AND compute_type ~ '^g') AS \"on GPU\"\n      FROM reporting.jobs"
         }
       ],
-      "description": "From the database (talon_grafana, reporting.jobs).",
+      "description": "From the database (talon_grafana, reporting.jobs). Click for the running-jobs dashboard.",
       "options": {
         "reduceOptions": {
           "calcs": [
@@ -678,7 +678,12 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "links": [],
+          "links": [
+            {
+              "title": "Running jobs",
+              "url": "/d/talon-running/talon-running?var-env=$env"
+            }
+          ],
           "color": {
             "mode": "thresholds"
           },
