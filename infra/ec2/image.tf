@@ -40,7 +40,10 @@ variable "cpu_image_schedule" {
 }
 
 locals {
-  cpu_image_param = "/talon-images/${var.environment}/cpu-job"
+  # Image Builder's service-linked role may write SSM parameters only under
+  # /imagebuilder/ (the first build failed at this step with /talon-images/).
+  # Outside the app secrets prefix /talon/<env>/ either way.
+  cpu_image_param = "/imagebuilder/talon-${var.environment}/cpu-job"
 }
 
 # ---------------------------------------------------------------- component
@@ -236,7 +239,7 @@ resource "aws_imagebuilder_infrastructure_configuration" "cpu_job" {
 # ---------------------------------------------------------------- distribution
 
 # One private AMI in this region and account. Its id is written to an SSM
-# parameter outside /talon/<env>/ (the app secrets prefix), where
+# parameter under /imagebuilder/ (see local.cpu_image_param), where
 # data.aws_ssm_parameter.cpu_job_baked_ami in jobs.tf reads it.
 resource "aws_imagebuilder_distribution_configuration" "cpu_job" {
   name        = "${local.name}-cpu-job"
