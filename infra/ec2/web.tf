@@ -122,7 +122,7 @@ resource "aws_autoscaling_group" "web" {
   # The ALB's health check (GET /api/health/live: is the app up on this server)
   # decides when a server is replaced. First boot builds the app and takes
   # about 2 minutes; the grace period leaves room for a slow npm.
-  target_group_arns         = [aws_lb_target_group.web.arn]
+  target_group_arns         = [aws_lb_target_group.web.arn, aws_lb_target_group.public.arn]
   health_check_type         = "ELB"
   health_check_grace_period = 600
   wait_for_capacity_timeout = "15m"

@@ -209,7 +209,7 @@ fixes only. Items 1 and 2 below describe the current EC2 path.
 | Region | `us-east-1`, Talon VPC `10.20.0.0/16` (`network.tf`): web servers in app subnets 1a/1b behind an internal ALB (private, out via a NAT gateway in each zone), RDS Multi-AZ in data subnets 1a/1b, jobs in public jobs subnets 1a-1d |
 | Web servers | Auto Scaling group `talon-demo-web` (`web.tf`): two t4g.small, Ubuntu 24.04 arm64, one per zone, from launch template `talon-demo-web`; tagged `Component=web`. Internal ALB `talon-demo-web` (`alb.tf`), health `GET /api/health/live` (app up, no database) every 10 s, unhealthy after 2 |
 | Elastic IP | None for the web servers (private). One per NAT gateway (1a, 1b) |
-| Inbound access | None. SSM Session Manager only (`tunnel.sh`: SSM port forward through a web server to the internal ALB) |
+| Inbound access | None from the internet. SSM Session Manager only (`tunnel.sh`: SSM port forward through a web server to the internal ALB, or with `TALON_ALB=public` to the internet-facing ALB). That ALB (`talon-public`, `public_alb.tf`, HTTP:80 only, no certificate yet) allows port 80 only from the two NAT gateways' Elastic IPs |
 | Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`. Postgres 16 on RDS `talon-demo` (`db.t4g.small`, Multi-AZ since 2026-11-05, TLS, IAM sign-in as `talon_app`; migrations as `talon_migrate`). `EC2_JOBS_ENABLED=true` |
 | Deployed | `main`, unless `deploy.sh <branch>` put a test branch on the box (normally tested before merge; the branch may stay until the next deploy since it equals `main` after the PR). `infra/scripts/status.sh --deep` shows the commit, template versions and drift |
 | Approx cost | ~$165/month at list price, not read from the bill (Cost Explorer shows less: LCPS Savings Plans and discounts): two web servers ~$24 + EBS ~$3.20, internal ALB ~$17, two NAT gateways ~$66 + traffic, RDS db.t4g.small Multi-AZ ~$51, KMS key ~$1, alarms/S3/SNS pennies. Plus job instances, billed per second and charged to budgets |
@@ -222,7 +222,8 @@ fixes only. Items 1 and 2 below describe the current EC2 path.
 
 ```bash
 aws sso login --profile lcps     # when credentials expire (usually daily)
-infra/scripts/tunnel.sh          # then open http://localhost:8080
+infra/scripts/tunnel.sh          # then open http://localhost:8080 (internal ALB)
+TALON_ALB=public infra/scripts/tunnel.sh 8081   # the internet-facing ALB (testing)
 infra/scripts/deploy.sh          # deploy origin/main (push first), then reseed demo data
 infra/scripts/deploy.sh B --keep-data   # deploy branch B without reseeding
 infra/scripts/shell.sh [id]      # shell on a web server (lists the others)
@@ -444,9 +445,16 @@ toward two servers)
 9. **Entra ID sign-in** - waiting on the LCPS App Registration (ask early;
    IT lead time).
 10. **ALB + WAF go-public** - hostname chosen (`talon.lcps.org`, needs
-    LCPS IT to add DNS records); still waiting on the exposure and subnet
-    decisions (see "Going public" below). Includes the X-Forwarded-Proto
-    fix, removing demo users, creating the real admin.
+    LCPS IT to add DNS records). **Step 1 done 2026-11-10:** the
+    internet-facing ALB `talon-public` exists (`public_alb.tf`) but admits
+    only the NAT gateways, so it is reachable through the SSM tunnel only
+    (`TALON_ALB=public infra/scripts/tunnel.sh 8081`; direct requests from
+    the internet time out). The web servers are already in private app
+    subnets behind NAT, so the subnet decision is settled. Still to do: the
+    exposure decision (open or allow-list), HTTPS:443 listener and 301
+    redirect once the ACM certificate is validated, WAF, the
+    X-Forwarded-Proto check over HTTPS, `SESSION_COOKIE_SECURE`, removing
+    demo users, creating the real admin (see "Going public" below).
 11. **Read-only AWS role** (`lcps-ro`) - ask the LCPS AWS admins.
 
 **Housekeeping**
@@ -1292,6 +1300,15 @@ tunnel. Plan doc "Talon Web Tier Plan" has the design. Built on branch
   for the dpkg lock (`DPkg::Lock::Timeout`): SSM State Manager's
   CloudWatch agent install runs at registration and won the race on one
   server, whose first boot then died on `apt-get install`.
+- Going public, step 1 (2026-11-10, `public_alb.tf`): internet-facing ALB
+  `talon-public` in the public subnets, security group `talon-public-alb`
+  (port 80 from the NAT Elastic IPs only), its own target group
+  `talon-public-web` (a target group can belong to only one load balancer;
+  the Auto Scaling group registers the servers in both), HTTP:80 listener.
+  Names come from `public_alb_name` (no environment in them; change it for a
+  second stack in the same account). Deletion protection is on, and the
+  ALB should not be replaced once LCPS IT points a CNAME at its DNS name.
+  Applied with `-target`, because the plan also showed new job AMIs.
 - `tunnel.sh` forwards to the ALB through a web server
   (`AWS-StartPortForwardingSessionToRemoteHost`); `TALON_DIRECT=1` goes to
   one server's nginx. Outputs: `web_asg_name`, `alb_dns_name`.

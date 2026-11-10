@@ -11,3 +11,8 @@ output "alb_dns_name" {
 output "db_endpoint" {
   value = aws_db_instance.main.address
 }
+
+output "public_alb_dns_name" {
+  description = "Internet-facing ALB (public_alb.tf). LCPS IT points the talon.lcps.org CNAME here, once the certificate and exposure are settled."
+  value       = aws_lb.public.dns_name
+}
