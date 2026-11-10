@@ -132,6 +132,10 @@ step() { echo "[talon] $*"; echo "[talon] $(date -u +%T) $*" >> /tmp/job.log; }
 step "job $JOB on $INSTANCE_ID ($INSTANCE_TYPE, image $IMAGE), ${UPTIME_AT_START}s after kernel boot"
 
 # For the summary line (emit_summary).
+# Which image this boot came from: the release file a baked image carries (the
+# Image Builder component in image.tf), "stock" on plain Ubuntu or a DLAMI.
+IMAGE_RELEASE=$(tr -cd 'A-Za-z0-9._-' < /etc/talon-image-release 2>/dev/null)
+IMAGE_RELEASE=${IMAGE_RELEASE:-stock}
 RESULT=setup_failed; EXIT_CODE=null; FAIL_MESSAGE=""; T_RUN=""; T_DONE=""; SKIPPED=0; SCRATCH_KIND=""
 SHIP_LOOP=""; LOG_LOOP=""; SUMMARY_DONE=false
 
@@ -168,8 +172,8 @@ emit_summary() {
   setup=null; run=null
   [ -n "$T_RUN" ] && setup=$((T_RUN - T0))
   [ -n "$T_RUN" ] && [ -n "$T_DONE" ] && run=$((T_DONE - T_RUN))
-  printf '{"event":"job.boot_summary","jobId":"%s","instanceId":"%s","instanceType":"%s","image":"%s","result":"%s","exitCode":%s,"message":"%s","bootSeconds":%s,"setupSeconds":%s,"runSeconds":%s,"totalSeconds":%s,"skippedFiles":%s,"scratch":"%s"}\n' \
-    "$JOB" "$INSTANCE_ID" "$INSTANCE_TYPE" "$IMAGE" "$RESULT" "$EXIT_CODE" "$FAIL_MESSAGE" \
+  printf '{"event":"job.boot_summary","jobId":"%s","instanceId":"%s","instanceType":"%s","image":"%s","imageRelease":"%s","result":"%s","exitCode":%s,"message":"%s","bootSeconds":%s,"setupSeconds":%s,"runSeconds":%s,"totalSeconds":%s,"skippedFiles":%s,"scratch":"%s"}\n' \
+    "$JOB" "$INSTANCE_ID" "$INSTANCE_TYPE" "$IMAGE" "$IMAGE_RELEASE" "$RESULT" "$EXIT_CODE" "$FAIL_MESSAGE" \
     "${UPTIME_AT_START%.*}" "$setup" "$run" "$((now - T0))" "$SKIPPED" "$SCRATCH_KIND"
 }
 
@@ -239,7 +243,9 @@ if [ -f /work/repo.tgz ]; then # a Talon job: the cloned repository
   mkdir -p /work/repo && tar -xzf /work/repo.tgz -C /work/repo && rm -f /work/repo.tgz
   # pip and venv are not on the stock image (a baked AMI will replace this).
   # The PyTorch DLAMI has its own Python with venv (run.sh uses it).
-  if [ "$IMAGE" != gpu ]; then
+  # A baked CPU image already has both (python3 -m venv --help works without
+  # the package, so ask dpkg).
+  if [ "$IMAGE" != gpu ] && ! dpkg -s python3-venv python3-pip >/dev/null 2>&1; then
     step "installing Python venv and pip (apt)"
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq && apt-get install -y -qq python3-venv python3-pip
