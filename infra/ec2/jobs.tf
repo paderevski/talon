@@ -290,6 +290,14 @@ resource "aws_iam_instance_profile" "job" {
 
 # ---------------------------------------------------------------- launch template
 
+locals {
+  # The boot script, gzipped: EC2's 16 KB user data limit applies to the
+  # stored bytes (the gzip), and cloud-init unzips it before running it.
+  job_boot_user_data = base64gzip(file("${path.module}/job_boot.sh"))
+  # Stored size: base64 is 4 characters for 3 bytes.
+  job_boot_user_data_bytes = ceil(length(local.job_boot_user_data) * 3 / 4)
+}
+
 resource "aws_launch_template" "job" {
   name                   = "${local.name}-job"
   description            = "Talon job instance (CPU, Ubuntu arm64)"
@@ -298,14 +306,15 @@ resource "aws_launch_template" "job" {
   vpc_security_group_ids = [aws_security_group.job.id]
   update_default_version = true
 
-  user_data = base64encode(file("${path.module}/job_boot.sh"))
+  user_data = local.job_boot_user_data
 
   lifecycle {
     precondition {
-      # EC2 refuses user data over 16 KB (before base64). Trim comments, or
-      # switch both templates to base64gzip (cloud-init reads gzip), if this fails.
-      condition     = length(file("${path.module}/job_boot.sh")) <= 16384
-      error_message = "job_boot.sh is over EC2's 16 KB user data limit."
+      # EC2 refuses user data over 16 KB (before base64). It is gzipped
+      # (cloud-init reads gzip), so the script itself can be about three times
+      # that. Both templates share local.job_boot_user_data.
+      condition     = local.job_boot_user_data_bytes <= 16384
+      error_message = "job_boot.sh gzipped is over EC2's 16 KB user data limit."
     }
   }
 
@@ -385,7 +394,14 @@ resource "aws_launch_template" "job_gpu" {
   vpc_security_group_ids = [aws_security_group.job.id]
   update_default_version = true
 
-  user_data = base64encode(file("${path.module}/job_boot.sh"))
+  user_data = local.job_boot_user_data
+
+  lifecycle {
+    precondition {
+      condition     = local.job_boot_user_data_bytes <= 16384
+      error_message = "job_boot.sh gzipped is over EC2's 16 KB user data limit."
+    }
+  }
 
   instance_initiated_shutdown_behavior = "terminate"
 
