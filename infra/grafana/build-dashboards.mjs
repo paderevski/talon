@@ -6,6 +6,7 @@
 // Dashboards and how they link:
 //   talon-overview  status of the whole system; every panel drills down
 //   talon-web       one web server: metrics, nginx and backend logs
+//   talon-running   jobs running or queued now, live (refreshes every 30 s)
 //   talon-job       one job: database row, ledger, machine metrics, logs
 //   talon-student   one student: balance, jobs, ledger, classes
 //   talon-request   one request id: backend and nginx lines
@@ -165,6 +166,13 @@ function pgVar(name, label, query, { hide = 0 } = {}) {
   return { name, label, type: "query", datasource: PG, hide, refresh: 1, sort: 0, query, definition: query, current: {}, multi: false, includeAll: false };
 }
 
+// A multi-select over a database column, "All" by default, re-queried on every
+// refresh (time range change) so it follows jobs as they start and finish.
+const pgMultiVar = (name, label, query) => ({
+  name, label, type: "query", datasource: PG, hide: 0, refresh: 2, sort: 1, query, definition: query,
+  multi: true, includeAll: true, current: { text: "All", value: "$__all" },
+});
+
 const textVar = (name, label) => ({ name, label, type: "textbox", query: "", current: { text: "", value: "" }, hide: 0 });
 
 // ---- links ------------------------------------------------------------------
@@ -232,7 +240,10 @@ const overview = dashboard("talon-overview", "Talon overview", {
       SELECT count(*) FILTER (WHERE status = 'running') AS running,
              count(*) FILTER (WHERE status = 'queued')  AS queued,
              count(*) FILTER (WHERE status = 'running' AND compute_type ~ '^g') AS "on GPU"
-      FROM reporting.jobs`)], { description: "From the database (talon_grafana, reporting.jobs)." }),
+      FROM reporting.jobs`)], {
+      description: "From the database (talon_grafana, reporting.jobs). Click for the running-jobs dashboard.",
+      links: [{ title: "Running jobs", url: "/d/talon-running/talon-running?var-env=$env" }],
+    }),
     stat("vCPUs in use (account)", g(18, 1, 3, 4), [
       cw("AWS/Usage", "ResourceCount", { Service: "EC2", Type: "Resource", Resource: "vCPU", Class: "Standard/OnDemand" }, "Maximum", "standard"),
       cw("AWS/Usage", "ResourceCount", { Service: "EC2", Type: "Resource", Resource: "vCPU", Class: "G/OnDemand" }, "Maximum", "GPU"),
@@ -415,7 +426,8 @@ const job = dashboard("talon-job", "Talon job", {
     timeseries("Machine CPU and network", g(12, 8, 12, 7), [
       cw("AWS/EC2", "CPUUtilization", JOB, "Average", "CPU %"),
       cw("AWS/EC2", "NetworkIn", JOB, "Sum", "network in (bytes)"),
-    ], { description: "Basic EC2 metrics (no agent on job machines: no memory or GPU use yet)." }),
+      cw("AWS/EC2", "NetworkOut", JOB, "Sum", "network out (bytes)"),
+    ], { description: "Basic EC2 metrics, one point every 5 minutes (no agent on job machines: no memory or GPU use yet)." }),
     logsPanel("Job machine log (boot, setup, script output)", g(0, 15, 24, 12), [logs([LOG("jobs")], `
       fields @timestamp, @message
       | filter @logStream like /^$job_id\\//
@@ -426,6 +438,73 @@ const job = dashboard("talon-job", "Talon job", {
       | filter jobId = "$job_id"
       | sort @timestamp asc
       | limit 500`)], { columns: { requestId: { link: linkRequest } } }),
+  ],
+});
+
+// ---- talon-running ----------------------------------------------------------------
+
+const RUN = { InstanceId: "$running" };
+const running = dashboard("talon-running", "Talon running jobs", {
+  description: "Jobs running or queued right now. Refreshes every 30 s. Click a job to drill down.",
+  time: "now-1h", refresh: "30s",
+  variables: [
+    envVar,
+    pgMultiVar("running", "Running instances", "SELECT instance_id FROM reporting.jobs WHERE status = 'running' AND instance_id IS NOT NULL ORDER BY 1"),
+  ],
+  panels: [
+    stat("Running", g(0, 0, 4, 4), [sql("SELECT count(*) AS running FROM reporting.jobs WHERE status = 'running'")],
+      { textMode: "value", description: "From the database (talon_grafana, reporting.jobs)." }),
+    stat("Queued", g(4, 0, 4, 4), [sql("SELECT count(*) AS queued FROM reporting.jobs WHERE status = 'queued'")],
+      { textMode: "value", thresholds: [{ color: "green", value: null }, { color: "orange", value: 1 }] }),
+    stat("On GPU", g(8, 0, 4, 4), [sql("SELECT count(*) AS gpu FROM reporting.jobs WHERE status = 'running' AND compute_type ~ '^g'")],
+      { textMode: "value" }),
+    stat("Reserved now", g(12, 0, 4, 4), [sql(`
+      SELECT coalesce(sum(reserved_cents), 0) / 100.0 AS reserved
+      FROM reporting.jobs WHERE status IN ('queued', 'running') AND ${EC2}`)],
+      { unit: "currencyUSD", decimals: 2, textMode: "value", description: "Held back from budgets by unfinished EC2 jobs." }),
+    stat("Longest running", g(16, 0, 4, 4), [sql(`
+      SELECT coalesce(max(extract(epoch FROM now() - created_at)), 0) AS age
+      FROM reporting.jobs WHERE status = 'running'`)], { unit: "s", textMode: "value" }),
+    stat("Time left, tightest", g(20, 0, 4, 4), [sql(`
+      SELECT min(max_runtime_seconds - extract(epoch FROM now() - created_at)) AS left_s
+      FROM reporting.jobs WHERE status = 'running' AND max_runtime_seconds IS NOT NULL`)],
+      { unit: "s", textMode: "value", description: "The job closest to its time limit." }),
+
+    table("Running and queued jobs", g(0, 4, 24, 8), [sql(`
+      SELECT id AS job, status, owner_username AS student, coalesce(compute_type, 'local') AS machine,
+             instance_id AS instance, created_at AS started,
+             extract(epoch FROM now() - created_at)::int AS age,
+             max_runtime_seconds - extract(epoch FROM now() - created_at)::int AS "time left",
+             reserved_cents / 100.0 AS reserved,
+             ${JOB_WINDOW}
+      FROM reporting.jobs
+      WHERE status IN ('queued', 'running')
+      ORDER BY (status = 'running') DESC, created_at
+      LIMIT 100`)], {
+      columns: { ...jobColumns, age: { unit: "s" }, "time left": { unit: "s" } },
+      description: "Click a job to open its dashboard, or a student. Empty means nothing is running.",
+    }),
+    timeseries("CPU of running jobs", g(0, 12, 12, 8), [
+      cw("AWS/EC2", "CPUUtilization", RUN, "Average", "${PROP('Dim.InstanceId')}"),
+    ], { unit: "percent", min: 0, description: "Basic EC2 metrics: one point every 5 minutes. Instance ids match the table above." }),
+    timeseries("Network of running jobs", g(12, 12, 12, 8), [
+      cw("AWS/EC2", "NetworkIn", RUN, "Sum", "in ${PROP('Dim.InstanceId')}"),
+      cw("AWS/EC2", "NetworkOut", RUN, "Sum", "out ${PROP('Dim.InstanceId')}"),
+    ], { unit: "bytes" }),
+    table("Finished in the last 2 hours", g(0, 20, 24, 8), [sql(`
+      SELECT id AS job, status, owner_username AS student, coalesce(compute_type, 'local') AS machine,
+             instance_id AS instance, created_at AS started, finalized_at AS finished,
+             duration_seconds AS duration, cost_cents / 100.0 AS cost, error,
+             ${JOB_WINDOW}
+      FROM reporting.jobs
+      WHERE status IN ('completed', 'failed') AND finalized_at > now() - interval '2 hours'
+      ORDER BY finalized_at DESC
+      LIMIT 50`)], { columns: jobColumns }),
+    logsPanel("Backend events for jobs (warnings and errors)", g(0, 28, 24, 8), [logs([LOG("backend")], `
+      fields @timestamp, level, event, msg, jobId, userId, error
+      | filter ispresent(jobId) and level in ["warn", "error"]
+      | sort @timestamp desc
+      | limit 100`)], "Most recent first."),
   ],
 });
 
@@ -482,7 +561,7 @@ const request = dashboard("talon-request", "Talon request trace", {
 // ---- write --------------------------------------------------------------------------
 
 mkdirSync(OUT, { recursive: true });
-for (const d of [overview, web, job, student, request]) {
+for (const d of [overview, web, running, job, student, request]) {
   writeFileSync(join(OUT, `${d.uid}.json`), JSON.stringify(d, null, 2) + "\n");
   console.log(`wrote dashboards/${d.uid}.json (${d.panels.length} panels)`);
 }
