@@ -425,17 +425,21 @@ const job = dashboard("talon-job", "Talon job", {
       FROM reporting.ledger WHERE job_id = '$job_id' ORDER BY created_at`)], { columns: { amount: { unit: "currencyUSD" } } }),
     timeseries("Machine CPU", g(10, 8, 7, 7), [
       cw("AWS/EC2", "CPUUtilization", JOB, "Average", "CPU %"),
-    ], { unit: "percent", min: 0, description: "EC2 metric, one point a minute (detailed monitoring on the job launch templates). No memory or GPU use yet." }),
+    ], { unit: "percent", min: 0, description: "EC2 metric, one point a minute (detailed monitoring on the job launch templates). Memory and disk are in the next panel; there is no GPU use yet." }),
     timeseries("Machine network", g(17, 8, 7, 7), [
       cw("AWS/EC2", "NetworkIn", JOB, "Sum", "in"),
       cw("AWS/EC2", "NetworkOut", JOB, "Sum", "out"),
     ], { unit: "bytes", min: 0, description: "Bytes per minute." }),
-    logsPanel("Job machine log (boot, setup, script output)", g(0, 15, 24, 12), [logs([LOG("jobs")], `
+    timeseries("Machine memory and disk", g(0, 15, 24, 7), [
+      cw("Talon/Jobs", "mem_used_percent", JOB, "Average", "memory %"),
+      cw("Talon/Jobs", "disk_used_percent", JOB, "Maximum", "disk %"),
+    ], { unit: "percent", min: 0, description: "From the CloudWatch agent baked into the CPU job image (namespace Talon/Jobs), a point every 30 s. GPU jobs and jobs that booted the stock image show no data here." }),
+    logsPanel("Job machine log (boot, setup, script output)", g(0, 22, 24, 12), [logs([LOG("jobs")], `
       fields @timestamp, @message
       | filter @logStream like /^$job_id\\//
       | sort @timestamp asc
       | limit 2000`)], "Stream <job id>/<instance id> in the jobs log group, written by job_boot.sh."),
-    table("Backend events for this job", g(0, 27, 24, 8), [logs([LOG("backend")], `
+    table("Backend events for this job", g(0, 34, 24, 8), [logs([LOG("backend")], `
       fields @timestamp, level, event, msg, userId, status, instanceId, reason, costCents, error, requestId
       | filter jobId = "$job_id"
       | sort @timestamp asc
@@ -486,10 +490,13 @@ const running = dashboard("talon-running", "Talon running jobs", {
       columns: { ...jobColumns, age: { unit: "s" }, "time left": { unit: "s" } },
       description: "Click a job to open its dashboard, or a student. Empty means nothing is running.",
     }),
-    timeseries("CPU of running jobs", g(0, 12, 12, 8), [
+    timeseries("CPU of running jobs", g(0, 12, 8, 8), [
       cw("AWS/EC2", "CPUUtilization", RUN, "Average", "${PROP('Dim.InstanceId')}"),
-    ], { unit: "percent", min: 0, description: "Basic EC2 metrics: one point every 5 minutes. Instance ids match the table above." }),
-    timeseries("Network of running jobs", g(12, 12, 12, 8), [
+    ], { unit: "percent", min: 0, description: "EC2 metric, one point a minute. Instance ids match the table above." }),
+    timeseries("Memory of running jobs", g(8, 12, 8, 8), [
+      cw("Talon/Jobs", "mem_used_percent", RUN, "Average", "${PROP('Dim.InstanceId')}"),
+    ], { unit: "percent", min: 0, description: "From the CloudWatch agent in the CPU job image, a point every 30 s. GPU jobs and jobs on the stock image show no line." }),
+    timeseries("Network of running jobs", g(16, 12, 8, 8), [
       cw("AWS/EC2", "NetworkIn", RUN, "Sum", "in ${PROP('Dim.InstanceId')}"),
       cw("AWS/EC2", "NetworkOut", RUN, "Sum", "out ${PROP('Dim.InstanceId')}"),
     ], { unit: "bytes" }),
