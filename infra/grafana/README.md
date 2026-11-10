@@ -36,10 +36,11 @@ if you want to keep one).
 |---|---|
 | Talon overview | Click a web server line, a job, a student, a request id or a server in the log table |
 | Talon web server | CPU, memory, disk, network; nginx requests by status and slowest; backend warnings; nginx errors; first boot log |
+| Talon running jobs | Jobs running or queued now (refreshes every 30 s): counts, time left, a table linking to each job, CPU and network of the running machines, jobs finished in the last 2 hours, job warnings and errors. Linked from "Jobs now" on the overview |
 | Talon job | Database row, ledger entries, machine CPU and network, job machine log, backend events |
 | Talon student | Balance, jobs, cost, classes, ledger |
 | Talon request trace | nginx and backend lines for one request id |
 
 Gaps: no VPC flow logs (network shows NAT and server traffic only); job
-machines have basic EC2 metrics only (no memory or GPU use); CloudWatch alarm
+machines have basic EC2 metrics only, one point every 5 minutes (no memory or GPU use); CloudWatch alarm
 states are not shown; spend comes from the ledger (job cost), not AWS billing.
