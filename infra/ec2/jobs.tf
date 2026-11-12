@@ -29,6 +29,17 @@ variable "ec2_gpu_admin_only" {
   default     = false
 }
 
+variable "cpu_job_image" {
+  description = "Image the CPU launch template boots: \"stock\" (Ubuntu 24.04 from Canonical's SSM parameter; boot installs the tools) or \"baked\" (the Image Builder image in image.tf; run the pipeline once first, or the plan fails because its SSM parameter does not exist)."
+  type        = string
+  default     = "stock"
+
+  validation {
+    condition     = contains(["stock", "baked"], var.cpu_job_image)
+    error_message = "cpu_job_image must be stock or baked."
+  }
+}
+
 variable "job_instance_type" {
   description = "Default instance type in the job launch template (Graviton, matching the AMI; non-burstable, since t4g bills surplus CPU credits the job rate does not cover)."
   type        = string
@@ -265,6 +276,22 @@ data "aws_iam_policy_document" "job_access" {
     resources = [aws_cloudwatch_log_group.jobs.arn, "${aws_cloudwatch_log_group.jobs.arn}:log-stream:*"]
   }
 
+  # Memory and disk from the CloudWatch agent baked into the CPU image
+  # (image.tf). PutMetricData cannot be limited to one instance, only to the
+  # namespace. Root on a job machine could publish any metric name and
+  # dimension set there (each unique set is a billed metric); the budget
+  # alerts (alarms.tf) are the backstop.
+  statement {
+    sid       = "PutJobMetrics"
+    actions   = ["cloudwatch:PutMetricData"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "cloudwatch:namespace"
+      values   = ["Talon/Jobs"]
+    }
+  }
+
   statement {
     sid     = "WriteStatusLogsOutput"
     actions = ["s3:PutObject"]
@@ -290,22 +317,48 @@ resource "aws_iam_instance_profile" "job" {
 
 # ---------------------------------------------------------------- launch template
 
+locals {
+  # The boot script, gzipped: EC2's 16 KB user data limit applies to the
+  # stored bytes (the gzip), and cloud-init unzips it before running it.
+  job_boot_user_data = base64gzip(file("${path.module}/job_boot.sh"))
+  # Stored size: base64 is 4 characters for 3 bytes.
+  job_boot_user_data_bytes = ceil(length(local.job_boot_user_data) * 3 / 4)
+}
+
+# The baked image's id, written by the Image Builder pipeline (image.tf).
+# Read only in baked mode: the parameter exists after the first build.
+data "aws_ssm_parameter" "cpu_job_baked_ami" {
+  count = var.cpu_job_image == "baked" ? 1 : 0
+  name  = local.cpu_image_param
+}
+
+locals {
+  # AMI ids are public: insecure_value keeps them readable in the plan.
+  cpu_job_ami_id = var.cpu_job_image == "baked" ? one(data.aws_ssm_parameter.cpu_job_baked_ami[*].insecure_value) : data.aws_ssm_parameter.ubuntu_ami.insecure_value
+}
+
 resource "aws_launch_template" "job" {
   name                   = "${local.name}-job"
   description            = "Talon job instance (CPU, Ubuntu arm64)"
-  image_id               = data.aws_ssm_parameter.ubuntu_ami.value
+  image_id               = local.cpu_job_ami_id
   instance_type          = var.job_instance_type
   vpc_security_group_ids = [aws_security_group.job.id]
   update_default_version = true
 
-  user_data = base64encode(file("${path.module}/job_boot.sh"))
+  user_data = local.job_boot_user_data
 
   lifecycle {
     precondition {
-      # EC2 refuses user data over 16 KB (before base64). Trim comments, or
-      # switch both templates to base64gzip (cloud-init reads gzip), if this fails.
-      condition     = length(file("${path.module}/job_boot.sh")) <= 16384
-      error_message = "job_boot.sh is over EC2's 16 KB user data limit."
+      # EC2 refuses user data over 16 KB (before base64). It is gzipped
+      # (cloud-init reads gzip), so the script itself can be about three times
+      # that. Both templates share local.job_boot_user_data.
+      condition     = local.job_boot_user_data_bytes <= 16384
+      error_message = "job_boot.sh gzipped is over EC2's 16 KB user data limit."
+    }
+    precondition {
+      # A launch can enlarge the image's root volume, never shrink it.
+      condition     = var.job_root_volume_gb >= var.cpu_image_root_gb
+      error_message = "job_root_volume_gb must be at least cpu_image_root_gb (the baked image's root volume)."
     }
   }
 
@@ -322,6 +375,12 @@ resource "aws_launch_template" "job" {
     http_tokens                 = "required"
     http_put_response_hop_limit = 1
     instance_metadata_tags      = "enabled" # job_boot.sh reads its job id from tags
+  }
+
+  # One-minute CPU and network metrics instead of five (the job dashboards in
+  # infra/grafana). Billed per instance-hour while a job runs.
+  monitoring {
+    enabled = true
   }
 
   block_device_mappings {
@@ -379,7 +438,14 @@ resource "aws_launch_template" "job_gpu" {
   vpc_security_group_ids = [aws_security_group.job.id]
   update_default_version = true
 
-  user_data = base64encode(file("${path.module}/job_boot.sh"))
+  user_data = local.job_boot_user_data
+
+  lifecycle {
+    precondition {
+      condition     = local.job_boot_user_data_bytes <= 16384
+      error_message = "job_boot.sh gzipped is over EC2's 16 KB user data limit."
+    }
+  }
 
   instance_initiated_shutdown_behavior = "terminate"
 
@@ -392,6 +458,12 @@ resource "aws_launch_template" "job_gpu" {
     http_tokens                 = "required"
     http_put_response_hop_limit = 1
     instance_metadata_tags      = "enabled"
+  }
+
+  # One-minute CPU and network metrics instead of five (the job dashboards in
+  # infra/grafana). Billed per instance-hour while a job runs.
+  monitoring {
+    enabled = true
   }
 
   block_device_mappings {
@@ -469,7 +541,7 @@ locals {
   # The AMIs the job templates use (the only images the web server may launch).
   # insecure_value: AMI ids are public and readable in the plan.
   job_ami_ids = distinct([
-    data.aws_ssm_parameter.ubuntu_ami.insecure_value,
+    local.cpu_job_ami_id,
     data.aws_ssm_parameter.gpu_job_ami.insecure_value,
   ])
   job_max_root_gb = max(var.job_max_volume_gb, var.job_root_volume_gb, var.gpu_job_root_volume_gb)

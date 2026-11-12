@@ -190,7 +190,8 @@ fixes only. Items 1 and 2 below describe the current EC2 path.
    A Postgres queue (`FOR UPDATE SKIP LOCKED`, `not_before`) stays possible
    for the web server's own bookkeeping; job instances must never reach
    Postgres.
-2. **Baked CPU AMI** (boot stops installing the AWS CLI and pip each time).
+2. ~~**Baked CPU AMI**~~ _(done 2026-11-10: `image.tf`, EC2 Image Builder; see
+   "CPU job image" below.)_
 3. Downloaded data in "changed files": hidden paths (`.cache/`, `.git/`,
    dotfiles) are skipped since 2026-11-05 on both runners (job template
    v11, checked with `job-1052`). `data/` is still saved: how to handle
@@ -209,7 +210,7 @@ fixes only. Items 1 and 2 below describe the current EC2 path.
 | Region | `us-east-1`, Talon VPC `10.20.0.0/16` (`network.tf`): web servers in app subnets 1a/1b behind an internal ALB (private, out via a NAT gateway in each zone), RDS Multi-AZ in data subnets 1a/1b, jobs in public jobs subnets 1a-1d |
 | Web servers | Auto Scaling group `talon-demo-web` (`web.tf`): two t4g.small, Ubuntu 24.04 arm64, one per zone, from launch template `talon-demo-web`; tagged `Component=web`. Internal ALB `talon-demo-web` (`alb.tf`), health `GET /api/health/live` (app up, no database) every 10 s, unhealthy after 2 |
 | Elastic IP | None for the web servers (private). One per NAT gateway (1a, 1b) |
-| Inbound access | None. SSM Session Manager only (`tunnel.sh`: SSM port forward through a web server to the internal ALB) |
+| Inbound access | None from the internet. SSM Session Manager only (`tunnel.sh`: SSM port forward through a web server to the internal ALB, or with `TALON_ALB=public` to the internet-facing ALB). That ALB (`talon-public`, `public_alb.tf`, HTTP:80 only, no certificate yet) allows port 80 only from the two NAT gateways' Elastic IPs |
 | Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`. Postgres 16 on RDS `talon-demo` (`db.t4g.small`, Multi-AZ since 2026-11-05, TLS, IAM sign-in as `talon_app`; migrations as `talon_migrate`). `EC2_JOBS_ENABLED=true` |
 | Deployed | `main`, unless `deploy.sh <branch>` put a test branch on the box (normally tested before merge; the branch may stay until the next deploy since it equals `main` after the PR). `infra/scripts/status.sh --deep` shows the commit, template versions and drift |
 | Approx cost | ~$165/month at list price, not read from the bill (Cost Explorer shows less: LCPS Savings Plans and discounts): two web servers ~$24 + EBS ~$3.20, internal ALB ~$17, two NAT gateways ~$66 + traffic, RDS db.t4g.small Multi-AZ ~$51, KMS key ~$1, alarms/S3/SNS pennies. Plus job instances, billed per second and charged to budgets |
@@ -222,7 +223,8 @@ fixes only. Items 1 and 2 below describe the current EC2 path.
 
 ```bash
 aws sso login --profile lcps     # when credentials expire (usually daily)
-infra/scripts/tunnel.sh          # then open http://localhost:8080
+infra/scripts/tunnel.sh          # then open http://localhost:8080 (internal ALB)
+TALON_ALB=public infra/scripts/tunnel.sh 8081   # the internet-facing ALB (testing)
 infra/scripts/deploy.sh          # deploy origin/main (push first), then reseed demo data
 infra/scripts/deploy.sh B --keep-data   # deploy branch B without reseeding
 infra/scripts/shell.sh [id]      # shell on a web server (lists the others)
@@ -444,9 +446,16 @@ toward two servers)
 9. **Entra ID sign-in** - waiting on the LCPS App Registration (ask early;
    IT lead time).
 10. **ALB + WAF go-public** - hostname chosen (`talon.lcps.org`, needs
-    LCPS IT to add DNS records); still waiting on the exposure and subnet
-    decisions (see "Going public" below). Includes the X-Forwarded-Proto
-    fix, removing demo users, creating the real admin.
+    LCPS IT to add DNS records). **Step 1 done 2026-11-10:** the
+    internet-facing ALB `talon-public` exists (`public_alb.tf`) but admits
+    only the NAT gateways, so it is reachable through the SSM tunnel only
+    (`TALON_ALB=public infra/scripts/tunnel.sh 8081`; direct requests from
+    the internet time out). The web servers are already in private app
+    subnets behind NAT, so the subnet decision is settled. Still to do: the
+    exposure decision (open or allow-list), HTTPS:443 listener and 301
+    redirect once the ACM certificate is validated, WAF, the
+    X-Forwarded-Proto check over HTTPS, `SESSION_COOKIE_SECURE`, removing
+    demo users, creating the real admin (see "Going public" below).
 11. **Read-only AWS role** (`lcps-ro`) - ask the LCPS AWS admins.
 
 **Housekeeping**
@@ -569,6 +578,54 @@ security review (2026-11-07), listed roughly in the order it suggested.
     statements.
   - About a day of work plus a `terraform apply` and one real job run on the
     box to verify.
+
+## CPU job image (2026-11-10)
+
+CPU job instances boot from a custom AMI built by EC2 Image Builder
+(`infra/ec2/image.tf`): Ubuntu 24.04 arm64 plus the AWS CLI (snap, held),
+`python3-venv` and `python3-pip`, patched with `apt-get upgrade`, with
+`/etc/talon-image-release` (`cpu-<version>-<date>`). `job_boot.sh` still
+installs anything missing, so it runs on stock Ubuntu too; `job.boot_summary`
+carries `imageRelease` (`stock` when absent).
+
+- **Switch:** `cpu_job_image = "stock" | "baked"` (default stock; the demo's
+  `terraform.tfvars` says baked). Rollback: set it to stock and apply.
+- **Pipeline** `talon-demo-cpu-job`: monthly (`cron(0 6 1 * ? *)`), start
+  condition `EXPRESSION_MATCH_ONLY`, build and test instances in an app
+  subnet, tests fail the build. Start one by hand:
+  `aws imagebuilder start-image-pipeline-execution --image-pipeline-arn <arn>`
+  (output `cpu_image_pipeline_arn`). The AMI id is written to the SSM
+  parameter `/imagebuilder/talon-demo/cpu-job` (Image Builder's service-linked
+  role can write only under `/imagebuilder/`); the launch template follows
+  that parameter only on `terraform apply`, like the stock AMI. Bump
+  `cpu_image_version` when the component text changes (recipes and
+  components are immutable).
+- **No lifecycle policy** on purpose: deleting images on a schedule could
+  remove the one the template points at. Delete old AMIs and snapshots by
+  hand, after checking that no launch template uses them.
+- **Measured** (m7g.large, CPU job with a repo, `job.boot_summary`): stock
+  boot 11-13 s + setup 38-45 s (about 50-58 s until the script runs); baked
+  boot 25 s + setup 9 s (about 34 s). Setup fell by about 30 s but boot rose
+  by about 12 s (a volume made from a fresh snapshot loads its blocks lazily).
+- **User data is gzipped** (`base64gzip`, one local shared by both job
+  templates): EC2's 16 KB limit applies to the stored bytes; `job_boot.sh`
+  is about 16 KB raw and 6.8 KB gzipped.
+- **Job machine metrics (2026-11-10, applied and verified):** image 1.1.0 adds the CloudWatch agent (AWS's managed component installs it;
+  ours configures it: `Talon/Jobs` namespace, `mem_used_percent` and
+  `disk_used_percent` every 30 s, InstanceId dimension, no logs section),
+  the job role may `cloudwatch:PutMetricData` in that namespace only
+  (`jobs.tf`), `job_boot.sh` stops the agent before power off, and the job
+  and running-jobs dashboards get memory and disk panels. CPU jobs only; GPU
+  jobs and stock-image jobs show no data. Plan:
+  `docs/talon-cloudwatch-job-metrics-plan.md` (local). Verified with job-1131
+  (r7g.large, cancelled after 8 minutes): memory and disk points every minute
+  from about 40 s after launch, on the job dashboard; boot 25 s and setup
+  10 s, unchanged. The disk metric also exists with path, device and fstype
+  dimensions (the agent adds them); dashboards read the InstanceId-only
+  series. A cancel keeps everything published so far and settles the ledger
+  (charge, then a refund of the unused reservation).
+- Plan: `docs/talon-cpu-image-plan.md` (local). Not done: the GPU image, a
+  lifecycle policy, GPU use metrics.
 
 ## Going public: ALB + WAF (likely needed for the first stakeholder demo)
 
@@ -810,7 +867,7 @@ done (below); the adapter and everything after it are not built yet.
    template default; denied a disallowed type, a launch without the template,
    IMDSv2 optional, and terminating the web server. Not tested: `PassRole`
    limit, and a private subnet with NAT. Boot installs the AWS CLI with snap
-   each time (billed boot time): bake an AMI later.
+   each time (billed boot time); the CPU template now boots a baked image (see "CPU job image").
 2. **Built, deployed to the demo box and verified on AWS (2026-10-27).** `ec2ExecutionAdapter.js` (stateless: clones the repo on
    the web server, ships `repo.tgz` and a generated `run.sh` to S3, launches
    from the launch template, reads `status.json`, logs and outputs back from
@@ -1405,6 +1462,15 @@ tunnel. Plan doc "Talon Web Tier Plan" has the design. Built on branch
   for the dpkg lock (`DPkg::Lock::Timeout`): SSM State Manager's
   CloudWatch agent install runs at registration and won the race on one
   server, whose first boot then died on `apt-get install`.
+- Going public, step 1 (2026-11-10, `public_alb.tf`): internet-facing ALB
+  `talon-public` in the public subnets, security group `talon-public-alb`
+  (port 80 from the NAT Elastic IPs only), its own target group
+  `talon-public-web` (a target group can belong to only one load balancer;
+  the Auto Scaling group registers the servers in both), HTTP:80 listener.
+  Names come from `public_alb_name` (no environment in them; change it for a
+  second stack in the same account). Deletion protection is on, and the
+  ALB should not be replaced once LCPS IT points a CNAME at its DNS name.
+  Applied with `-target`, because the plan also showed new job AMIs.
 - `tunnel.sh` forwards to the ALB through a web server
   (`AWS-StartPortForwardingSessionToRemoteHost`); `TALON_DIRECT=1` goes to
   one server's nginx. Outputs: `web_asg_name`, `alb_dns_name`.

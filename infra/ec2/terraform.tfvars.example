@@ -13,3 +13,7 @@ alert_email = "you@example.org" # backup alerts go here (confirm the email AWS s
 # google_oauth_client_id = "1234-abc.apps.googleusercontent.com"
 # google_project_number  = "123456789012"
 # google_picker_api_key  = "AIza..."
+
+# Boot CPU jobs from the Image Builder image (image.tf) instead of stock Ubuntu.
+# Only after the first build has finished (its SSM parameter must exist).
+# cpu_job_image = "baked"

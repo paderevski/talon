@@ -27,6 +27,13 @@ web_alb_dns() {
     --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null || true
 }
 
+# DNS name of the internet-facing ALB (public_alb.tf), or nothing if there is
+# none. Its name is the public_alb_name variable (default talon-public).
+web_public_alb_dns() {
+  aws elbv2 describe-load-balancers --names "${TALON_PUBLIC_ALB_NAME:-talon-public}" \
+    --query 'LoadBalancers[0].DNSName' --output text 2>/dev/null || true
+}
+
 # One web server for shell, tunnel and checks: TALON_INSTANCE if set,
 # otherwise the oldest running one.
 web_instance_id() {
