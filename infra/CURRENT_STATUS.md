@@ -451,11 +451,21 @@ toward two servers)
     only the NAT gateways, so it is reachable through the SSM tunnel only
     (`TALON_ALB=public infra/scripts/tunnel.sh 8081`; direct requests from
     the internet time out). The web servers are already in private app
-    subnets behind NAT, so the subnet decision is settled. Still to do: the
-    exposure decision (open or allow-list), HTTPS:443 listener and 301
-    redirect once the ACM certificate is validated, WAF, the
-    X-Forwarded-Proto check over HTTPS, `SESSION_COOKIE_SECURE`, removing
-    demo users, creating the real admin (see "Going public" below).
+    subnets behind NAT, so the subnet decision is settled. **Step 1b
+    (2026-11-13):** `talon.lcps.org` is a CNAME to `talon-public` (LCPS IT,
+    GoDaddy zone) and the ACM certificate is requested (`cert.tf`, applied):
+    pending until IT adds the validation CNAME (`terraform output
+    public_cert_validation_records`; it must stay in the zone, ACM renews
+    through it). **Step 2 (HTTPS), prepared on branch `https-listener`, merge
+    and apply once the certificate shows Issued:** `https.tf` waits for
+    validation, adds the 443 listener (TLS 1.2 and 1.3), turns port 80 into a
+    redirect except from our NAT gateways, and adds `public_alb_ingress_cidrs`
+    (empty: still closed; the exposure decision is this one variable). Test
+    through the tunnel with `TALON_ALB=public TALON_ALB_PORT=443`. Still to
+    do after that: the exposure decision, WAF, the X-Forwarded-Proto check
+    over HTTPS, `SESSION_COOKIE_SECURE` (it may break login through the
+    plain-HTTP tunnel), removing demo users, creating the real admin (see
+    "Going public" below).
 11. **Read-only AWS role** (`lcps-ro`) - ask the LCPS AWS admins.
 
 **Housekeeping**

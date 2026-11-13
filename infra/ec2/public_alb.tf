@@ -4,11 +4,12 @@
 # address, so the ALB security group admits only the NAT gateways' Elastic IPs.
 # Nobody else on the internet can connect.
 #
-# Not done yet (waits on LCPS IT and the exposure decision, see
-# infra/CURRENT_STATUS.md "Going public"):
-# - HTTPS:443 listener with the ACM certificate for talon.lcps.org, and the
-#   HTTP:80 -> 301 redirect. Until then this ALB forwards plain HTTP, which is
-#   fine because only the NAT gateways can reach it.
+# HTTPS:443 (the ACM certificate from cert.tf) and the HTTP:80 -> 301 redirect
+# are in https.tf and below. Opening the security group is a variable there
+# (public_alb_ingress_cidrs, empty by default).
+#
+# Not done yet (waits on the exposure decision, see infra/CURRENT_STATUS.md
+# "Going public"):
 # - Opening the ALB security group to the internet or an allow-list.
 # - WAF, SESSION_COOKIE_SECURE and removing the demo accounts.
 #
@@ -95,13 +96,36 @@ resource "aws_lb_target_group" "public" {
   }
 }
 
+# Plain HTTP only redirects to HTTPS (https.tf has the HTTPS listener), except
+# for requests from our own NAT gateways, which are forwarded as before: that
+# keeps the SSM tunnel's HTTP path working for testing (rule below).
 resource "aws_lb_listener" "public_http" {
   load_balancer_arn = aws_lb.public.arn
   port              = 80
   protocol          = "HTTP"
 
   default_action {
+    type = "redirect"
+    redirect {
+      port        = "443"
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
+    }
+  }
+}
+
+resource "aws_lb_listener_rule" "public_http_from_nat" {
+  listener_arn = aws_lb_listener.public_http.arn
+  priority     = 10
+
+  action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.public.arn
+  }
+
+  condition {
+    source_ip {
+      values = [for e in aws_eip.nat : "${e.public_ip}/32"]
+    }
   }
 }
