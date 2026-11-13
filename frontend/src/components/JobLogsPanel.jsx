@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchJobLogs } from "../api/client";
 import { buildStages, isEc2Job, parseTalonLine } from "../utils/jobProgress";
+import { isPageHidden, logPollDelayMs } from "../utils/polling";
 import JobProgress from "./JobProgress";
 
-const pollIntervalMs = 2000;
 const maxLines = 2000;
 
 // The job's log, fetched in chunks by cursor. Keeps polling while the job is
-// queued or running, and reads once more after it ends so the last lines show.
+// queued or running (every 2 s while lines arrive, slower while it is quiet,
+// not at all while the tab is hidden: utils/polling.js), and reads once more
+// after it ends so the last lines show.
 // EC2 jobs also get a progress timeline built from the job record and the
 // log's "[talon]" step lines (kept apart: the visible log is capped).
 export default function JobLogsPanel({ id, job, live, onClose }) {
@@ -32,14 +34,32 @@ export default function JobLogsPanel({ id, job, live, onClose }) {
   useEffect(() => {
     let cancelled = false;
     let timer = null;
+    let running = false; // a request is in flight
+    let unchanged = 0; // polls in a row that brought no new lines
+
+    const schedule = () => {
+      clearTimeout(timer);
+      timer = null;
+      // A hidden tab stops here; onVisibilityChange polls when it comes back.
+      if (cancelled || !live || isPageHidden()) {
+        return;
+      }
+      timer = setTimeout(load, logPollDelayMs(unchanged));
+    };
 
     const load = async () => {
+      if (running) {
+        return;
+      }
+      running = true;
+      let changed = false;
       try {
         const page = await fetchJobLogs(job.id, cursorRef.current);
         if (cancelled) {
           return;
         }
         cursorRef.current = Number.isFinite(page.nextCursor) ? page.nextCursor : cursorRef.current;
+        changed = Boolean(page.lines?.length);
         if (page.lines?.length) {
           setLines((previous) => [...previous, ...page.lines].slice(-maxLines));
           const refMs = Date.parse(job.executionRef?.launchedAt || job.executionRef?.submittedAt || "");
@@ -65,19 +85,31 @@ export default function JobLogsPanel({ id, job, live, onClose }) {
         if (!cancelled) {
           setMessage(error.message || "Unable to load logs");
         }
+      } finally {
+        running = false;
       }
       if (!cancelled) {
         setLoaded(true);
-        if (live) {
-          timer = setTimeout(load, pollIntervalMs);
-        }
+        unchanged = changed ? 0 : unchanged + 1; // errors count as quiet, so they back off too
+        schedule();
       }
     };
 
+    const onVisibilityChange = () => {
+      if (cancelled || !live || isPageHidden() || running) {
+        return;
+      }
+      clearTimeout(timer);
+      unchanged = 0;
+      load();
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
     load();
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [job.id, live]);
 

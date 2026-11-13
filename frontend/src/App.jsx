@@ -9,6 +9,7 @@ import ChangePasswordDialog from "./components/ChangePasswordDialog";
 import TeacherStudentsPanel from "./components/TeacherStudentsPanel";
 import talonLogo from "../../assets/talon-logo.png";
 import { formatDollars } from "./utils/format";
+import { isPageHidden } from "./utils/polling";
 
 // Each nav item is its own view, addressed by the URL hash (#jobs, #users/teachers).
 // The first view in the list is where the role lands after sign-in.
@@ -318,12 +319,23 @@ export default function App() {
       return;
     }
 
+    // A hidden tab stops polling (utils/polling.js) and refreshes once when it
+    // becomes visible again.
     const intervalId = window.setInterval(() => {
-      pollRuntimeState();
+      if (!isPageHidden()) {
+        pollRuntimeState();
+      }
     }, 5000);
+    const onVisibilityChange = () => {
+      if (!isPageHidden()) {
+        pollRuntimeState();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
       window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [authUser, activeFilter, hasActiveJobs]);
 
