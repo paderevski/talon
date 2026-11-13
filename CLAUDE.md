@@ -55,17 +55,15 @@ found in a breach" dialog; it blocks clicks until dismissed.
   no force pushes. Flow: push the branch, `gh pr create`, wait for
   `gh pr checks <n> --watch`, then `gh pr merge <n> --merge` when asked.
 - End commit messages with the Co-Authored-By line the harness specifies.
-- Deploy a branch to the demo box: `infra/scripts/deploy.sh <branch>`.
-  It builds, migrates, restarts, then reseeds fresh demo data (wipes all
-  users, classes, jobs). Normal deploys use `--keep-data`, which skips the
-  reseed, so linked accounts and jobs survive. The box is still a demo and
-  its data is disposable: if keeping it gets in the way of a large migration
-  or refactor, wipe it, and do not write code only to preserve demo rows.
-  The reseed refuses while EC2 jobs are queued or running (it
-  would orphan their instances); `--allow-running-jobs` overrides. Changing `infra/ec2/web_user_data.sh.tftpl` (the web
-  servers' first boot) rolls new servers in one at a time on the next
-  apply (instance refresh, no downtime); the data in RDS stays. Backups
-  are RDS's (7 days, point-in-time restore).
+- Deploy a branch: `infra/scripts/deploy.sh <branch>`. It builds,
+  migrates and restarts each server in turn; it never touches the data.
+  **Talon is live (go-live 2026-11): the data in RDS is real.** Migrations
+  must keep it (no wipes, no reseeds); the demo seed refuses in production
+  and a production server disables any demo account at startup. Changing
+  `infra/ec2/web_user_data.sh.tftpl` (the web servers' first boot) rolls
+  new servers in one at a time on the next apply (instance refresh, no
+  downtime); the data in RDS stays. Backups are RDS's (7 days,
+  point-in-time restore); the database has deletion protection.
 - The database is RDS: the service connects as `talon_app` (rows only) with
   IAM tokens; migrations, the seed and admin scripts switch to
   `talon_migrate` (schema owner) via `useMigrationRole()`. A new script
@@ -75,7 +73,8 @@ found in a breach" dialog; it blocks clicks until dismissed.
   must not decide visibility.
 - Roles: student, teacher, admin (a user can hold several). Identity comes
   only from the session cookie; ignore any `x-talon-user` style header.
-- Demo accounts have public passwords: never expose a server that has them.
+- Demo accounts (local and test databases only) have public passwords:
+  never create them on a deployed server.
 
 ## AWS rules
 

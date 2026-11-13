@@ -2,6 +2,7 @@ import { withTransaction } from "./pool.js";
 import { createPasswordHash } from "../utils/passwords.js";
 import { ensureAccount, grant, transfer, charge } from "../budget/ledger.js";
 import { adminUser, teacherSeeds } from "../data/demoUsers.js";
+import { assertNoActiveEc2Jobs, truncateAllData } from "./wipe.js";
 
 // Original README demo login, kept so documented credentials keep working.
 const legacyTeacher = {
@@ -64,15 +65,11 @@ export function demoUsernames() {
 }
 
 // Demo passwords are public (they're in this repo), so demo users must never
-// exist on a reachable server. Production requires an explicit opt-in.
+// exist on a production server. There is no override.
 function assertDemoSeedAllowed() {
-  if (
-    process.env.NODE_ENV === "production" &&
-    process.env.TALON_ALLOW_DEMO_SEED !== "true"
-  ) {
+  if (process.env.NODE_ENV === "production") {
     throw new Error(
-      "Refusing to seed demo users with NODE_ENV=production (their passwords are public). " +
-        "Set TALON_ALLOW_DEMO_SEED=true only on a private demo server.",
+      "Refusing to seed demo users with NODE_ENV=production (their passwords are public).",
     );
   }
 }
@@ -145,8 +142,8 @@ async function seedStudentJobs(client, { studentId, accountId, spentCents }) {
   );
 }
 
-// replaceAll: also wipe users that are not demo users (deploy.sh does this on
-// the demo box, whose data is disposable). Without it, any non-demo user
+// replaceAll: also wipe users that are not demo users (local and test
+// databases only; the seed never runs in production). Without it, any non-demo user
 // makes the seed refuse, so a local database with real work is safe.
 // allowRunningJobs: wipe even while EC2 jobs are queued or running. Without
 // it the seed refuses: their rows would go, the reconciler would then
@@ -171,21 +168,9 @@ export async function seedDemoUsers(pool, { replaceAll = false, allowRunningJobs
         );
       }
 
-      const running = await client.query(
-        `SELECT id, name, status FROM jobs
-         WHERE execution_provider = 'ec2' AND status IN ('queued', 'running')
-         ORDER BY created_at LIMIT 5`,
-      );
-      if (running.rows.length > 0 && !allowRunningJobs) {
-        throw new Error(
-          `Refusing to seed: EC2 jobs still queued or running (${running.rows
-            .map((row) => `${row.id} ${row.name} ${row.status}`)
-            .join(", ")}). Reseeding deletes them and the reconciler then terminates their instances. ` +
-            "Wait for them to finish or cancel them, or pass --allow-running-jobs.",
-        );
-      }
+      await assertNoActiveEc2Jobs(client, { allowRunningJobs });
 
-      await client.query("TRUNCATE users, classes, sessions, jobs CASCADE");
+      await truncateAllData(client);
 
       const adminId = await insertUser(client, { ...adminUser, roles: ["admin"] });
       await ensureAccount(client, adminId, "personal");
