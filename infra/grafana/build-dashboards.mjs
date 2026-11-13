@@ -442,8 +442,12 @@ const job = dashboard("talon-job", "Talon job", {
     table("Backend events for this job", g(0, 34, 24, 8), [logs([LOG("backend")], `
       fields @timestamp, level, event, msg, userId, status, instanceId, reason, costCents, error, requestId
       | filter jobId = "$job_id"
+      | filter event != "http.request" or status >= 400
       | sort @timestamp asc
-      | limit 500`)], { columns: { requestId: { link: linkRequest } } }),
+      | limit 500`)], {
+      columns: { requestId: { link: linkRequest } },
+      description: "The job's own events (created, launched, finished, ...) and failed requests. Routine requests are left out: the job page polls the log and files every few seconds, and each poll is a request line. Every request is in the request trace dashboard.",
+    }),
   ],
 });
 

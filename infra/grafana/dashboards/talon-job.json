@@ -580,13 +580,14 @@
           "queryMode": "Logs",
           "region": "default",
           "id": "",
-          "expression": "fields @timestamp, level, event, msg, userId, status, instanceId, reason, costCents, error, requestId\n      | filter jobId = \"$job_id\"\n      | sort @timestamp asc\n      | limit 500",
+          "expression": "fields @timestamp, level, event, msg, userId, status, instanceId, reason, costCents, error, requestId\n      | filter jobId = \"$job_id\"\n      | filter event != \"http.request\" or status >= 400\n      | sort @timestamp asc\n      | limit 500",
           "logGroupNames": [
             "/talon/$env/backend"
           ],
           "statsGroups": []
         }
       ],
+      "description": "The job's own events (created, launched, finished, ...) and failed requests. Routine requests are left out: the job page polls the log and files every few seconds, and each poll is a request line. Every request is in the request trace dashboard.",
       "options": {
         "showHeader": true,
         "cellHeight": "sm",
