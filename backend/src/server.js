@@ -9,7 +9,7 @@ import adminRouter from "./routes/admin.js";
 import teacherRouter from "./routes/teacher.js";
 import { createSessionMiddleware } from "./auth/session.js";
 import { attachUser, requireAuth, requireRole } from "./auth/middleware.js";
-import { warnIfDemoUsersInProduction } from "./db/demoUserCheck.js";
+import { disableDemoUsersInProduction } from "./db/demoUserCheck.js";
 import { ec2JobsEnabled, getEc2Adapter } from "./services/jobExecutionService.js";
 import { markJobAsExecutionLost, synchronizeJobFromExecution } from "./services/jobSync.js";
 import { createEc2Reconciler } from "./services/ec2Reconciler.js";
@@ -108,7 +108,7 @@ app.use((error, req, res, next) => {
   return res.status(error?.status || 500).json({ message: "Internal server error" });
 });
 
-await warnIfDemoUsersInProduction();
+await disableDemoUsersInProduction();
 
 if (ec2JobsEnabled()) {
   createEc2Reconciler({
