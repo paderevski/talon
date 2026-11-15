@@ -11,7 +11,8 @@
 # Not done yet (waits on the exposure decision, see infra/CURRENT_STATUS.md
 # "Going public"):
 # - Opening the ALB security group to the internet or an allow-list.
-# - WAF, SESSION_COOKIE_SECURE and removing the demo accounts.
+# (WAF: waf.tf. Secure session cookie: production default "auto",
+# backend/src/auth/session.js. Demo accounts: removed at go-live.)
 #
 # It has its own target group (a target group can belong to only one load
 # balancer), with the same health check as the internal ALB's in alb.tf, and

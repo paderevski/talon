@@ -697,7 +697,17 @@ Verify CloudFront VPC origin support for EC2 before choosing it.
   `X-Forwarded-Proto` for requests from inside the VPC (`$scheme`
   otherwise), and sets `TALON_TRUSTED_PROXIES=loopback,<VPC range>` (read
   from instance metadata) so Express skips both hops.
-- `SESSION_COOKIE_SECURE=true` in `/etc/talon/talon.env`.
+- ~~`SESSION_COOKIE_SECURE`~~ (branch `go-live-cookie-waf`): production
+  defaults to `auto` (`session.js`): the cookie is Secure whenever the
+  request came over HTTPS (the ALB's `X-Forwarded-Proto`, trusted only from
+  nginx and the VPC), so it is Secure on every public request (HTTP:80
+  redirects) and sign-in through the plain-HTTP SSM tunnel still works.
+- ~~WAF~~ (`infra/ec2/waf.tf`, same branch): IP reputation, known bad
+  inputs, common rule set (`SizeRestrictions_BODY` counts only: roster
+  imports exceed 8 KB), login rate limit per IP (`waf_login_rate_limit`,
+  300 per 5 min, loose because schools share addresses; no general per-IP
+  limit for the same reason). Logs in `aws-waf-logs-talon-public` (30 days,
+  cookies redacted).
 - ~~Per-account login throttling~~ (done, item 2).
 - **No demo users on a reachable server** (branch `go-live-no-demo`).
   Their passwords are public in this repo. `TALON_ALLOW_DEMO_SEED` is gone:
