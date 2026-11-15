@@ -308,6 +308,12 @@ export async function login(jar, baseUrl, username, password) {
 // Most regression tests exercise job/result behavior, not authorization.
 const adminJars = new Map();
 
+// After something ended the admin's sessions (a production server disables
+// demo accounts and deletes their sessions at startup).
+export function forgetAdminSessions() {
+  adminJars.clear();
+}
+
 export async function apiFetch(url, options) {
   const origin = new URL(url).origin;
   let jar = adminJars.get(origin);

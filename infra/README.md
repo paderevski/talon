@@ -88,13 +88,12 @@ the saved Logs Insights queries `Talon/*`.
 ## Demo-mode caveats
 
 - All data is in RDS (automated backups, 7 days, point-in-time restore) and
-  survives server replacement. `deploy.sh` reseeds fresh demo data by default
-  (all users, classes, jobs); `--keep-data` skips it.
+  survives server replacement. `deploy.sh` never touches the data.
 - Output files of student jobs are in the jobs bucket and expire after 30
   days. Jobs run by the local runner (development only; refused in
   production) keep output on the server's disk.
-- Demo users (`TALON_ALLOW_DEMO_SEED=true`) have public passwords: never make
-  a server with them reachable from the internet.
+- Demo users have public passwords: the seed refuses in production and a
+  production server disables any it finds at startup.
 - Terraform state lives in S3 (`talon-tfstate-<account id>`, versioned,
   encrypted, native locking), created by the small `infra/state` stack, whose
   own state stays local. If you ever lose `infra/state/terraform.tfstate`,

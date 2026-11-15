@@ -1,4 +1,6 @@
-import { assert, createCookieJar, login, startBackendForTests, withTestDb } from "../lib/harness.mjs";
+import { assert, createCookieJar, forgetAdminSessions, login, startBackendForTests, withTestDb } from "../lib/harness.mjs";
+import { demoUsernames } from "../../src/db/seedDemo.js";
+import { createPasswordHash } from "../../src/utils/passwords.js";
 
 export const name = "EC2 jobs: access rules, input validation, kill switch, and no local runs in production";
 
@@ -10,6 +12,24 @@ const post = (jar, baseUrl, body) =>
   });
 
 const options = async (jar, baseUrl) => (await jar.fetch(`${baseUrl}/api/jobs/compute-options`)).json();
+
+// A production server disables demo accounts at startup (demoUserCheck.js),
+// so the production part signs in as non-demo copies of a demo user.
+async function addNonDemoUser(username, role, password) {
+  await withTestDb(async (pool) => {
+    const user = await pool.query(
+      "INSERT INTO users (username, display_name) VALUES ($1, $1) ON CONFLICT DO NOTHING RETURNING id",
+      [username],
+    );
+    if (user.rows.length === 0) return;
+    const id = user.rows[0].id;
+    await pool.query("INSERT INTO user_roles (user_id, role) VALUES ($1, $2)", [id, role]);
+    await pool.query(
+      "INSERT INTO user_identities (user_id, provider, subject, password_hash) VALUES ($1, 'local', $2, $3)",
+      [id, username, createPasswordHash(password)],
+    );
+  });
+}
 
 async function jobCount(names) {
   return withTestDb(async (pool) =>
@@ -92,13 +112,15 @@ export async function run({ baseUrl }) {
   }
 
   // 4. Production: students cannot run on the web server itself.
+  await addNonDemoUser("prod_student", "student", "prod-student-pw");
+  await addNonDemoUser("prod_admin", "admin", "prod-admin-pw");
   const production = await startBackendForTests({
     env: { NODE_ENV: "production", SESSION_SECRET: "t".repeat(64), TALON_CREDENTIALS_KEY: "k".repeat(32), EC2_JOBS_ENABLED: "true", EC2_RECONCILE_INTERVAL_MS: "3600000" },
     reset: false,
   });
   try {
     const s = createCookieJar();
-    await login(s, production.baseUrl, "student_a1", "student123");
+    await login(s, production.baseUrl, "prod_student", "prod-student-pw");
     assert((await options(s, production.baseUrl)).localAllowed === false, "students are not offered local runs in production");
     const response = await post(s, production.baseUrl, { name: "prod-local", repo: "octocat/Hello-World" });
     assert(response.status === 403, `local run for a student in production: expected 403, got ${response.status}`);
@@ -106,12 +128,21 @@ export async function run({ baseUrl }) {
 
     // Admins too: a local run executes on the web server with its role.
     const a = createCookieJar();
-    await login(a, production.baseUrl, "admin", "admin123");
+    await login(a, production.baseUrl, "prod_admin", "prod-admin-pw");
     assert((await options(a, production.baseUrl)).localAllowed === false, "admins are not offered local runs in production");
     const adminResponse = await post(a, production.baseUrl, { name: "prod-local-admin", repo: "octocat/Hello-World" });
     assert(adminResponse.status === 403, `local run for an admin in production: expected 403, got ${adminResponse.status}`);
     assert((await jobCount(["prod-local-admin"])) === 0, "refused admin local run must not create a job");
+
+    // And the demo accounts were disabled when it started.
+    const demo = createCookieJar();
+    const demoLogin = await login(demo, production.baseUrl, "admin", "admin123");
+    assert(demoLogin.status === 401, `demo admin login in production: expected 401, got ${demoLogin.status}`);
   } finally {
     await production.stop();
+    // Later tests sign in as demo users (their sessions were deleted too).
+    await withTestDb((pool) =>
+      pool.query("UPDATE users SET status = 'active' WHERE lower(username) = ANY($1::text[])", [demoUsernames()]));
+    forgetAdminSessions();
   }
 }

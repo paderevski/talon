@@ -5,8 +5,7 @@
 # Installs packages, the service user, secrets loader, config and the
 # talon-deploy / talon-configure tools, then deploys git_ref. talon-configure
 # (infra/server/configure.sh) sets up nginx's site, logging and the
-# CloudWatch agent. Never touches the database's contents: only
-# infra/scripts/deploy.sh reseeds the demo data.
+# CloudWatch agent. Never touches the database's contents.
 set -euxo pipefail
 exec > >(tee -a /var/log/talon-bootstrap.log) 2>&1
 
@@ -99,7 +98,7 @@ PORT=5174
 HOME=/var/lib/talon
 AWS_REGION=${region}
 # RDS over TLS with IAM sign-in (backend/src/db/pool.js). The service is
-# talon_app (rows only); migrations, the demo seed and admin scripts switch
+# talon_app (rows only); migrations and admin scripts switch
 # to talon_migrate (schema owner) themselves.
 DATABASE_URL="${database_url}"
 DATABASE_MIGRATE_URL="${database_migrate_url}"
@@ -107,9 +106,6 @@ DATABASE_IAM_AUTH=true
 # Master password's secret, read only by infra/server/db-bootstrap.sh while
 # Terraform's db_bootstrap = true allows it. An ARN, not the secret itself.
 RDS_MASTER_SECRET_ARN=${db_master_secret_arn}
-# Private demo (SSM tunnel only): demo users allowed. Remove before this
-# server is reachable from the internet.
-TALON_ALLOW_DEMO_SEED=true
 # Jobs on their own EC2 instances (see jobs.tf).
 EC2_JOBS_ENABLED=${ec2_jobs_enabled}
 # GPU machines: admin-only unless false (see jobs.tf, ec2_gpu_admin_only).

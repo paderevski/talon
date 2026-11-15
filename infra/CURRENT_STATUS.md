@@ -225,8 +225,8 @@ fixes only. Items 1 and 2 below describe the current EC2 path.
 aws sso login --profile lcps     # when credentials expire (usually daily)
 infra/scripts/tunnel.sh          # then open http://localhost:8080 (internal ALB)
 TALON_ALB=public infra/scripts/tunnel.sh 8081   # the internet-facing ALB (testing)
-infra/scripts/deploy.sh          # deploy origin/main (push first), then reseed demo data
-infra/scripts/deploy.sh B --keep-data   # deploy branch B without reseeding
+infra/scripts/deploy.sh          # deploy origin/main (push first); data is never touched
+infra/scripts/deploy.sh B        # deploy branch B
 infra/scripts/shell.sh [id]      # shell on a web server (lists the others)
 infra/scripts/db-bootstrap.sh    # RDS roles and grants (needs db_bootstrap = true)
 infra/grafana/grafana.sh up      # Grafana on this laptop: http://localhost:3000 (infra/grafana/README.md)
@@ -234,7 +234,8 @@ infra/grafana/grafana.sh up      # Grafana on this laptop: http://localhost:3000
 
 The scripts find web servers by tag (`Project=talon`, `Component=web`,
 `Environment=$TALON_ENV`, default `demo`; `common.sh`). `deploy.sh` deploys
-to each server in turn and reseeds once at the end; `TALON_INSTANCE=<id>`
+to each server in turn (no reseed since go-live; `--keep-data` is accepted
+and does nothing); `TALON_INSTANCE=<id>`
 picks the server for `tunnel.sh`, `shell.sh` and `check-launch-policy.sh`.
 
 Demo login: see the main README.
@@ -310,8 +311,8 @@ to the browser), so one `requestId` finds both sides of a request.
   GuardDuty is not enabled (checked 2026-11-04: no detector; Terraform has it
   behind `enable_guardduty`).
 - Database backups are RDS's (automated, 7 days, point-in-time restore).
-  A restore drill into a new RDS instance has not been done yet. No final
-  snapshot and no deletion protection on the demo database (`rds.tf`).
+  A restore drill into a new RDS instance has not been done yet. Deletion
+  protection and a final snapshot are on since go-live (`rds.tf`).
 - Demo accounts have public passwords (they are in this repo). Fine only
   because the box is reachable through the SSM tunnel and nothing else; see
   "Going public".
@@ -698,9 +699,14 @@ Verify CloudFront VPC origin support for EC2 before choosing it.
   from instance metadata) so Express skips both hops.
 - `SESSION_COOKIE_SECURE=true` in `/etc/talon/talon.env`.
 - ~~Per-account login throttling~~ (done, item 2).
-- **No demo users on a reachable server.** Their passwords are public in
-  this repo. Remove `TALON_ALLOW_DEMO_SEED`, disable/delete demo accounts,
-  check the backend log for `[security] ... demo account(s)`.
+- **No demo users on a reachable server** (branch `go-live-no-demo`).
+  Their passwords are public in this repo. `TALON_ALLOW_DEMO_SEED` is gone:
+  the demo seed refuses whenever `NODE_ENV=production`, a production server
+  disables any active demo account and deletes its sessions at startup
+  (`demoUserCheck.js`, log event `security.demo_accounts_disabled`), and
+  `deploy.sh` no longer reseeds. Go-live: `npm run db:wipe --workspace
+  backend -- --yes-delete-everything` on one server (deletes all users,
+  classes, jobs, links; refuses while EC2 jobs run), then create the admin.
 - Create the real first admin:
   `npm run db:create-admin --workspace backend -- --username you@lcps.org`
   (random password, printed once).

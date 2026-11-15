@@ -14,7 +14,9 @@ import { runMigrations } from "../../src/db/migrate.js";
 import { assertSecureDatabaseUrl, connectionConfig, databaseTransport, useMigrationRole, withTransaction } from "../../src/db/pool.js";
 import { withTryAdvisoryLock } from "../../src/db/advisoryLock.js";
 import { checkDatabase } from "../../src/db/health.js";
-import { seedDemoUsers } from "../../src/db/seedDemo.js";
+import { demoUsernames, seedDemoUsers } from "../../src/db/seedDemo.js";
+import { disableDemoUsersInProduction } from "../../src/db/demoUserCheck.js";
+import { assertNoActiveEc2Jobs, truncateAllData } from "../../src/db/wipe.js";
 import { createUsersPostgresRepository } from "../../src/repositories/postgres/usersPostgresRepository.js";
 import { createPasswordHash } from "../../src/utils/passwords.js";
 import { createJobsPostgresRepository, justFinalized } from "../../src/repositories/postgres/jobsPostgresRepository.js";
@@ -2592,10 +2594,10 @@ const httpTests = [
 ];
 
 httpTests.push(
-  ["security: demo seed is refused in production without opt-in", async () => {
+  ["security: demo seed is refused in production, even with the old opt-in", async () => {
     const saved = { env: process.env.NODE_ENV, allow: process.env.TALON_ALLOW_DEMO_SEED };
     process.env.NODE_ENV = "production";
-    delete process.env.TALON_ALLOW_DEMO_SEED;
+    process.env.TALON_ALLOW_DEMO_SEED = "true";
     let message = "";
     try {
       await seedDemoUsers(pool);
@@ -2603,9 +2605,72 @@ httpTests.push(
       message = error.message;
     } finally {
       process.env.NODE_ENV = saved.env;
-      if (saved.allow !== undefined) process.env.TALON_ALLOW_DEMO_SEED = saved.allow;
+      if (saved.allow === undefined) delete process.env.TALON_ALLOW_DEMO_SEED;
+      else process.env.TALON_ALLOW_DEMO_SEED = saved.allow;
     }
     assert(/Refusing to seed demo users/.test(message), `Expected refusal, got '${message}'`);
+  }],
+
+  ["security: production startup disables demo accounts and ends their sessions", async () => {
+    // In a transaction rolled back at the end, so later tests keep their demo users.
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const ada = await client.query("SELECT id FROM users WHERE username = 'teacher_ada'");
+      const adaId = String(ada.rows[0].id);
+      await client.query(
+        "INSERT INTO sessions (sid, sess, expire) VALUES ('demo-check-sid', $1::json, now() + interval '1 hour')",
+        [JSON.stringify({ userId: adaId })],
+      );
+      await client.query(
+        "INSERT INTO users (username, display_name) VALUES ('real_teacher_x', 'Real Teacher')",
+      );
+
+      const notProd = await disableDemoUsersInProduction({ pool: client, env: { NODE_ENV: "test" } });
+      assert(notProd.length === 0, `outside production nothing changes, got ${notProd}`);
+
+      const disabled = await disableDemoUsersInProduction({ pool: client, env: { NODE_ENV: "production" } });
+      assert(disabled.includes("admin") && disabled.includes("teacher_ada"), `disabled ${disabled}`);
+      const active = await client.query(
+        "SELECT username FROM users WHERE lower(username) = ANY($1::text[]) AND status = 'active'",
+        [demoUsernames()],
+      );
+      assert(active.rows.length === 0, `demo users still active: ${active.rows.map((r) => r.username)}`);
+      const real = await client.query("SELECT status FROM users WHERE username = 'real_teacher_x'");
+      assert(real.rows[0].status === "active", "a non-demo user was disabled");
+      const sessions = await client.query("SELECT 1 FROM sessions WHERE sid = 'demo-check-sid'");
+      assert(sessions.rows.length === 0, "demo user's session not deleted");
+
+      const again = await disableDemoUsersInProduction({ pool: client, env: { NODE_ENV: "production" } });
+      assert(again.length === 0, "second run should find nothing to disable");
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+    }
+  }],
+
+  ["security: wipe refuses while EC2 jobs are running and needs no demo data", async () => {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "UPDATE jobs SET execution_provider = 'ec2', status = 'running' WHERE id = (SELECT id FROM jobs ORDER BY created_at LIMIT 1)",
+      );
+      let message = "";
+      try {
+        await assertNoActiveEc2Jobs(client);
+      } catch (error) {
+        message = error.message;
+      }
+      assert(/Refusing to wipe: EC2 jobs still queued or running/.test(message), `Expected refusal, got '${message}'`);
+      await assertNoActiveEc2Jobs(client, { allowRunningJobs: true });
+      await truncateAllData(client);
+      const users = await client.query("SELECT count(*)::int AS n FROM users");
+      assert(users.rows[0].n === 0, "users left after wipe");
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+    }
   }],
 
   ["security: teacher sees only their students' jobs (Postgres classes)", async () => {

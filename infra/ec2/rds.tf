@@ -136,10 +136,11 @@ resource "aws_db_instance" "main" {
   auto_minor_version_upgrade = true
   apply_immediately          = var.db_apply_immediately
 
-  # Demo data: no final snapshot, no deletion protection. Revisit before real
-  # students' data lives here.
-  skip_final_snapshot = true
-  deletion_protection = false
+  # Live data (since go-live, 2026-11): deleting the database needs
+  # deletion_protection turned off first, and leaves a final snapshot.
+  skip_final_snapshot       = false
+  final_snapshot_identifier = "${local.name}-final"
+  deletion_protection       = true
 
   tags = {
     Name = local.name

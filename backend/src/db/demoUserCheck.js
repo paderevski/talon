@@ -2,29 +2,38 @@ import { getPool } from "./pool.js";
 import { demoUsernames } from "./seedDemo.js";
 import { log } from "../utils/log.js";
 
-// Logs loudly at startup if a production server has demo accounts, whose
-// passwords are public in this repo.
-export async function warnIfDemoUsersInProduction({ pool = getPool() } = {}) {
-  if (process.env.NODE_ENV !== "production") {
-    return;
+// Demo passwords are public (they are in this repo). At startup a production
+// server disables any active demo account and ends its sessions, so the
+// accounts can never be used even if a seed or restore brought them back.
+// Disabled users cannot sign in, and their remaining sessions are dropped on
+// the next request (auth/middleware.js).
+export async function disableDemoUsersInProduction({ pool = getPool(), env = process.env } = {}) {
+  if (env.NODE_ENV !== "production") {
+    return [];
   }
 
   try {
     const result = await pool.query(
-      "SELECT username FROM users WHERE lower(username) = ANY($1::text[]) AND status = 'active' ORDER BY username",
+      `UPDATE users SET status = 'disabled'
+       WHERE lower(username) = ANY($1::text[]) AND status = 'active'
+       RETURNING id, username`,
       [demoUsernames()],
     );
-    if (result.rows.length > 0) {
-      const names = result.rows.map((row) => row.username).join(", ");
-      const message = `[security] ${result.rows.length} demo account(s) with PUBLIC passwords are active: ${names}`;
-      const fields = { event: "security.demo_accounts_active", count: result.rows.length, usernames: names };
-      if (process.env.TALON_ALLOW_DEMO_SEED === "true") {
-        log.warn(`${message} (allowed: TALON_ALLOW_DEMO_SEED=true)`, fields);
-      } else {
-        log.error(`${message}. Disable or delete them before exposing this server.`, fields);
-      }
+    if (result.rows.length === 0) {
+      return [];
     }
+    await pool.query("DELETE FROM sessions WHERE sess->>'userId' = ANY($1::text[])", [
+      result.rows.map((row) => String(row.id)),
+    ]);
+    const names = result.rows.map((row) => row.username).join(", ");
+    log.error(`[security] disabled ${result.rows.length} demo account(s) with public passwords: ${names}`, {
+      event: "security.demo_accounts_disabled",
+      count: result.rows.length,
+      usernames: names,
+    });
+    return result.rows.map((row) => row.username);
   } catch (error) {
     log.error("[security] demo account check failed", { event: "security.demo_check_failed", error: error.message });
+    return [];
   }
 }
