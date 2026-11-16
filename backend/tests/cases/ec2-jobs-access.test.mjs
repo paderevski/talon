@@ -26,7 +26,7 @@ async function addNonDemoUser(username, role, password) {
     await pool.query("INSERT INTO user_roles (user_id, role) VALUES ($1, $2)", [id, role]);
     await pool.query(
       "INSERT INTO user_identities (user_id, provider, subject, password_hash) VALUES ($1, 'local', $2, $3)",
-      [id, username, createPasswordHash(password)],
+      [id, username, await createPasswordHash(password)],
     );
   });
 }

@@ -344,11 +344,20 @@ Ordered so each item makes the next one easier. Items 1-8 and 12 are done;
 
 1. ~~**Postgres-only users**~~ _(done: SQLite code and files removed,
    Postgres is the only provider, tests run against `talon_test`)._
-2. ~~**Login throttling per account.**~~ _(done: 5 wrong passwords lock an
-   account name for 15 min, even for the right password; tunable with
-   `LOGIN_MAX_FAILURES` / `LOGIN_LOCK_MINUTES`; clear early with
-   `npm run db:unlock --workspace backend -- <username>`. Trade-off: anyone who
-   knows a username can lock that account for 15 min.)_
+2. ~~**Login throttling per account.**~~ _(done; reworked: attempts are
+   reserved atomically before the password is checked (table `login_throttle`,
+   migration 014; `login_attempts` is no longer written). 5 attempts per
+   username per client address (`req.ip`) per 15 min, then that address is
+   refused even with the right password; separately 20 per username across all
+   addresses, which only attempts from addresses still under their own limit
+   count towards, so one address cannot lock the real user out. Change-password
+   is limited to 5 attempts per user per 15 min. Tunable with
+   `LOGIN_MAX_FAILURES` / `LOGIN_MAX_FAILURES_PER_USER` / `LOGIN_LOCK_MINUTES`;
+   clear early with the admin "unlock" or
+   `npm run db:unlock --workspace backend -- <username>` (clears every counter
+   for the name). Relies on `trust proxy` (TALON_TRUSTED_PROXIES) making
+   `req.ip` the real client. Trade-off: attackers on 4+ addresses can still
+   lock a name for the window.)_
 3. ~~**Keep the keys safe**~~ _(done 2026-10-25: `SESSION_SECRET` and
    `TALON_CREDENTIALS_KEY` are SSM SecureString parameters under
    `/talon/demo/`, encrypted with KMS `alias/talon-demo-secrets`, created by
@@ -1319,8 +1328,10 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   notice, whether to encrypt email/name columns). The architecture doc says
   to confirm with LCPS IT before deployment; not settled. Check the 35-day
   backup retention against whatever they require.
-- Web hardening: CSRF protection (SameSite=Lax helps; add an Origin check
-  or token), security headers and a content security policy, request size
+- Web hardening: CSRF (done: `auth/sameOrigin.js` refuses non-GET `/api`
+  requests whose `Sec-Fetch-Site` is not same-origin/none, or, without it,
+  whose `Origin` is not this host or `TALON_PUBLIC_URL`; header-less callers
+  pass; the Vite dev proxy no longer rewrites Host), security headers and a content security policy, request size
   limits, strict validation of repo and script inputs.
 - Remove demo accounts and local password login before anything is public.
   The architecture doc says "no passwords stored"; today there are local

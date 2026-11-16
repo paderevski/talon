@@ -1,16 +1,22 @@
-import { scryptSync, randomBytes, timingSafeEqual } from "node:crypto";
+import { scrypt, randomBytes, timingSafeEqual } from "node:crypto";
+import { promisify } from "node:util";
+
+// Async so a login runs scrypt on the libuv thread pool instead of blocking
+// the event loop. Same parameters as the old scryptSync calls (the defaults),
+// so every stored hash still verifies.
+const scryptAsync = promisify(scrypt);
 
 // Hash format: "<salt-hex>:<scrypt-64-byte-hex>"
-export function createPasswordHash(
+export async function createPasswordHash(
   password,
   salt = randomBytes(16).toString("hex"),
 ) {
   const normalizedPassword = String(password ?? "");
-  const derivedKey = scryptSync(normalizedPassword, salt, 64).toString("hex");
+  const derivedKey = (await scryptAsync(normalizedPassword, salt, 64)).toString("hex");
   return `${salt}:${derivedKey}`;
 }
 
-export function verifyPassword(password, passwordHash) {
+export async function verifyPassword(password, passwordHash) {
   const normalizedHash = String(passwordHash ?? "").trim();
   const [salt, storedHash] = normalizedHash.split(":");
 
@@ -18,7 +24,7 @@ export function verifyPassword(password, passwordHash) {
     return false;
   }
 
-  const candidateHash = scryptSync(String(password ?? ""), salt, 64);
+  const candidateHash = await scryptAsync(String(password ?? ""), salt, 64);
   const storedHashBuffer = Buffer.from(storedHash, "hex");
 
   if (candidateHash.length !== storedHashBuffer.length) {
@@ -30,9 +36,9 @@ export function verifyPassword(password, passwordHash) {
 
 // Used when the username doesn't exist, so a miss costs the same scrypt work
 // as a wrong password and response timing doesn't reveal valid usernames.
-const dummyPasswordHash = createPasswordHash("talon-dummy-password");
+const dummyPasswordHash = await createPasswordHash("talon-dummy-password");
 
-export function burnPasswordCheck(password) {
-  verifyPassword(password, dummyPasswordHash);
+export async function burnPasswordCheck(password) {
+  await verifyPassword(password, dummyPasswordHash);
   return false;
 }

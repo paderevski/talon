@@ -81,10 +81,10 @@ export function createUsersPostgresRepository({ pool = getPool() } = {}) {
     const identity = result.rows[0];
 
     if (!identity) {
-      return burnPasswordCheck(password) || null;
+      return (await burnPasswordCheck(password)) || null;
     }
 
-    if (!verifyPassword(password, identity.password_hash) || identity.status !== "active") {
+    if (!(await verifyPassword(password, identity.password_hash)) || identity.status !== "active") {
       return null;
     }
 

@@ -2,7 +2,12 @@ import { Router } from "express";
 import { getUsersRepository } from "../repositories/usersRepository.js";
 import { publicUser } from "../auth/middleware.js";
 import { sessionCookieName } from "../auth/session.js";
-import { clearFailures, lockedSeconds, recordFailure } from "../auth/loginThrottle.js";
+import {
+  clearLoginAttempts,
+  clearPasswordAttempts,
+  reserveLoginAttempt,
+  reservePasswordAttempt,
+} from "../auth/loginThrottle.js";
 import { changeOwnPassword, sendManagementError } from "../services/management.js";
 import { log } from "../utils/log.js";
 
@@ -35,6 +40,15 @@ async function publicUserWithBudget(user) {
   };
 }
 
+function sendThrottled(res, event, message, { retryAfterSeconds }, fields) {
+  log.warn(message, { event, ...fields });
+  res.set("Retry-After", String(retryAfterSeconds));
+  return res.status(429).json({
+    message: `Too many failed attempts. Try again in ${Math.ceil(retryAfterSeconds / 60)} minute(s).`,
+    retryAfterSeconds,
+  });
+}
+
 router.post("/login", async (req, res) => {
   const username = String(req.body?.username ?? "").trim();
   const password = String(req.body?.password ?? "").trim();
@@ -46,25 +60,21 @@ router.post("/login", async (req, res) => {
   }
 
   try {
-    const waitSeconds = await lockedSeconds(username);
-    if (waitSeconds > 0) {
-      log.warn("login refused: account locked", { event: "auth.login_locked", ...loginFields(req, username) });
-      res.set("Retry-After", String(waitSeconds));
-      return res.status(429).json({
-        message: `Too many failed attempts. Try again in ${Math.ceil(waitSeconds / 60)} minute(s).`,
-        retryAfterSeconds: waitSeconds,
-      });
+    // Count this attempt first (atomically); only a reserved attempt gets to
+    // check the password.
+    const reservation = await reserveLoginAttempt(username, req.ip);
+    if (!reservation.allowed) {
+      return sendThrottled(res, "auth.login_locked", "login refused: too many attempts", reservation, loginFields(req, username));
     }
 
     const matched = await usersRepository.findByCredentials(username, password);
 
     if (!matched) {
-      await recordFailure(username);
       log.warn("login failed", { event: "auth.login_failed", ...loginFields(req, username) });
       return res.status(401).json({ message: "Invalid username or password" });
     }
 
-    await clearFailures(username);
+    await clearLoginAttempts(username, req.ip);
 
     // New session id on login (prevents session fixation).
     await regenerateSession(req);
@@ -104,12 +114,20 @@ router.post("/password", async (req, res, next) => {
   }
 
   try {
+    const reservation = await reservePasswordAttempt(req.user.username);
+    if (!reservation.allowed) {
+      return sendThrottled(res, "auth.password_locked", "password change refused: too many attempts", reservation, {
+        requestId: req.id,
+        userId: req.user.id,
+      });
+    }
     await changeOwnPassword(
       req.user.id,
       String(req.body?.currentPassword ?? ""),
       String(req.body?.newPassword ?? ""),
       req.sessionID,
     );
+    await clearPasswordAttempts(req.user.username);
     log.info("password changed", { event: "auth.password_changed", requestId: req.id, userId: req.user.id });
     return res.json({ ok: true });
   } catch (error) {

@@ -56,7 +56,7 @@ try {
         VALUES ($1, 'local', lower($2), $3)
         ON CONFLICT (provider, subject) DO UPDATE SET password_hash = EXCLUDED.password_hash
       `,
-      [userId, username, createPasswordHash(password)],
+      [userId, username, await createPasswordHash(password)],
     );
     await client.query("UPDATE users SET status = 'active', updated_at = now() WHERE id = $1", [userId]);
     await ensureAccount(client, userId, "personal");
