@@ -7,7 +7,7 @@
 #   1. terraform apply with db_bootstrap = true (the web server may sign in
 #      as the RDS master user)
 #   2. infra/scripts/db-bootstrap.sh
-#   3. infra/scripts/deploy.sh <branch>   (migrates as talon_migrate, reseeds)
+#   3. infra/scripts/deploy.sh <branch>   (migrates as talon_migrate from your laptop)
 #   4. terraform apply with db_bootstrap = false
 #
 # The script runs as root from the deployed commit (`git show`, like

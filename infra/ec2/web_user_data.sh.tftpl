@@ -47,21 +47,12 @@ chmod 644 /etc/talon/rds-ca.pem
 # --- app secrets: SSM Parameter Store, created once, never regenerated ---
 # SESSION_SECRET and TALON_CREDENTIALS_KEY must survive instance replacement
 # (the credentials key decrypts stored GitHub tokens) and must be identical
-# on every server. Generate each one only if it does not exist yet; the
-# values never go through xtrace or the bootstrap log. There is no database
+# on every server. They already exist; the web servers may read them but not
+# write them (secrets.tf), so code running as the service cannot overwrite
+# the credentials key. Only for a brand-new environment: create them first
+# from a laptop with `infra/scripts/secrets.sh init`. There is no database
 # password: the app signs in to RDS with IAM tokens.
 export AWS_DEFAULT_REGION=${region}
-set +x
-for name in session-secret credentials-key; do
-  umask 077
-  printf '%s' "$(openssl rand -hex 32)" > /run/talon-new-secret
-  umask 022
-  out=$(/snap/bin/aws ssm put-parameter --name "${secrets_prefix}/$name" --type SecureString \
-    --key-id "${kms_alias}" --value file:///run/talon-new-secret --no-overwrite 2>&1) \
-    || echo "$out" | grep -q ParameterAlreadyExists
-  rm -f /run/talon-new-secret
-done
-set -x
 
 # Loader: copies the secrets into /etc/talon/secrets.env (root:talon 640). The
 # service runs it as root before every start, so rotating a parameter and
@@ -83,7 +74,7 @@ if SESSION=$(get session-secret) && CRED=$(get credentials-key) && [ -n "$SESSIO
 elif [ -f "$OUT" ]; then
   echo "talon-load-secrets: SSM unavailable, using cached $OUT" >&2
 else
-  echo "talon-load-secrets: cannot read secrets from SSM and there is no cached copy" >&2
+  echo "talon-load-secrets: cannot read secrets from SSM and there is no cached copy (new environment? run infra/scripts/secrets.sh init)" >&2
   exit 1
 fi
 EOF
@@ -98,10 +89,10 @@ PORT=5174
 HOME=/var/lib/talon
 AWS_REGION=${region}
 # RDS over TLS with IAM sign-in (backend/src/db/pool.js). The service is
-# talon_app (rows only); migrations and admin scripts switch
-# to talon_migrate (schema owner) themselves.
+# talon_app (rows only). The schema owner talon_migrate is not reachable from
+# here (the web role has no rds-db:connect for it): migrations and admin
+# scripts run from an operator's laptop (infra/scripts/db-run.sh).
 DATABASE_URL="${database_url}"
-DATABASE_MIGRATE_URL="${database_migrate_url}"
 DATABASE_IAM_AUTH=true
 # Master password's secret, read only by infra/server/db-bootstrap.sh while
 # Terraform's db_bootstrap = true allows it. An ARN, not the secret itself.
@@ -116,7 +107,9 @@ EOF
   chgrp talon /etc/talon/talon.env
   umask 022
 fi
-/usr/local/bin/talon-load-secrets
+# Missing secrets (a new environment before `secrets.sh init`) must not stop
+# the build: the service retries every few seconds once they exist.
+/usr/local/bin/talon-load-secrets || echo "talon bootstrap: secrets not readable yet"
 
 # --- server config from the repo (infra/server/configure.sh) ---
 # Logging, proxy headers, trusted proxies. Runs as root, so the script is
@@ -142,15 +135,14 @@ chmod 755 /usr/local/bin/talon-configure
 cat > /usr/local/bin/talon-deploy <<'EOF'
 #!/bin/bash
 # Usage: talon-deploy [branch]
-# Force-syncs /opt/talon to origin/<branch>, builds, migrates (as
-# talon_migrate), applies the repo's server config (talon-configure) and
-# restarts.
+# Force-syncs /opt/talon to origin/<branch>, builds, applies the repo's server
+# config (talon-configure) and restarts. It does not migrate: the servers
+# cannot sign in as the schema owner. infra/scripts/deploy.sh migrates first,
+# from the operator's machine.
 set -euo pipefail
 REF="$${1:-${git_ref}}"
 APP=/opt/talon
 as_talon() { sudo -u talon env HOME=/var/lib/talon "$@"; }
-# Same environment the service gets (DATABASE_URL etc.).
-as_talon_env() { sudo -u talon bash -c 'set -a; . /etc/talon/talon.env; . /etc/talon/secrets.env; set +a; exec "$@"' talon-env "$@"; }
 
 if [ ! -d "$APP/.git" ]; then
   as_talon git clone "${repo_url}" "$APP"
@@ -160,7 +152,6 @@ as_talon git fetch --prune origin
 as_talon git checkout -f -B "$REF" "origin/$REF"
 as_talon npm ci --no-audit --no-fund
 as_talon npm run build
-as_talon_env npm run db:migrate --workspace backend
 /usr/local/bin/talon-configure
 systemctl restart talon-backend
 systemctl reload nginx
@@ -201,11 +192,12 @@ systemctl enable talon-backend
 systemctl enable nginx
 
 # --- first deploy ---
-# On a brand-new database the migration fails until db-bootstrap.sh has
-# created the roles; the build is done by then, and deploy.sh finishes it.
+# No migration here: a server never changes the schema (deploy.sh migrates
+# from the operator's machine). On a brand-new database the app answers
+# only after db-bootstrap.sh and deploy.sh have run.
 # talon-configure runs either way (nginx site, logging, CloudWatch agent).
 if ! /usr/local/bin/talon-deploy "${git_ref}"; then
-  echo "talon bootstrap: first deploy did not finish (expected before infra/scripts/db-bootstrap.sh has run once)"
+  echo "talon bootstrap: first deploy did not finish (see the log above)"
   # talon-deploy stops before talon-configure; apply the config anyway if
   # the code was checked out, so logging and proxy headers do not wait.
   if [ -d /opt/talon/.git ]; then

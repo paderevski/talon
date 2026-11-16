@@ -67,7 +67,10 @@ found in a breach" dialog; it blocks clicks until dismissed.
 - The database is RDS: the service connects as `talon_app` (rows only) with
   IAM tokens; migrations, the seed and admin scripts switch to
   `talon_migrate` (schema owner) via `useMigrationRole()`. A new script
-  that changes the schema or wipes tables must call it.
+  that changes the schema or wipes tables must call it. The web servers
+  cannot sign in as `talon_migrate` or write the app secrets: against RDS
+  such scripts run from a laptop with `infra/scripts/db-run.sh -- <command>`
+  (`deploy.sh` migrates the same way, before touching any server).
 - Money is integer cents in the ledger and dollars in API responses.
   Jobs/results are scoped by the signed-in user (server side); the client
   must not decide visibility.

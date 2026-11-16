@@ -12,9 +12,14 @@ import { log } from "../utils/log.js";
 //   (DATABASE_IAM_AUTH=true): each new connection's password is a 15-minute
 //   token signed with the instance role, so no database password exists.
 //         DATABASE_URL=postgres://talon_app@<endpoint>:5432/talon?sslmode=verify-full&sslrootcert=/etc/talon/rds-ca.pem
-//         DATABASE_MIGRATE_URL=postgres://talon_migrate@<endpoint>:5432/talon?...  (schema owner)
-//     The service connects as talon_app (rows only); migrations, the demo
-//     seed and admin scripts call useMigrationRole() first.
+//     The service connects as talon_app (rows only) and has no way to sign
+//     in as the schema owner. Migrations and admin scripts run on an
+//     operator's machine (infra/scripts/db-run.sh, deploy.sh) through an SSM
+//     tunnel: DATABASE_CONNECT_HOST / DATABASE_CONNECT_PORT send the TCP
+//     connection there, while the URL's host name still signs the IAM token
+//     and is checked against the certificate.
+//   Locally, DATABASE_MIGRATE_URL (if set) is what useMigrationRole() switches
+//   the schema-changing scripts to.
 //   Any server with a password instead: PGPASSWORD (pg reads it when the URL
 //   has none), so talon.env holds no secret.
 const defaultDatabaseUrl = "postgres://localhost/talon_dev";
@@ -107,6 +112,19 @@ export function connectionConfig(url = getDatabaseUrl(), env = process.env, { cr
     username: config.user,
     region: env.AWS_REGION || env.AWS_DEFAULT_REGION || "us-east-1",
   });
+  const connectHost = String(env.DATABASE_CONNECT_HOST ?? "").trim();
+  if (connectHost) {
+    // Reached through a tunnel (operator scripts): connect there, but keep the
+    // real name for the certificate check. pg sets the TLS server name only
+    // for a host name, not an address, so set it here.
+    return {
+      ...config,
+      host: connectHost,
+      port: Number(env.DATABASE_CONNECT_PORT || config.port || 5432),
+      ssl: { ...config.ssl, servername: config.host },
+      password: () => signer.getAuthToken(),
+    };
+  }
   return { ...config, password: () => signer.getAuthToken() };
 }
 
