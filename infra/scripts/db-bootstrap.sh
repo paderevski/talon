@@ -10,11 +10,12 @@
 #   3. infra/scripts/deploy.sh <branch>   (migrates as talon_migrate from your laptop)
 #   4. terraform apply with db_bootstrap = false
 #
-# The script runs as root from the deployed commit (`git show`, like
-# configure.sh). Master credentials stay on the server: never printed.
+# The script runs as root from the deployed commit, taken from the root-owned
+# clone (talon-repo-script, like configure.sh). Master credentials stay on the
+# server: never printed.
 source "$(dirname "$0")/common.sh"
 
 ID="$(web_instance_id)"
-BOOT='sudo -u talon git -C /opt/talon show HEAD:infra/server/db-bootstrap.sh > /run/talon-db-bootstrap.sh && bash /run/talon-db-bootstrap.sh; rc=$?; rm -f /run/talon-db-bootstrap.sh; exit $rc'
+BOOT="/usr/local/bin/talon-repo-script infra/server/db-bootstrap.sh"
 echo "Bootstrapping the database from $ID..."
 run_ssm "$ID" "talon db bootstrap" "[\"$BOOT\"]"

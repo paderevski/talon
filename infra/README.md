@@ -14,20 +14,40 @@ what is running, what is done and what is next.
 | `alb.tf` | Internal ALB in front of them (health check `GET /api/health/live`), its security group rules and alarms |
 | `rds.tf` | Postgres 16 on RDS (`db.t4g.small`, Multi-AZ, TLS, IAM sign-in; roles `talon_app` for the servers and `talon_migrate` for operators) |
 | `jobs.tf` | Student jobs: jobs bucket, CPU and GPU job launch templates, job role, and the web servers' limited permission to launch and terminate job instances |
+| `deploy.tf` | SSM parameter `deployed-commit` (the commit new servers deploy; written by `deploy.sh`) and the web role's read access to it |
 | `secrets.tf`, `github.tf` | KMS key for app secrets and GitHub App settings in SSM (`/talon/<env>/`) |
 | `monitoring.tf`, `log_queries.tf` | CloudWatch log groups, agent config, alarms, saved Logs Insights queries `Talon/*`; optional GuardDuty |
 | `alarms.tf` | Alert topic (email) and account cost budgets |
 | `main.tf` | Web server IAM role and the Ubuntu AMI |
 
-The web servers' first boot (`web_user_data.sh.tftpl`) installs Node 24,
-nginx and the AWS CLI, creates the `talon` service user, a loader for the app
-secrets in SSM (the servers can read them, not write them; a new environment
-creates them once with `infra/scripts/secrets.sh init`) and the
-`talon-deploy` / `talon-configure` tools, then deploys `git_ref`. A server
-never migrates the database: it can only sign in as `talon_app`.
-`talon-configure` runs `infra/server/configure.sh` from the deployed commit:
-nginx site, JSON logging, proxy headers and the CloudWatch agent. A server
+The web servers' first boot (`web_user_data.sh.tftpl`) installs a pinned Node
+(tarball from nodejs.org, checked against its SHA-256; `NODE_VERSION` and
+`NODE_SHA256_ARM64` at the top of the template), nginx and the AWS CLI,
+creates the `talon` service user, a loader for the app secrets in SSM (the
+servers can read them, not write them; a new environment creates them once
+with `infra/scripts/secrets.sh init`) and the `talon-deploy` /
+`talon-configure` tools, then deploys. A server never migrates the database:
+it can only sign in as `talon_app`.
+
+What a server deploys is a commit SHA: `deploy.sh` resolves the branch to a
+SHA once, every server checks out exactly that, and when all have it the SHA
+is written to SSM `/talon/<env>/deployed-commit` (`deploy.tf`; Terraform only
+sets the first value, `git_ref`). A replacement server deploys that commit,
+not the tip of a branch. `talon-deploy` fetches into a root-owned clone
+(`/var/lib/talon-deploy/repo.git`), installs with `npm ci --ignore-scripts`,
+and records the commit in `/etc/talon/deployed-sha`. Scripts that run as root
+(`talon-configure` -> `infra/server/configure.sh`, `db-bootstrap.sh`) come
+from that root-owned clone at the recorded commit through
+`talon-repo-script`, never from `/opt/talon`, which the `talon` user can
+write. `configure.sh` pins the CloudWatch agent (`CWA_VERSION`,
+`CWA_SHA256_ARM64`; its comment says how to bump). The backend unit is
+sandboxed (`ProtectSystem=strict`, writable: `/tmp`, `/var/lib/talon`,
+`/opt/talon/backend/data`). A server
 serves about 2.5 minutes after launch with no manual step.
+
+Changes to `web_user_data.sh.tftpl` reach servers only by replacing them (the
+instance refresh after `terraform apply`), not by `deploy.sh`; changes to
+`configure.sh` arrive with the next deploy.
 
 Job instances boot from `job_boot.sh` (fetch input from S3, run the student's
 script as an unprivileged user, upload results, power off).
