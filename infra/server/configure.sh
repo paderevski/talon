@@ -154,11 +154,11 @@ fi
 # forwarded protocol, enabled in place of nginx's default site.
 SITE=/etc/nginx/sites-available/talon
 cp -p "$SITE" "$SITE.bak" 2>/dev/null || true
-# The Content Security Policy is sent report-only until the Google Drive
-# Picker has been confirmed to work under it (browser console: no
-# "Content-Security-Policy-Report-Only" violations while picking). To enforce
-# it, change this one value to Content-Security-Policy and deploy.
-CSP_HEADER="Content-Security-Policy-Report-Only"
+# The Content Security Policy is enforced since 2026-11-16, after the Google
+# Drive Picker showed no report-only violations while picking. If a new
+# third-party script or frame is added, set this back to
+# Content-Security-Policy-Report-Only, deploy, and check the browser console.
+CSP_HEADER="Content-Security-Policy"
 if sed "s/@CSP_HEADER@/$CSP_HEADER/" <<'EOF' | install_file "$SITE" 644
 # From infra/server/configure.sh.
 server {
