@@ -27,6 +27,7 @@ import { describeCloneError, gitAuthEnv } from "../../src/execution/gitAuth.js";
 import { createVerify, generateKeyPairSync } from "node:crypto";
 import { BudgetError, ensureAccount, grant, transfer } from "../../src/budget/ledger.js";
 import { bootAllowanceSeconds, hourlyRateCentsFor, imageFor, isAllowedRuntime, listInstanceOptions, reservationCentsFor } from "../../src/execution/ec2Rates.js";
+import { parseTalonLine } from "../../../frontend/src/utils/jobProgress.js";
 import createEc2ExecutionAdapter, { assertEntryScript, buildRunScript } from "../../src/execution/adapters/ec2ExecutionAdapter.js";
 import { JobLimitError } from "../../src/repositories/postgres/jobsPostgresRepository.js";
 import { launchEc2Job, parseEnvironmentVariables, startEc2Job } from "../../src/services/ec2Jobs.js";
@@ -169,10 +170,11 @@ function fakeGithubConfig() {
 function makeFakeAws({ instance = { state: "running" } } = {}) {
   const objects = new Map();
   const calls = [];
+  const s3Stats = { maxBytes: 0 }; // the most bytes any one GetObject returned
   let instanceState = instance;
   const noSuchKey = () => Object.assign(new Error("NoSuchKey"), { name: "NoSuchKey" });
   return {
-    objects, calls,
+    objects, calls, s3Stats,
     setInstance(next) { instanceState = next; },
     s3: {
       async send(command) {
@@ -181,8 +183,20 @@ function makeFakeAws({ instance = { state: "running" } } = {}) {
         if (name === "PutObjectCommand") { objects.set(input.Key, String(input.Body)); return {}; }
         if (name === "GetObjectCommand") {
           if (!objects.has(input.Key)) throw noSuchKey();
-          const text = objects.get(input.Key);
-          return { Body: { transformToString: async () => text, text }, ContentLength: text.length };
+          const value = objects.get(input.Key);
+          const whole = typeof value === "string" ? Buffer.from(value) : value;
+          let body = whole;
+          let contentRange;
+          if (input.Range) {
+            // Like S3: a start at or past the end is a 416, the end is clamped.
+            const [, from, to] = /^bytes=(\d+)-(\d+)$/.exec(input.Range);
+            if (Number(from) >= whole.length) throw Object.assign(new Error("InvalidRange"), { name: "InvalidRange", $metadata: { httpStatusCode: 416 } });
+            body = whole.subarray(Number(from), Math.min(Number(to), whole.length - 1) + 1);
+            contentRange = `bytes ${from}-${Number(from) + body.length - 1}/${whole.length}`;
+          }
+          s3Stats.maxBytes = Math.max(s3Stats.maxBytes, body.length);
+          const text = body.toString();
+          return { Body: { transformToString: async () => text, transformToByteArray: async () => new Uint8Array(body), text }, ContentLength: body.length, ContentRange: contentRange };
         }
         if (name === "ListObjectsV2Command") {
           return { Contents: [...objects.keys()].filter((k) => k.startsWith(input.Prefix)).map((Key) => ({ Key, Size: objects.get(Key).length })), IsTruncated: false };
@@ -2065,8 +2079,8 @@ const tests = [
 
     aws.objects.set("jobs/job-9/logs/job.log", "line one\nline two\n");
     aws.objects.set("jobs/job-9/output/model.txt", "weights");
-    const logs = await adapter.getLogs(ref, 1);
-    assert(logs.lines.join() === "line two" && logs.nextCursor === 2, `logs ${JSON.stringify(logs)}`);
+    const logs = await adapter.getLogs(ref, 9);
+    assert(logs.lines.join() === "line two" && logs.nextCursor === 18, `logs ${JSON.stringify(logs)}`);
     aws.objects.set("jobs/job-9/changed/notes/result.csv", "a,b");
     const files = await adapter.listOutputFiles(ref);
     assert(
@@ -2101,6 +2115,135 @@ const tests = [
     assert(aws.calls.some((c) => c.name === "TerminateInstancesCommand"), "cancel must terminate the instance");
     const cancelled = await adapter.getStatus(ref);
     assert(cancelled.state === "cancelled", `cancelled ${JSON.stringify(cancelled)}`);
+  }],
+
+  ["ec2 adapter: log reads are bounded and the cursor is a byte offset", async () => {
+    const saved = { c: process.env.JOB_LOG_CHUNK_BYTES, h: process.env.JOB_LOG_HEAD_BYTES, l: process.env.JOB_LOG_LINE_MAX_CHARS };
+    process.env.JOB_LOG_CHUNK_BYTES = "1000";
+    process.env.JOB_LOG_HEAD_BYTES = "200";
+    process.env.JOB_LOG_LINE_MAX_CHARS = "50";
+    try {
+      const aws = makeFakeAws();
+      const adapter = createEc2ExecutionAdapter({ ec2: aws.ec2, s3: aws.s3, config: { bucket: "b", launchTemplateId: "lt", subnetIds: ["s"] } });
+      const ref = { provider: "ec2", jobId: "job-9", s3Prefix: "jobs/job-9", instanceId: "i-abc" };
+      const key = "jobs/job-9/logs/job.log";
+      const logs = (cursor) => adapter.getLogs(ref, cursor);
+      const bytes = (text) => Buffer.byteLength(text);
+      const stepLine = (text) => `[talon] 14:03:05 ${text}`;
+
+      // Missing object, then a small log read in full.
+      let r = await logs(0);
+      assert(r.lines.length === 0 && r.nextCursor === 0, `missing ${JSON.stringify(r)}`);
+      aws.objects.set(key, "");
+      r = await logs(0);
+      assert(r.lines.length === 0 && r.nextCursor === 0, `empty ${JSON.stringify(r)}`);
+      aws.objects.set(key, "one\ntwo\n\nthree\n");
+      r = await logs(0);
+      assert(r.lines.join("|") === "one|two|three" && r.nextCursor === bytes("one\ntwo\n\nthree\n"), `small ${JSON.stringify(r)}`);
+
+      // Polling as the log grows: a partial last line waits for its newline.
+      aws.objects.set(key, "one\ntwo\nthr");
+      r = await logs(0);
+      assert(r.lines.join("|") === "one|two" && r.nextCursor === 8, `partial ${JSON.stringify(r)}`);
+      r = await logs(r.nextCursor);
+      assert(r.lines.length === 0 && r.nextCursor === 8, `partial waits ${JSON.stringify(r)}`);
+      aws.objects.set(key, "one\ntwo\nthree\nfo");
+      r = await logs(r.nextCursor);
+      assert(r.lines.join("|") === "three" && r.nextCursor === 14, `completed ${JSON.stringify(r)}`);
+      r = await logs(14);
+      assert(r.lines.length === 0 && r.nextCursor === 14, `idle ${JSON.stringify(r)}`);
+
+      // CRLF endings and multi-byte characters (also split by the line cut).
+      aws.objects.set(key, "a\r\nb\r\n\r\nh\u00e9llo \u4e16\u754c \ud83d\ude80\r\n");
+      r = await logs(0);
+      assert(r.lines.join("|") === "a|b|h\u00e9llo \u4e16\u754c \ud83d\ude80", `crlf ${JSON.stringify(r)}`);
+      aws.objects.set(key, `${"\ud83d\ude80".repeat(40)}\nafter\n`);
+      r = await logs(0);
+      assert(r.lines.length === 2 && r.lines[0].endsWith(" \u2026 [line cut]") && r.lines[0].startsWith("\ud83d\ude80") && !/[\ud800-\udbff] \u2026/.test(r.lines[0]) && r.lines[1] === "after", `cut ${JSON.stringify(r)}`);
+      aws.objects.set(key, "\u00e9\u00e9\u00e9\n".repeat(10));
+      r = await logs(1); // starts inside a character: no throw
+      assert(r.lines.length === 10 && r.nextCursor === 70, `mid-character ${JSON.stringify(r)}`);
+
+      // Bad cursors are read as 0; one past the end is "nothing new".
+      aws.objects.set(key, "one\ntwo\n");
+      for (const bad of [Number.NaN, -5, 1.5, Infinity, "abc", undefined, null]) {
+        r = await logs(bad);
+        assert(r.lines.join("|") === "one|two" && r.nextCursor === 8, `cursor ${bad}: ${JSON.stringify(r)}`);
+      }
+      for (const beyond of [8, 9, 5000]) {
+        r = await logs(beyond);
+        assert(r.lines.length === 0 && r.nextCursor === beyond, `beyond ${beyond}: ${JSON.stringify(r)}`);
+      }
+      r = await logs(2); // an old line-count cursor: starts mid-line once, never throws
+      assert(r.lines.join("|") === "e|two" && r.nextCursor === 8, `old cursor ${JSON.stringify(r)}`);
+
+      // A single line longer than a chunk: cut, consumed chunk by chunk.
+      aws.objects.set(key, "x".repeat(1100));
+      r = await logs(0);
+      assert(r.lines.length === 1 && r.lines[0].endsWith("[line cut]") && r.nextCursor === 1000, `long line ${JSON.stringify(r)}`);
+      aws.objects.set(key, "x".repeat(2500));
+      r = await logs(0);
+      assert(r.lines.length === 3 && r.lines[1].startsWith("[log] ") && r.nextCursor === 2500, `very long line ${JSON.stringify(r)}`);
+
+      // A log far larger than the limits.
+      const steps = [stepLine("downloading job input"), stepLine("installing packages"), stepLine("running the script")];
+      let big = `${steps.join("\n")}\n`;
+      let n = 0;
+      while (big.length < 300000) big += `epoch ${n++} loss 0.123456789\n`;
+      const lastLine = `epoch ${n++} done`;
+      big += `${lastLine}\npartial tail`;
+      aws.objects.set(key, big);
+      aws.s3Stats.maxBytes = 0;
+      r = await logs(0);
+      const markers = r.lines.filter((l) => l.startsWith("[log] "));
+      assert(markers.length === 1 && /\d+(\.\d+)? KB of output not shown/.test(markers[0]) && !parseTalonLine(markers[0], 0), `marker ${JSON.stringify(markers)}`);
+      assert(r.lines.slice(0, 3).join() === steps.join() && steps.every((l) => parseTalonLine(l, Date.parse("2026-01-01T14:00:00Z"))), "the setup steps come first and still parse");
+      assert(r.lines.indexOf(markers[0]) > 3 && r.lines.at(-1) === lastLine, `head, marker, tail ${r.lines.length} last=${r.lines.at(-1)}`);
+      assert(r.lines.length < 200, `bounded reply ${r.lines.length}`);
+      assert(r.nextCursor === bytes(big.slice(0, big.lastIndexOf("\n") + 1)), `next cursor ${r.nextCursor}`);
+      assert(r.lines.slice(3).filter((l) => !l.startsWith("[log] ")).every((l) => /^epoch \d+ (loss 0\.123456789|done)$/.test(l)), "the tail starts on a whole line");
+      assert(aws.s3Stats.maxBytes <= 1000, `read ${aws.s3Stats.maxBytes} bytes at once`);
+      const caughtUp = await logs(r.nextCursor);
+      assert(caughtUp.lines.length === 0 && caughtUp.nextCursor === r.nextCursor, "the partial last line waits");
+
+      // Fallen more than a chunk behind: marker and tail, no head.
+      big += " end\nmore\n";
+      aws.objects.set(key, big);
+      aws.s3Stats.maxBytes = 0;
+      r = await logs(500);
+      assert(r.lines[0].startsWith("[log] ") && r.lines.filter((l) => l.startsWith("[log] ")).length === 1 && !r.lines.includes(steps[0]), `behind ${JSON.stringify(r.lines.slice(0, 2))}`);
+      assert(r.lines.at(-1) === "more" && r.lines.at(-2) === "partial tail end" && r.nextCursor === bytes(big), `behind tail ${JSON.stringify(r.lines.slice(-2))} ${r.nextCursor}`);
+      assert(aws.s3Stats.maxBytes <= 1000, `read ${aws.s3Stats.maxBytes} bytes at once`);
+
+      // Just over a chunk from the start: read in two polls, nothing doubled.
+      const lines = Array.from({ length: 75 }, (_, i) => `line ${String(i).padStart(3, "0")} ......`);
+      aws.objects.set(key, `${lines.join("\n")}\n`);
+      const a = await logs(0);
+      const b = await logs(a.nextCursor);
+      assert([...a.lines, ...b.lines].join() === lines.join() && !a.lines.concat(b.lines).some((l) => l.startsWith("[log]")), `two polls ${a.lines.length}+${b.lines.length}`);
+
+      // A tail window with no newline at all is one cut line.
+      aws.objects.set(key, `first\n${"y".repeat(5000)}`);
+      r = await logs(6);
+      assert(r.lines.length === 2 && r.lines[0].startsWith("[log] ") && r.lines[1].endsWith("[line cut]") && r.nextCursor === 5006, `no newline ${JSON.stringify(r)}`);
+    } finally {
+      for (const [name, value] of [["JOB_LOG_CHUNK_BYTES", saved.c], ["JOB_LOG_HEAD_BYTES", saved.h], ["JOB_LOG_LINE_MAX_CHARS", saved.l]]) {
+        if (value === undefined) delete process.env[name]; else process.env[name] = value;
+      }
+    }
+  }],
+
+  ["ec2 adapter: control files over the size cap are ignored", async () => {
+    const aws = makeFakeAws();
+    const adapter = createEc2ExecutionAdapter({ ec2: aws.ec2, s3: aws.s3, config: { bucket: "b", launchTemplateId: "lt", subnetIds: ["s"] }, now: () => Date.parse("2026-01-01T00:01:00Z") });
+    const ref = { provider: "ec2", jobId: "job-9", executionId: "job-9", s3Prefix: "jobs/job-9", instanceId: "i-abc", maxRuntimeSeconds: 600, submittedAt: "2026-01-01T00:00:00Z", launchedAt: "2026-01-01T00:00:00Z" };
+    const valid = JSON.stringify({ state: "succeeded", exit_code: 0, updated_at: "2026-01-01T00:00:30Z" });
+    aws.objects.set("jobs/job-9/status.json", valid);
+    assert((await adapter.getStatus(ref)).state === "completed", "a normal status.json is read");
+    aws.objects.set("jobs/job-9/status.json", `${valid.slice(0, -1)},"pad":"${"x".repeat(2 * 1024 * 1024)}"}`);
+    aws.s3Stats.maxBytes = 0;
+    assert((await adapter.getStatus(ref)).state !== "completed", "an oversized status.json is treated as invalid");
+    assert(aws.s3Stats.maxBytes <= 1024 * 1024 + 1, `read ${aws.s3Stats.maxBytes} bytes of a control file`);
   }],
 
   ["ec2 adapter: downloads honor the source and cannot escape the job prefix", async () => {
