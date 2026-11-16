@@ -711,6 +711,18 @@ Verify CloudFront VPC origin support for EC2 before choosing it.
   300 per 5 min, loose because schools share addresses; no general per-IP
   limit for the same reason). Logs in `aws-waf-logs-talon-public` (30 days,
   cookies redacted).
+- **Security headers** (branch `security-headers`). Express: no
+  `X-Powered-By`; `Cache-Control: no-store` and `X-Content-Type-Options:
+  nosniff` on every `/api` response (`server.js`). nginx (`configure.sh`,
+  re-applied each deploy): `nosniff`, `Referrer-Policy: same-origin`,
+  `X-Frame-Options: DENY`, HSTS (30 days, no `includeSubDomains`, sent only
+  when the ALB's `X-Forwarded-Proto` is https, so never on the internal ALB
+  or the tunnel) and a Content-Security-Policy. **The CSP is report-only**
+  (`CSP_HEADER` in `configure.sh`) because the Google Drive Picker's
+  requirements are from Google's docs, not tested; check the browser console
+  while picking Drive files, then switch the value to
+  `Content-Security-Policy` and deploy. `frame-ancestors` is ignored in
+  report-only; `X-Frame-Options` covers framing meanwhile.
 - ~~Per-account login throttling~~ (done, item 2).
 - **No demo users on a reachable server** (branch `go-live-no-demo`).
   Their passwords are public in this repo. `TALON_ALLOW_DEMO_SEED` is gone:
