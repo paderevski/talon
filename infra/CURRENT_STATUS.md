@@ -502,6 +502,19 @@ security review (2026-11-07), listed roughly in the order it suggested.
   1 MB cap. Still to do: cap the file on the box (keep the first and last
   N MB, say so in the log) in `job_boot.sh`; that needs a Terraform apply,
   and until then the log can still grow without limit in S3.
+- **Billing times are the web server's, not the job's** (done 2026-11-16,
+  branch `server-side-billing-times`). A job instance can write its own
+  `status.json`, so the bill no longer reads times from it. Start: EC2's
+  launch time (saved in the execution ref; AWS bills from there too). End:
+  when S3 stored the terminal `status.json` (or the cancel marker), capped
+  at now, never before the start; `updated_at` is only shown
+  (`reportedAt`). A missing or backwards end is billed up to the moment the
+  server looked; the total is capped at the time limit plus the boot
+  allowance (`billedDurationSeconds` in `jobSync.js`). The settled key is
+  `status:<end time>` and a stored `status:` result is not replaced, so
+  rewriting `status.json` later changes nothing. Remaining: a job can still
+  write a terminal status early to stop its own bill (its instance is then
+  terminated by the reconciler, so it does not keep computing for free).
 - **Outbound data quota per job** (review #2, cost). The budget covers
   instance time, not data sent to the internet (about $0.09/GB); a job
   uploading for 24 h on a large machine could cost thousands of dollars.

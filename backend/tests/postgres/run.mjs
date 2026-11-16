@@ -33,7 +33,7 @@ import { JobLimitError } from "../../src/repositories/postgres/jobsPostgresRepos
 import { launchEc2Job, parseEnvironmentVariables, resetFetchFailures, startEc2Job } from "../../src/services/ec2Jobs.js";
 import { parseScriptArgs } from "../../src/utils/scriptArgs.js";
 import { createEc2Reconciler } from "../../src/services/ec2Reconciler.js";
-import { createJobSync } from "../../src/services/jobSync.js";
+import { billedDurationSeconds, createJobSync } from "../../src/services/jobSync.js";
 import { createConnectionsStore, ConnectionInUseError } from "../../src/connections/store.js";
 import { createConnectionRegistry } from "../../src/connections/registry.js";
 import { createGoogleDriveProvider, driveScope, pickerAppId } from "../../src/connections/providers/googleDrive.js";
@@ -169,18 +169,21 @@ function fakeGithubConfig() {
 // Fake AWS clients for the EC2 adapter: S3 is a map, EC2 records its calls.
 function makeFakeAws({ instance = { state: "running" } } = {}) {
   const objects = new Map();
+  const modified = new Map(); // key -> LastModified, set by "S3" (the time of the put unless chosen)
   const calls = [];
   const s3Stats = { maxBytes: 0 }; // the most bytes any one GetObject returned
   let instanceState = instance;
   const noSuchKey = () => Object.assign(new Error("NoSuchKey"), { name: "NoSuchKey" });
   return {
     objects, calls, s3Stats,
+    // A put at a chosen S3 time (what the body says is the job's own claim).
+    putAt(key, body, at) { objects.set(key, typeof body === "string" ? body : JSON.stringify(body)); modified.set(key, new Date(at)); },
     setInstance(next) { instanceState = next; },
     s3: {
       async send(command) {
         const name = command.constructor.name;
         const input = command.input;
-        if (name === "PutObjectCommand") { objects.set(input.Key, String(input.Body)); return {}; }
+        if (name === "PutObjectCommand") { objects.set(input.Key, String(input.Body)); modified.delete(input.Key); return {}; }
         if (name === "GetObjectCommand") {
           if (!objects.has(input.Key)) throw noSuchKey();
           const value = objects.get(input.Key);
@@ -196,7 +199,7 @@ function makeFakeAws({ instance = { state: "running" } } = {}) {
           }
           s3Stats.maxBytes = Math.max(s3Stats.maxBytes, body.length);
           const text = body.toString();
-          return { Body: { transformToString: async () => text, transformToByteArray: async () => new Uint8Array(body), text }, ContentLength: body.length, ContentRange: contentRange };
+          return { Body: { transformToString: async () => text, transformToByteArray: async () => new Uint8Array(body), text }, ContentLength: body.length, ContentRange: contentRange, LastModified: modified.get(input.Key) };
         }
         if (name === "ListObjectsV2Command") {
           return { Contents: [...objects.keys()].filter((k) => k.startsWith(input.Prefix)).map((Key) => ({ Key, Size: objects.get(Key).length })), IsTruncated: false };
@@ -2197,9 +2200,12 @@ const tests = [
       `files ${JSON.stringify(files)}`,
     );
 
-    aws.objects.set("jobs/job-9/status.json", JSON.stringify({ state: "succeeded", exit_code: 0, updated_at: "2026-01-01T00:05:00Z" }));
+    // The end is when S3 stored the status (00:05), not what the job wrote in it (00:00:01).
+    clock = Date.parse("2026-01-01T00:06:00Z");
+    aws.putAt("jobs/job-9/status.json", { state: "succeeded", exit_code: 0, updated_at: "2026-01-01T00:00:01Z" }, "2026-01-01T00:05:00Z");
     const done = await adapter.getStatus(ref);
-    assert(done.state === "completed" && done.endedAt === "2026-01-01T00:05:00Z" && done.exitCode === 0, `done ${JSON.stringify(done)}`);
+    assert(done.state === "completed" && done.endedAt === "2026-01-01T00:05:00.000Z" && done.reportedAt === "2026-01-01T00:00:01Z" && done.exitCode === 0, `done ${JSON.stringify(done)}`);
+    assert(done.syncKey === "status:2026-01-01T00:05:00.000Z", `key ${done.syncKey}`);
 
     aws.objects.set("jobs/job-9/status.json", JSON.stringify({ state: "timeout", exit_code: 124, updated_at: "2026-01-01T00:10:00Z" }));
     assert((await adapter.getStatus(ref)).state === "failed", "timeout is a failure");
@@ -2562,11 +2568,93 @@ tests.push(
     assert(JSON.stringify(await result()) === JSON.stringify(stored), `result changed: ${JSON.stringify(await result())}`);
 
     // The job's own status.json (uploaded late) is authoritative and replaces the guess; money is settled once.
-    aws.objects.set(`jobs/${job.id}/status.json`, JSON.stringify({ state: "succeeded", exit_code: 0, updated_at: "2026-01-01T00:09:30Z" }));
+    aws.putAt(`jobs/${job.id}/status.json`, { state: "succeeded", exit_code: 0, updated_at: "2026-01-01T00:09:30Z" }, "2026-01-01T00:09:30Z");
     const { job: reported } = await sync.synchronizeJobFromExecution(await jobs.findById(job.id));
-    assert(reported.status === "completed" && reported.resultSyncKey === "status:2026-01-01T00:09:30Z", `reported ${reported.status} ${reported.resultSyncKey}`);
+    assert(reported.status === "completed" && reported.resultSyncKey === "status:2026-01-01T00:09:30.000Z", `reported ${reported.status} ${reported.resultSyncKey}`);
     assert(reported.costCents === 60 && (await balance()) === start - 60, "cost settled once");
     assert((await ledgerCount(job.id, "refund")) === 1, "one refund");
+  }],
+
+  ["ec2 billing: the bill comes from times the web server observed, never from what status.json says about itself", async () => {
+    const jobs = createJobsPostgresRepository({ pool });
+    const { userId, balance } = await topUp("student_k2", 100000);
+    // 360 cents/hour, 1800 s limit, 300 s boot allowance: at most 2100 s, reserved 210 cents.
+    const settle = async ({ clock: clockAt, put, objectsOnly = null }) => {
+      const aws = makeFakeAws({ instance: { state: "running" } });
+      let clock = Date.parse(clockAt);
+      const adapter = createEc2ExecutionAdapter({ ec2: aws.ec2, s3: aws.s3, config: { bucket: "b", launchTemplateId: "lt", subnetIds: ["s"] }, now: () => clock });
+      const sync = createJobSync({ jobsRepository: jobs, getExecutionStatus: (ref) => adapter.getStatus(ref), getExecutionOutputFiles: async () => [], now: () => clock });
+      const before = await balance();
+      const job = await jobs.createWithReservation({
+        ownerUserId: userId, name: "billed", repo: "x/y", executionProvider: "ec2",
+        computeType: "t4g.medium", hourlyRateCents: 360, maxRuntimeSeconds: 1800, reserveCents: 210,
+      });
+      const ref = { provider: "ec2", jobId: job.id, executionId: job.id, s3Prefix: `jobs/${job.id}`, instanceId: "i-abc", maxRuntimeSeconds: 1800, submittedAt: "2026-01-01T00:00:00Z", launchedAt: "2026-01-01T00:00:00Z" };
+      await jobs.setExecutionRef(job.id, ref);
+      if (put) aws.putAt(`jobs/${job.id}/status.json`, put.body, put.at);
+      if (objectsOnly) aws.objects.set(`jobs/${job.id}/status.json`, JSON.stringify(objectsOnly));
+      const { job: done } = await sync.synchronizeJobFromExecution(await jobs.findById(job.id));
+      const seconds = (await pool.query("SELECT duration_seconds FROM jobs WHERE id = $1", [job.id])).rows[0].duration_seconds;
+      return { job: done, seconds, paid: before - (await balance()), aws, adapter, sync, ref, clockTo: (at) => { clock = Date.parse(at); } };
+    };
+    const ten = "2026-01-01T00:10:00Z";
+
+    // An honest job: ended 10 minutes after launch, 600 s, 60 cents.
+    const honest = await settle({ clock: "2026-01-01T00:10:05Z", put: { body: { state: "succeeded", exit_code: 0, updated_at: ten }, at: ten } });
+    assert(honest.seconds === 600 && honest.job.costCents === 60 && honest.paid === 60, `honest ${honest.seconds}s ${honest.job.costCents}c paid ${honest.paid}`);
+
+    // No updated_at: billed to when S3 stored it, not for nothing.
+    const bare = await settle({ clock: "2026-01-01T00:10:05Z", put: { body: { state: "succeeded", exit_code: 0 }, at: ten } });
+    assert(bare.seconds === 600 && bare.paid === 60, `no updated_at ${bare.seconds}s paid ${bare.paid}`);
+
+    // An end equal to or before the start, far in the future or far in the past:
+    // none of them changes the bill.
+    for (const claim of ["2026-01-01T00:00:00Z", "2025-12-31T00:00:00Z", "1970-01-01T00:00:00Z", "2099-01-01T00:00:00Z", "garbage", 0, null]) {
+      const out = await settle({ clock: "2026-01-01T00:10:05Z", put: { body: { state: "succeeded", exit_code: 0, updated_at: claim }, at: ten } });
+      assert(out.seconds === 600 && out.paid === 60, `claimed ${JSON.stringify(claim)} billed ${out.seconds}s paid ${out.paid}`);
+    }
+
+    // No S3 time at all: billed to the moment the server looked (7 minutes in: 420 s, 42 cents).
+    const unstamped = await settle({ clock: "2026-01-01T00:07:00Z", objectsOnly: { state: "succeeded", exit_code: 0, updated_at: "2026-01-01T00:00:00Z" } });
+    assert(unstamped.seconds === 420 && unstamped.paid === 42, `unstamped ${unstamped.seconds}s paid ${unstamped.paid}`);
+
+    // An S3 time ahead of this server's clock is capped at now.
+    const skewed = await settle({ clock: ten, put: { body: { state: "succeeded", exit_code: 0 }, at: "2026-01-01T00:20:00Z" } });
+    assert(skewed.seconds === 600 && skewed.paid === 60, `skewed ${skewed.seconds}s paid ${skewed.paid}`);
+
+    // Never more than the limit plus the boot allowance (2100 s), and never more than the reservation.
+    const long = await settle({ clock: "2026-01-01T06:00:00Z", put: { body: { state: "failed", exit_code: 1 }, at: "2026-01-01T05:00:00Z" } });
+    assert(long.seconds === 2100 && long.paid === 210, `long ${long.seconds}s paid ${long.paid}`);
+
+    // A cancel whose own time says "at launch" still bills from the S3 time.
+    const cancelled = await settle({ clock: ten });
+    cancelled.aws.putAt(`jobs/${cancelled.job.id}/control/cancelled`, { at: "2026-01-01T00:00:00Z" }, "2026-01-01T00:03:00Z");
+    cancelled.clockTo("2026-01-01T00:04:00Z");
+    const cancelStatus = await cancelled.adapter.getStatus(cancelled.ref);
+    assert(cancelStatus.state === "cancelled" && cancelStatus.endedAt === "2026-01-01T00:03:00.000Z", `cancel ${JSON.stringify(cancelStatus)}`);
+
+    // Repeated polls settle once; rewriting status.json afterwards changes nothing.
+    const again = await settle({ clock: "2026-01-01T00:10:05Z", put: { body: { state: "succeeded", exit_code: 0, updated_at: ten }, at: ten } });
+    const afterFirst = await balance();
+    for (let i = 0; i < 3; i += 1) {
+      await again.sync.synchronizeJobFromExecution(await jobs.findById(again.job.id));
+    }
+    again.aws.putAt(`jobs/${again.job.id}/status.json`, { state: "failed", exit_code: 1, updated_at: "2026-01-01T00:00:00Z" }, "2026-01-01T00:12:00Z");
+    again.clockTo("2026-01-01T00:13:00Z");
+    const final = await again.sync.synchronizeJobFromExecution(await jobs.findById(again.job.id));
+    assert(final.job.resultSyncKey === again.job.resultSyncKey && final.job.costCents === 60, `rewritten ${final.job.resultSyncKey} ${final.job.costCents}`);
+    const row = (await pool.query("SELECT duration_seconds FROM jobs WHERE id = $1", [again.job.id])).rows[0];
+    assert(row.duration_seconds === 600 && (await balance()) === afterFirst, `repeat polls changed the bill: ${row.duration_seconds}s balance ${await balance()} vs ${afterFirst}`);
+    assert((await ledgerCount(again.job.id, "charge")) + (await ledgerCount(again.job.id, "reserve")) <= 1 && (await ledgerCount(again.job.id, "refund")) === 1, "one reservation, one refund");
+
+    // The pure rule: a backwards or missing end is billed to now, capped; no start stays unbilled (local jobs that never started).
+    const rule = { maxRuntimeSeconds: 1800, executionRef: { instanceType: "c7g.large" } };
+    const at = Date.parse("2026-01-01T00:05:00Z");
+    assert(billedDurationSeconds(rule, { startedAt: "2026-01-01T00:00:00Z", endedAt: "2026-01-01T00:00:00Z" }, at) === 300, "equal end is billed to now");
+    assert(billedDurationSeconds(rule, { startedAt: "2026-01-01T00:00:00Z", endedAt: null }, at) === 300, "missing end is billed to now");
+    assert(billedDurationSeconds(rule, { startedAt: "2026-01-01T00:00:00Z", endedAt: "2030-01-01T00:00:00Z" }, at) === 2100, "far end is capped");
+    assert(billedDurationSeconds(rule, { startedAt: null, endedAt: "2026-01-01T00:00:00Z" }, at) === null, "never started: no duration");
+    assert(billedDurationSeconds({}, { startedAt: "2026-01-01T00:00:00Z", endedAt: "2026-01-01T00:02:00Z" }, at) === 120, "local jobs keep their own times");
   }],
 
   ["ec2 jobs: parallel submits against a budget that covers one reservation: exactly one is accepted", async () => {
