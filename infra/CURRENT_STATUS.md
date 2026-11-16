@@ -8,6 +8,30 @@ it differs from v7 and a short what-comes-next; v7 kept for history).
 
 ## Next up (as of 2026-11-07)
 
+-9. **Deploy hardening** (branch `deploy-hardening`, stacked on
+   `split-migrate-role`; not yet applied or deployed). `deploy.sh` resolves
+   the branch to a commit SHA once and every step uses it; the SHA is written
+   to SSM `/talon/demo/deployed-commit` (created in `deploy.tf` with the
+   value ignored by Terraform) after all servers have it, and a replacement
+   server deploys that commit, not the tip of `main`. Servers install with
+   `npm ci --ignore-scripts` (the frontend build and backend tests pass
+   without install scripts; only esbuild's check and macOS `fsevents` have
+   one). `talon-configure` and `db-bootstrap.sh` no longer take their script
+   from the `talon` user's checkout: root fetches into its own clone
+   (`/var/lib/talon-deploy/repo.git`) and runs the script from there at the
+   recorded commit (`talon-repo-script`). First-boot downloads: Node is a
+   pinned tarball with a SHA-256 check instead of the NodeSource `curl | bash`
+   (`/usr/local/bin/node`), the CloudWatch agent is a pinned version with a
+   SHA-256 check; the aws-cli snap is still installed from the store without a
+   pinned revision (snapd verifies it; `AWS_CLI_SNAP_CHANNEL` can hold a
+   channel). The RDS CA bundle is still fetched from AWS's trust store URL
+   unpinned (it is public and rotates). `talon-backend` is sandboxed
+   (`ProtectSystem=strict`, `ProtectHome`, kernel protections,
+   `RestrictSUIDSGID`, `LockPersonality`; writable: `/tmp`, `/var/lib/talon`,
+   `/opt/talon/backend/data`). All but the deploy.sh part reach servers
+   through the instance refresh that `terraform apply` starts (user data
+   changed). **Apply and let the refresh finish before the first
+   `deploy.sh`**: it refuses to run while a server still has the old tools.
 -8. **Servers can no longer change the schema or the secrets** (branch
    `split-migrate-role`, not yet applied or deployed). The web role's
    `rds-db:connect` is for `talon_app` only and `DATABASE_MIGRATE_URL` is gone
@@ -235,7 +259,7 @@ fixes only. Items 1 and 2 below describe the current EC2 path.
 | Web servers | Auto Scaling group `talon-demo-web` (`web.tf`): two t4g.small, Ubuntu 24.04 arm64, one per zone, from launch template `talon-demo-web`; tagged `Component=web`. Internal ALB `talon-demo-web` (`alb.tf`), health `GET /api/health/live` (app up, no database) every 10 s, unhealthy after 2 |
 | Elastic IP | None for the web servers (private). One per NAT gateway (1a, 1b) |
 | Inbound access | None from the internet. SSM Session Manager only (`tunnel.sh`: SSM port forward through a web server to the internal ALB, or with `TALON_ALB=public` to the internet-facing ALB). That ALB (`talon-public`, `public_alb.tf`, HTTP:80 only, no certificate yet) allows port 80 only from the two NAT gateways' Elastic IPs |
-| Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`. Postgres 16 on RDS `talon-demo` (`db.t4g.small`, Multi-AZ since 2026-11-05, TLS, IAM sign-in as `talon_app`; migrations as `talon_migrate`, run from an operator's laptop, not from the servers). `EC2_JOBS_ENABLED=true` |
+| Runtime | Node 24 LTS (pinned tarball, `/usr/local/bin/node`), nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`. Postgres 16 on RDS `talon-demo` (`db.t4g.small`, Multi-AZ since 2026-11-05, TLS, IAM sign-in as `talon_app`; migrations as `talon_migrate`, run from an operator's laptop, not from the servers). `EC2_JOBS_ENABLED=true` |
 | Deployed | `main`, unless `deploy.sh <branch>` put a test branch on the box (normally tested before merge; the branch may stay until the next deploy since it equals `main` after the PR). `infra/scripts/status.sh --deep` shows the commit, template versions and drift |
 | Approx cost | ~$165/month at list price, not read from the bill (Cost Explorer shows less: LCPS Savings Plans and discounts): two web servers ~$24 + EBS ~$3.20, internal ALB ~$17, two NAT gateways ~$66 + traffic, RDS db.t4g.small Multi-AZ ~$51, KMS key ~$1, alarms/S3/SNS pennies. Plus job instances, billed per second and charged to budgets |
 | Other AWS resources | SSM parameters under `/talon/demo/`, KMS key `alias/talon-demo-secrets`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), CloudWatch alarms (`monitoring.tf`: disk, backend errors, unknown job instance, failed logins, GPU and standard vCPUs; `alb.tf`: healthy hosts, ALB 5xx; `public_alb.tf` and `waf.tf`: the public ALB's unhealthy hosts and 5xx, WAF blocked requests), CloudWatch agent on each web server (installed and configured by `infra/server/configure.sh`; logs in `/talon/demo/{backend,syslog,nginx-access,nginx-error,bootstrap}`, 30 days; metrics in `Talon/Server`), saved Logs Insights queries `Talon/*` (`log_queries.tf`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and CPU/GPU launch templates (`jobs.tf`), 2 AWS Budgets alerts (`alarms.tf`: 150 USD a month, 10 USD a day) |
@@ -272,12 +296,14 @@ On the box:
 sudo tail -f /var/log/talon/backend.log   # backend (JSON lines; not in journald)
 sudo journalctl -u talon-backend          # service start/stop only
 sudo tail -f /var/log/talon-bootstrap.log
-sudo /usr/local/bin/talon-deploy main
+sudo /usr/local/bin/talon-deploy [sha]    # no argument: the commit in SSM deployed-commit
+cat /etc/talon/deployed-sha               # the commit this server runs
 ```
 
 Key paths: app `/opt/talon`, config `/etc/talon/talon.env`, secrets
 `/etc/talon/secrets.env` (loaded from SSM Parameter Store), service user
-`talon`.
+`talon`, root-owned clone for deploys and root scripts
+`/var/lib/talon-deploy/repo.git`.
 
 
 ### Logs

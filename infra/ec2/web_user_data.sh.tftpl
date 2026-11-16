@@ -27,13 +27,33 @@ if [ ! -f /swapfile ]; then
   echo '/swapfile none swap sw 0 0' >> /etc/fstab
 fi
 
-# --- packages: Node 24 LTS, nginx, git, python3, psql (db-bootstrap.sh) ---
+# --- packages: nginx, git, python3, psql (db-bootstrap.sh) ---
 apt-get update
-apt-get install -y ca-certificates curl gnupg git nginx python3 openssl postgresql-client
-curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
-apt-get install -y nodejs
+apt-get install -y ca-certificates curl gnupg git nginx python3 openssl postgresql-client xz-utils
+
+# --- Node: a pinned release from nodejs.org, checked against its SHA-256 ---
+# Not a piped installer script: nothing runs as root until the download
+# matches the checksum below. To move to another release, take the version and
+# the linux-arm64 .tar.xz line from https://nodejs.org/dist/<version>/SHASUMS256.txt
+# (signed; check the signature against the Node release keys when you bump it).
+NODE_VERSION=v24.22.3
+NODE_SHA256_ARM64=6e51a2ada00f0011cc266f65d98922b403d7ad88f809ca2aa615a5fe1ce6e86c
+NODE_TARBALL="node-$NODE_VERSION-linux-arm64.tar.xz"
+curl -fsSL "https://nodejs.org/dist/$NODE_VERSION/$NODE_TARBALL" -o "/run/$NODE_TARBALL"
+echo "$NODE_SHA256_ARM64  /run/$NODE_TARBALL" | sha256sum -c -
+install -d /usr/local/lib/nodejs
+tar -xJf "/run/$NODE_TARBALL" -C /usr/local/lib/nodejs
+rm -f "/run/$NODE_TARBALL"
+for bin in node npm npx; do
+  ln -sfn "/usr/local/lib/nodejs/node-$NODE_VERSION-linux-arm64/bin/$bin" "/usr/local/bin/$bin"
+done
 node --version
-snap install aws-cli --classic
+
+# --- AWS CLI: the snap (its store signature is checked by snapd) ---
+# AWS_CLI_SNAP_CHANNEL is empty (the default channel). To hold a major
+# version, set it to a channel from `snap info aws-cli`, for example v2/stable.
+AWS_CLI_SNAP_CHANNEL=""
+snap install aws-cli --classic $${AWS_CLI_SNAP_CHANNEL:+--channel=$AWS_CLI_SNAP_CHANNEL}
 
 # --- service user and app directory ---
 id talon >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/talon --shell /usr/sbin/nologin talon
@@ -111,46 +131,111 @@ fi
 # the build: the service retries every few seconds once they exist.
 /usr/local/bin/talon-load-secrets || echo "talon bootstrap: secrets not readable yet"
 
-# --- server config from the repo (infra/server/configure.sh) ---
-# Logging, proxy headers, trusted proxies. Runs as root, so the script is
-# taken from the deployed commit with `git show`, never from the working tree
-# the talon user can write to. Commits without the file are skipped. Called
-# by talon-deploy after each deploy, so a server the Auto Scaling group
-# starts has its config from first boot, not only after the next deploy.sh.
-cat > /usr/local/bin/talon-configure <<'EOF'
+# --- repo scripts that run as root (infra/server/*.sh) ---
+# Run by talon-configure (after each deploy) and infra/scripts/db-bootstrap.sh.
+# They run as root, so they are taken from talon-deploy's root-owned clone
+# (/var/lib/talon-deploy/repo.git, written only by root) at the commit that
+# talon-deploy recorded in /etc/talon/deployed-sha, never from /opt/talon:
+# the talon user owns that checkout and its .git, so code running as the
+# service could otherwise get its own script run as root.
+# Usage: talon-repo-script [--optional] <path-in-repo>
+cat > /usr/local/bin/talon-repo-script <<'EOF'
 #!/bin/bash
 set -euo pipefail
-APP=/opt/talon
-if ! sudo -u talon git -C "$APP" cat-file -e HEAD:infra/server/configure.sh 2>/dev/null; then
-  echo "talon-configure: deployed commit has no infra/server/configure.sh; skipped"
-  exit 0
+OPTIONAL=false
+if [ "$${1:-}" = "--optional" ]; then OPTIONAL=true; shift; fi
+FILE="$${1:?usage: talon-repo-script [--optional] <path-in-repo>}"
+REPO=/var/lib/talon-deploy/repo.git
+SHA="$(cat /etc/talon/deployed-sha 2>/dev/null || true)"
+[[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "talon-repo-script: no deployed commit recorded yet" >&2; exit 1; }
+if ! git --git-dir="$REPO" cat-file -e "$SHA:$FILE" 2>/dev/null; then
+  if $OPTIONAL; then
+    echo "talon-repo-script: deployed commit has no $FILE; skipped"
+    exit 0
+  fi
+  echo "talon-repo-script: deployed commit has no $FILE" >&2
+  exit 1
 fi
 umask 077
-sudo -u talon git -C "$APP" show HEAD:infra/server/configure.sh > /run/talon-configure.sh
-bash /run/talon-configure.sh
+TMP="$(mktemp /run/talon-repo-script.XXXXXX)"
+trap 'rm -f "$TMP"' EXIT
+git --git-dir="$REPO" show "$SHA:$FILE" > "$TMP"
+bash "$TMP"
+EOF
+chmod 755 /usr/local/bin/talon-repo-script
+
+# --- server config from the repo (infra/server/configure.sh) ---
+# Logging, proxy headers, trusted proxies. Commits without the file are
+# skipped. Called by talon-deploy after each deploy, so a server the Auto
+# Scaling group starts has its config from first boot, not only after the next
+# deploy.sh.
+cat > /usr/local/bin/talon-configure <<'EOF'
+#!/bin/bash
+exec /usr/local/bin/talon-repo-script --optional infra/server/configure.sh
 EOF
 chmod 755 /usr/local/bin/talon-configure
 
 # --- deploy script (used on first boot and by infra/scripts/deploy.sh via SSM) ---
+# Runs as root (SSM, first boot).
 cat > /usr/local/bin/talon-deploy <<'EOF'
 #!/bin/bash
-# Usage: talon-deploy [branch]
-# Force-syncs /opt/talon to origin/<branch>, builds, applies the repo's server
-# config (talon-configure) and restarts. It does not migrate: the servers
-# cannot sign in as the schema owner. infra/scripts/deploy.sh migrates first,
-# from the operator's machine.
+# Usage: talon-deploy [commit-sha | branch]
+# Without an argument: the commit recorded in SSM (deployed-commit, written by
+# infra/scripts/deploy.sh, initially git_ref), so a replacement server runs
+# what was last deployed, not the tip of a branch.
+# Fetches into a root-owned clone and resolves the commit there, syncs
+# /opt/talon to exactly that commit, installs without running dependency
+# install scripts, builds, records the commit (/etc/talon/deployed-sha),
+# applies the repo's server config (talon-configure) and restarts. It does not
+# migrate: the servers cannot sign in as the schema owner. deploy.sh migrates
+# first, from the operator's machine.
 set -euo pipefail
-REF="$${1:-${git_ref}}"
+export HOME=/root AWS_DEFAULT_REGION=${region}
 APP=/opt/talon
+ROOT_REPO=/var/lib/talon-deploy/repo.git
 as_talon() { sudo -u talon env HOME=/var/lib/talon "$@"; }
 
+exec 9> /run/talon-deploy.lock
+flock -n 9 || { echo "talon-deploy: another deploy is running" >&2; exit 1; }
+
+REF="$${1:-}"
+if [ -z "$REF" ]; then
+  REF="$(/snap/bin/aws ssm get-parameter --name "${deployed_commit_param}" --query Parameter.Value --output text 2>/dev/null || true)"
+  REF="$${REF:-${git_ref}}"
+fi
+[[ "$REF" =~ ^[0-9a-f]{40}$ || "$REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || { echo "talon-deploy: unexpected ref: $REF" >&2; exit 2; }
+
+# Root-owned clone: the source of truth for what gets deployed and for the
+# scripts that run as root.
+[ -d "$ROOT_REPO" ] || { install -d -m 755 "$(dirname "$ROOT_REPO")"; git init -q --bare "$ROOT_REPO"; }
+git --git-dir="$ROOT_REPO" fetch -q --prune "${repo_url}" '+refs/heads/*:refs/heads/*'
+if [[ "$REF" =~ ^[0-9a-f]{40}$ ]]; then
+  SHA="$REF"
+  git --git-dir="$ROOT_REPO" cat-file -e "$SHA^{commit}" 2>/dev/null \
+    || git --git-dir="$ROOT_REPO" fetch -q "${repo_url}" "$SHA"
+  git --git-dir="$ROOT_REPO" cat-file -e "$SHA^{commit}" || { echo "talon-deploy: commit $SHA not found" >&2; exit 1; }
+else
+  SHA="$(git --git-dir="$ROOT_REPO" rev-parse --verify "refs/heads/$REF^{commit}")"
+fi
+echo "talon-deploy: deploying $SHA ($REF)"
+
 if [ ! -d "$APP/.git" ]; then
-  as_talon git clone "${repo_url}" "$APP"
+  as_talon git clone -q "${repo_url}" "$APP"
 fi
 cd "$APP"
-as_talon git fetch --prune origin
-as_talon git checkout -f -B "$REF" "origin/$REF"
-as_talon npm ci --no-audit --no-fund
+as_talon git fetch -q --prune origin
+as_talon git cat-file -e "$SHA^{commit}" 2>/dev/null || as_talon git fetch -q origin "$SHA"
+as_talon git checkout -q -f --detach "$SHA"
+[ "$(as_talon git rev-parse HEAD)" = "$SHA" ] || { echo "talon-deploy: checkout is not at $SHA" >&2; exit 1; }
+as_talon mkdir -p "$APP/backend/data" # the one folder the service may write in the app tree
+# Recorded now so talon-configure matches the checked-out code even if the
+# build below fails.
+echo "$SHA" > /etc/talon/deployed-sha.new
+chmod 644 /etc/talon/deployed-sha.new
+mv /etc/talon/deployed-sha.new /etc/talon/deployed-sha
+# --ignore-scripts: no dependency's install script runs on the server (the
+# build needs none: esbuild and rollup ship their binaries as packages).
+as_talon npm ci --ignore-scripts --no-audit --no-fund
 as_talon npm run build
 /usr/local/bin/talon-configure
 systemctl restart talon-backend
@@ -174,12 +259,24 @@ WorkingDirectory=/opt/talon/backend
 EnvironmentFile=/etc/talon/talon.env
 EnvironmentFile=/etc/talon/secrets.env
 ExecStartPre=+/usr/local/bin/talon-load-secrets
-ExecStart=/usr/bin/node src/server.js
+ExecStart=/usr/local/bin/node src/server.js
 Restart=always
 RestartSec=5
+# Sandbox. The service reads /opt/talon and /etc/talon and writes only to:
+# /tmp (private: clones of students' repositories, job snapshots),
+# /var/lib/talon (HOME) and /opt/talon/backend/data (the local job runner's
+# run folders; refused in production, and the "-" makes a missing folder
+# harmless). Its log file is opened by systemd (configure.sh's logging.conf),
+# outside this sandbox.
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=full
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/talon -/opt/talon/backend/data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+RestrictSUIDSGID=true
+LockPersonality=true
 
 [Install]
 WantedBy=multi-user.target
@@ -196,7 +293,7 @@ systemctl enable nginx
 # from the operator's machine). On a brand-new database the app answers
 # only after db-bootstrap.sh and deploy.sh have run.
 # talon-configure runs either way (nginx site, logging, CloudWatch agent).
-if ! /usr/local/bin/talon-deploy "${git_ref}"; then
+if ! /usr/local/bin/talon-deploy; then
   echo "talon bootstrap: first deploy did not finish (see the log above)"
   # talon-deploy stops before talon-configure; apply the config anyway if
   # the code was checked out, so logging and proxy headers do not wait.

@@ -49,6 +49,8 @@ resource "aws_launch_template" "web" {
     region         = var.aws_region
     secrets_prefix = local.secrets_prefix
 
+    deployed_commit_param = aws_ssm_parameter.deployed_commit.name
+
     database_url         = format(local.db_url_base, local.db_app_user)
     db_master_secret_arn = aws_db_instance.main.master_user_secret[0].secret_arn
     cw_agent_param       = aws_ssm_parameter.cw_agent_config.name

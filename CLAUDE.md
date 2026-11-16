@@ -55,8 +55,10 @@ found in a breach" dialog; it blocks clicks until dismissed.
   no force pushes. Flow: push the branch, `gh pr create`, wait for
   `gh pr checks <n> --watch`, then `gh pr merge <n> --merge` when asked.
 - End commit messages with the Co-Authored-By line the harness specifies.
-- Deploy a branch: `infra/scripts/deploy.sh <branch>`. It builds,
-  migrates and restarts each server in turn; it never touches the data.
+- Deploy a branch: `infra/scripts/deploy.sh <branch>`. It resolves the
+  branch to a commit SHA once, migrates from your laptop, then builds and
+  restarts each server in turn at that SHA (recorded in SSM so a replacement
+  server deploys it too); it never touches the data.
   **Talon is live (go-live 2026-11): the data in RDS is real.** Migrations
   must keep it (no wipes, no reseeds); the demo seed refuses in production
   and a production server disables any demo account at startup. Changing
