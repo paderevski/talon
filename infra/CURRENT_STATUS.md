@@ -310,6 +310,15 @@ to the browser), so one `requestId` finds both sides of a request.
   service is blocked for the student user and no secrets are on the box.
   GuardDuty is not enabled (checked 2026-11-04: no detector; Terraform has it
   behind `enable_guardduty`).
+- Fetching a job's code onto the web server is metered: a Drive download
+  (single file or folder) is cut off at `TALON_MAX_INPUT_UNPACKED_BYTES`
+  (1 GB) counted as bytes arrive, a single file is refused up front from
+  its reported size, and a `git clone` is killed when its folder passes
+  `TALON_MAX_CLONE_BYTES` (2 GiB; checked every `TALON_CLONE_SIZE_POLL_MS`,
+  1 s). A student with `EC2_MAX_FETCH_FAILURES` (5) launches that failed
+  while fetching within `EC2_FETCH_FAILURE_WINDOW_MINUTES` (15) gets a 429
+  until the window passes (admins exempt). That count is in memory per web
+  server: a restart clears it and the two servers count separately.
 - Database backups are RDS's (automated, 7 days, point-in-time restore).
   A restore drill into a new RDS instance has not been done yet. Deletion
   protection and a final snapshot are on since go-live (`rds.tf`).

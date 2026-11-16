@@ -87,7 +87,10 @@ export async function prepareCodeSnapshot(spec, limits = snapshotLimits()) {
     const codeDir = path.join(workDir, "repo");
     const onProgress = typeof spec.onProgress === "function" ? spec.onProgress : () => {};
     onProgress(`Fetching ${spec.source.label || source.label}`);
-    const fetched = await source.fetchInto(spec.source.ref, codeDir, spec.credential ?? null, { onProgress, signal: spec.signal });
+    // A failed fetch is marked, so the launch can count it against the user.
+    const fetched = await source.fetchInto(spec.source.ref, codeDir, spec.credential ?? null, { onProgress, signal: spec.signal }).catch((error) => {
+      throw Object.assign(error, { fetchFailure: !spec.signal?.aborted && error?.status !== 499 });
+    });
     if (spec.signal?.aborted) {
       throw Object.assign(new Error("Cancelled"), { status: 499 });
     }
