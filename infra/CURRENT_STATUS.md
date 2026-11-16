@@ -763,12 +763,10 @@ Verify CloudFront VPC origin support for EC2 before choosing it.
   re-applied each deploy): `nosniff`, `Referrer-Policy: same-origin`,
   `X-Frame-Options: DENY`, HSTS (30 days, no `includeSubDomains`, sent only
   when the ALB's `X-Forwarded-Proto` is https, so never on the internal ALB
-  or the tunnel) and a Content-Security-Policy. **The CSP is report-only**
-  (`CSP_HEADER` in `configure.sh`) because the Google Drive Picker's
-  requirements are from Google's docs, not tested; check the browser console
-  while picking Drive files, then switch the value to
-  `Content-Security-Policy` and deploy. `frame-ancestors` is ignored in
-  report-only; `X-Frame-Options` covers framing meanwhile.
+  or the tunnel) and a Content-Security-Policy, **enforced since
+  2026-11-16** after picking Drive files showed no report-only violations
+  (`CSP_HEADER` in `configure.sh`; set it back to report-only to test a new
+  third-party script or frame).
 - ~~Per-account login throttling~~ (done, item 2).
 - **No demo users on a reachable server** (branch `go-live-no-demo`).
   Their passwords are public in this repo. `TALON_ALLOW_DEMO_SEED` is gone:
