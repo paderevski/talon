@@ -33,7 +33,16 @@ const bindHost = String(process.env.TALON_BIND_HOST || "127.0.0.1").trim();
 // address in X-Forwarded-For that is not one of these; req.secure follows
 // the X-Forwarded-Proto nginx passes on.
 app.set("trust proxy", trustedProxies());
+app.disable("x-powered-by");
 app.use(requestLogger());
+// API responses carry one-time passwords, tokens and student data: never
+// cached by the browser or a proxy. nosniff so a download or error body is
+// never treated as HTML. (Static files and the other headers: nginx, see
+// infra/server/configure.sh.)
+app.use("/api", (_req, res, next) => {
+  res.set({ "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
+  next();
+});
 // No CORS: the frontend is same-origin (Vite proxy in dev, nginx in prod).
 app.use(express.json({ limit: "512kb" })); // roster imports are the large bodies
 

@@ -136,6 +136,15 @@ map "$talon_from_vpc:$http_x_forwarded_proto" $talon_forwarded_proto {
     default $scheme;
     "~^1:(?<talon_proto>https?)$" $talon_proto;
 }
+
+# HSTS only when the request reached the load balancer over HTTPS (nginx
+# itself only ever sees HTTP). An empty value makes add_header send nothing:
+# plain-HTTP paths (internal ALB, SSM tunnel) get none. No includeSubDomains:
+# the parent domain is not ours.
+map $talon_forwarded_proto $talon_hsts {
+    default "";
+    https "max-age=2592000";
+}
 EOF2
 then
   changed_nginx=true
@@ -145,13 +154,29 @@ fi
 # forwarded protocol, enabled in place of nginx's default site.
 SITE=/etc/nginx/sites-available/talon
 cp -p "$SITE" "$SITE.bak" 2>/dev/null || true
-if install_file "$SITE" 644 <<'EOF'
+# The Content Security Policy is sent report-only until the Google Drive
+# Picker has been confirmed to work under it (browser console: no
+# "Content-Security-Policy-Report-Only" violations while picking). To enforce
+# it, change this one value to Content-Security-Policy and deploy.
+CSP_HEADER="Content-Security-Policy-Report-Only"
+if sed "s/@CSP_HEADER@/$CSP_HEADER/" <<'EOF' | install_file "$SITE" 644
 # From infra/server/configure.sh.
 server {
     listen 80 default_server;
     server_name _;
 
     access_log /var/log/nginx/access.log talon_json;
+
+    # Security headers. Set here only: add_header in a location block would
+    # replace all of these. "always" so error responses carry them too.
+    # CSP sources: the app loads its own script, CSS and logo; Google Fonts
+    # (index.html); the Google Drive Picker (apis.google.com script, Google
+    # frames and images). Inline styles: React style attributes.
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "same-origin" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Strict-Transport-Security $talon_hsts always;
+    add_header @CSP_HEADER@ "default-src 'self'; script-src 'self' https://apis.google.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https://*.googleusercontent.com https://*.gstatic.com https://*.google.com; connect-src 'self' https://*.googleapis.com https://apis.google.com; frame-src https://docs.google.com https://drive.google.com https://accounts.google.com https://content.googleapis.com; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'" always;
 
     root /opt/talon/frontend/dist;
     index index.html;
@@ -168,6 +193,8 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $talon_forwarded_proto;
         proxy_set_header X-Request-Id $request_id;
+        # The backend sets this too; send it once.
+        proxy_hide_header X-Content-Type-Options;
         # Match the load balancer's idle timeout (alb_idle_timeout_seconds in
         # infra/ec2/alb.tf, 180 s). nginx's 60 s default would cut off a slow
         # job submit (clone, upload, launch) or roster import first.
