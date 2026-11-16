@@ -691,6 +691,11 @@ Verify CloudFront VPC origin support for EC2 before choosing it.
 2. **Exposure for the demo.** Open internet, or allow-list LCPS / known IP
    ranges at the ALB security group or a WAF IP set ("limited exposure").
    Allow-listing is the strongest single control while auth is new.
+   **Decided and applied:** allow-list at the ALB security group
+   (`public_alb_ingress_cidrs`, set in the gitignored `terraform.tfvars`;
+   two entries as of 2026-11-16). Attempts from outside it are dropped by
+   the security group and not logged (no VPC flow logs or ALB access or
+   connection logs yet; WAF logs only what reaches the ALB).
 3. **Instance subnet.** (a) Keep it in a public subnet with **no inbound
    except port 80 from the ALB security group** - no NAT needed; or
    (b) private subnet per the architecture doc - requires a NAT gateway
@@ -732,8 +737,9 @@ Verify CloudFront VPC origin support for EC2 before choosing it.
   imports exceed 8 KB), login rate limit per IP (`waf_login_rate_limit`,
   300 per 5 min, loose because schools share addresses; no general per-IP
   limit for the same reason). Logs in `aws-waf-logs-talon-public` (30 days,
-  cookie and authorization headers and the query string redacted). Branch
-  `waf-and-alarms` adds, in COUNT mode until `waf_new_rules_block = true`:
+  cookie and authorization headers and the query string redacted). Since
+  2026-11-16 (branch `waf-and-alarms`), in COUNT mode until
+  `waf_new_rules_block = true`:
   `AWSManagedRulesSQLiRuleSet`, a per-IP rate rule on `POST /api/jobs`
   (`waf_job_submit_rate_limit`, 300 per 5 min) and one on writes
   (POST/PUT/PATCH/DELETE under `/api/`, `waf_write_rate_limit`, 1500 per 5
