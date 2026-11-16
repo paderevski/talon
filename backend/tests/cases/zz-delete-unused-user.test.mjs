@@ -1,7 +1,7 @@
 import { transfer } from "../../src/budget/ledger.js";
 import { assert, createCookieJar, insertTestJob, login, withTestDb } from "../lib/harness.mjs";
 
-export const name = "admin delete user: only never-used accounts, allocations undone, ledger stays consistent";
+export const name = "admin delete user: only never-used accounts (a starting grant at most), ledger stays consistent";
 
 const json = { "Content-Type": "application/json" };
 
@@ -54,7 +54,14 @@ export async function run({ baseUrl }) {
   assert((await del(plain)).status === 200, "plain delete");
   assert(!(await exists(plain)), "plain user gone");
 
-  // ---- Unused account with a grant and a teacher allocation
+  // ---- Unused account with only a starting grant: deleted, ledger stays consistent
+  const granted = await make("del_granted", ["student"]);
+  assert((await send(admin, baseUrl, "POST", "/api/admin/budget/adjustments", { userId: granted.id, target: "personal", direction: "increase", amount: 10 })).status === 201, "grant only");
+  assert((await del(granted)).status === 200, "granted delete");
+  assert(!(await exists(granted)), "granted user gone");
+  assert(await withTestDb(ledgerIsConsistent), "balances must equal the ledger after deleting a granted user");
+
+  // ---- A teacher's allocation is never rewritten: refused
   const teacher = await make("del_teacher_pool", ["teacher"]);
   const funded = await make("del_funded", ["student"]);
   const adjust = (user, target, amount) =>
@@ -82,10 +89,9 @@ export async function run({ baseUrl }) {
     }
   });
   assert((await poolCents(teacher)) === 3500, "pool after allocation");
-  assert((await del(funded)).status === 200, "funded delete");
-  assert(!(await exists(funded)), "funded user gone");
-  assert((await poolCents(teacher)) === 5000, "the allocation must return to the pool");
-  assert(await withTestDb(ledgerIsConsistent), "balances must equal the ledger after deleting a funded user");
+  assert((await del(funded)).status === 409, "an account with a teacher's allocation is refused");
+  assert(await exists(funded), "funded user kept");
+  assert((await poolCents(teacher)) === 3500, "the teacher's pool is untouched");
 
   // ---- Refusals
   const withJob = await make("del_job", ["student"]);

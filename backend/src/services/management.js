@@ -283,12 +283,11 @@ export async function updateUser(userId, input, actor) {
 // Permanently deletes an account that was never used (created by mistake).
 // Anything that would lose history or leave something behind refuses with a
 // 409 pointing at "disable" instead. Money the account only received is
-// handled so every balance still equals its ledger:
-//  - a grant (roster import, admin grant) vanishes with the account's ledger
-//    rows (the money was created for this account);
-//  - a transfer in (teacher allocation) is undone: both legs of the pair are
-//    removed and the source account's balance goes back up, as if it never
-//    happened (so "transfers net to zero" still holds).
+// handled so every balance still equals its ledger: a grant (roster import,
+// admin grant) vanishes with the account's ledger rows, since the money was
+// created for this account. Anything else, a teacher's transfer included, means
+// the account cannot be deleted: other accounts' ledger history is never
+// rewritten.
 // Locking order: active admins, then the user row, then budget accounts by id.
 export async function deleteUnusedUser(userId, actor) {
   const hint = "Disable the account instead.";
@@ -330,8 +329,8 @@ export async function deleteUnusedUser(userId, actor) {
        FROM budget_ledger WHERE account_id = ANY($1::bigint[]) ORDER BY id`,
       [accountIds],
     );
-    const usedMessage = `${username} has budget activity beyond money given to them (charges, refunds, adjustments, money taken back or sent on). ${hint}`;
-    if (entries.rows.some((e) => e.job_id !== null || Number(e.amount_cents) <= 0 || !["grant", "transfer"].includes(e.kind))) {
+    const usedMessage = `${username} has budget activity other than a starting grant (a teacher's allocation, charges, refunds or adjustments). ${hint}`;
+    if (entries.rows.some((e) => e.job_id !== null || Number(e.amount_cents) <= 0 || e.kind !== "grant")) {
       throw new ManagementError(usedMessage, 409);
     }
     const madeEntries = await client.query(
@@ -340,38 +339,6 @@ export async function deleteUnusedUser(userId, actor) {
     );
     if (madeEntries.rows.length > 0) {
       throw new ManagementError(`${username} has made budget changes for other accounts, which would lose their record. ${hint}`, 409);
-    }
-
-    // Undo incoming transfers. Each must have exactly one matching source leg.
-    const transfers = entries.rows.filter((e) => e.kind === "transfer");
-    const legs = new Map(); // transfer id -> { id, accountId, cents } of the source leg
-    if (transfers.length > 0) {
-      const sources = await client.query(
-        `SELECT id, account_id, amount_cents, transfer_id FROM budget_ledger
-         WHERE transfer_id = ANY($1::uuid[]) AND NOT (account_id = ANY($2::bigint[]))`,
-        [transfers.map((e) => e.transfer_id), accountIds],
-      );
-      for (const row of sources.rows) {
-        if (legs.has(row.transfer_id)) {
-          throw new ManagementError(usedMessage, 409);
-        }
-        legs.set(row.transfer_id, { id: row.id, accountId: Number(row.account_id), cents: Number(row.amount_cents) });
-      }
-      for (const e of transfers) {
-        const leg = legs.get(e.transfer_id);
-        if (!leg || leg.cents !== -Number(e.amount_cents)) {
-          throw new ManagementError(usedMessage, 409);
-        }
-      }
-      const sourceIds = [...new Set([...legs.values()].map((leg) => leg.accountId))].sort((a, b) => a - b);
-      await client.query("SELECT id FROM budget_accounts WHERE id = ANY($1::bigint[]) ORDER BY id FOR UPDATE", [sourceIds]);
-      for (const leg of legs.values()) {
-        await client.query("DELETE FROM budget_ledger WHERE id = $1", [leg.id]);
-        await client.query("UPDATE budget_accounts SET balance_cents = balance_cents - $2 WHERE id = $1", [
-          leg.accountId,
-          leg.cents,
-        ]);
-      }
     }
 
     await revokeSessions(client, userId);
