@@ -130,3 +130,56 @@ resource "aws_lb_listener_rule" "public_http_from_nat" {
     }
   }
 }
+
+# ---------------------------------------------------------------- alarms
+# Same pattern as the internal ALB's (alb.tf), on the public ALB and its target
+# group. The public ALB is not conditional, so neither are these.
+
+resource "aws_cloudwatch_metric_alarm" "public_unhealthy_hosts" {
+  alarm_name          = "${var.public_alb_name}-unhealthy-hosts"
+  alarm_description   = "A Talon web server has been unhealthy in the public ALB's target group for 10 minutes (longer than a replacement's first boot). Check the target group's health and the Auto Scaling group's activity."
+  namespace           = "AWS/ApplicationELB"
+  metric_name         = "UnHealthyHostCount"
+  dimensions          = { LoadBalancer = aws_lb.public.arn_suffix, TargetGroup = aws_lb_target_group.public.arn_suffix }
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = 10
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+  ok_actions          = [aws_sns_topic.alerts.arn]
+}
+
+# 5xx the public ALB itself returns (no healthy server, a server dropped the
+# connection, or the idle timeout).
+resource "aws_cloudwatch_metric_alarm" "public_alb_5xx" {
+  alarm_name          = "${var.public_alb_name}-alb-5xx"
+  alarm_description   = "5 or more 5xx responses from the Talon public ALB itself in 5 minutes (no healthy server, dropped connection, or idle timeout)."
+  namespace           = "AWS/ApplicationELB"
+  metric_name         = "HTTPCode_ELB_5XX_Count"
+  dimensions          = { LoadBalancer = aws_lb.public.arn_suffix }
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 5
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+}
+
+# 5xx the web servers return through the public ALB (the app's own errors).
+resource "aws_cloudwatch_metric_alarm" "public_target_5xx" {
+  alarm_name          = "${var.public_alb_name}-target-5xx"
+  alarm_description   = "10 or more 5xx responses from Talon web servers through the public ALB in 5 minutes. Check the backend logs for errors."
+  namespace           = "AWS/ApplicationELB"
+  metric_name         = "HTTPCode_Target_5XX_Count"
+  dimensions          = { LoadBalancer = aws_lb.public.arn_suffix }
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 10
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+}
