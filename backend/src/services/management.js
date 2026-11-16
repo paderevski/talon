@@ -180,9 +180,31 @@ export async function createUser(input, actorId) {
   }
 }
 
+// Refuses a change that would leave no active admin. Locks every active admin
+// row (in id order, before the target row) so two concurrent demotions cannot
+// each see the other admin still in place.
+async function assertAnotherActiveAdmin(client, userId) {
+  const admins = await client.query(
+    `SELECT u.id FROM users u
+     WHERE u.status = 'active'
+       AND EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id = u.id AND r.role::text = 'admin')
+     ORDER BY u.id FOR UPDATE OF u`,
+  );
+  const ids = admins.rows.map((row) => String(row.id));
+  if (ids.includes(String(userId)) && ids.length === 1) {
+    throw new ManagementError("There must be at least one active admin", 409);
+  }
+}
+
 export async function updateUser(userId, input, actor) {
   try {
     return await withTransaction(async (client) => {
+      const losesAdmin =
+        input.status === "disabled" ||
+        (input.roles !== undefined && !cleanRoles(input.roles).includes("admin"));
+      if (losesAdmin) {
+        await assertAnotherActiveAdmin(client, userId);
+      }
       const found = await client.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [userId]);
       if (found.rows.length === 0) {
         throw new ManagementError("User not found", 404);
@@ -439,6 +461,9 @@ export async function updateClass(classId, input) {
       await client.query("UPDATE classes SET teacher_id = $2 WHERE id = $1", [classId, input.teacherId || null]);
     }
     if (input.archived !== undefined) {
+      if (typeof input.archived !== "boolean") {
+        throw new ManagementError("Archived must be true or false");
+      }
       await client.query(
         `UPDATE classes SET archived_at = ${input.archived ? "COALESCE(archived_at, now())" : "NULL"}
          WHERE id = $1`,

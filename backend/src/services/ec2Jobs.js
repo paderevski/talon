@@ -230,6 +230,7 @@ export async function runEc2Launch({ jobsRepository, adapter, job, spec, credent
       jobId: job.id,
       status,
       ...(status >= 500 ? { err: error } : { error: error?.message }),
+      ...(error?.detail ? { detail: error.detail } : {}),
     });
     return jobsRepository.finalize(job.id, {
       syncKey: "launch-failed",
