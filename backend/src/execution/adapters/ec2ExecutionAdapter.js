@@ -262,7 +262,7 @@ export default function createEc2ExecutionAdapter({
       const out = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key, Range: `bytes=${start}-${end}` }));
       const bytes = await out.Body.transformToByteArray();
       const total = Number(/\/(\d+)$/.exec(out.ContentRange ?? "")?.[1]);
-      return { bytes, total: Number.isFinite(total) ? total : start + bytes.length };
+      return { bytes, total: Number.isFinite(total) ? total : start + bytes.length, modifiedAt: out.LastModified ?? null };
     } catch (error) {
       const status = error?.$metadata?.httpStatusCode;
       if (error?.name === "NoSuchKey" || error?.name === "InvalidRange" || status === 404 || status === 416) {
@@ -279,20 +279,32 @@ export default function createEc2ExecutionAdapter({
     if (part === null || part.bytes.length > CONTROL_FILE_MAX_BYTES) {
       return null;
     }
-    return utf8.decode(part.bytes);
+    return { text: utf8.decode(part.bytes), modifiedAt: part.modifiedAt };
   }
 
+  // The parsed file plus when S3 stored it (LastModified: set by S3, the
+  // writer cannot choose it), or null.
   async function readJson(bucket, key) {
-    const text = await readText(bucket, key);
-    if (text === null) {
+    const file = await readText(bucket, key);
+    if (file === null) {
       return null;
     }
     try {
-      return JSON.parse(text);
+      const value = JSON.parse(file.text);
+      return value === null || typeof value !== "object" ? null : { value, modifiedAt: file.modifiedAt };
     } catch {
       return null;
     }
   }
+
+  // When the web server saw a control file land: the time S3 stored it, never
+  // later than now. The job's own clock (status.updated_at, cancelled.at) is
+  // for display only: the job instance can write those files, so billing
+  // must not depend on what they claim. With no usable S3 time, now.
+  const observedAt = (modifiedAt) => {
+    const stored = modifiedAt ? new Date(modifiedAt).getTime() : NaN;
+    return Number.isFinite(stored) ? Math.min(stored, now()) : now();
+  };
 
   // The last logChunkBytes() of the log, from the start of a line: the line
   // cut by the window's edge is dropped (one byte is read before the window to
@@ -460,25 +472,42 @@ export default function createEc2ExecutionAdapter({
 
     async getStatus(ref) {
       const cfg = await getConfig();
-      const [status, cancelled, instance] = await Promise.all([
+      const [statusFile, cancelledFile, instance] = await Promise.all([
         readJson(cfg.bucket, `${prefix(ref)}/status.json`),
         readJson(cfg.bucket, `${prefix(ref)}/control/cancelled`),
         describeInstance(ref.instanceId),
       ]);
 
+      const status = statusFile?.value ?? null;
+      const cancelled = cancelledFile?.value ?? null;
+
+      // Billing starts at EC2's launch time for the instance (RunInstances
+      // answer, saved in the ref), which is also when AWS starts charging.
       const startedAt = ref.launchedAt || instance?.launchTime || null;
       const base = { submittedAt: ref.submittedAt || null, startedAt, endedAt: null, exitCode: null };
       const deadlineMs = startedAt
         ? new Date(startedAt).getTime() + (Number(ref.maxRuntimeSeconds) + overrunGraceSeconds) * 1000
         : null;
 
+      // The end of a job that reported (or was cancelled) is when S3 stored
+      // that file, not what is written in it. Never before the start.
+      const observedEnd = (modifiedAt) => {
+        const ended = observedAt(modifiedAt);
+        return new Date(startedAt ? Math.max(ended, new Date(startedAt).getTime()) : ended).toISOString();
+      };
+
       if (status && ["succeeded", "failed", "timeout"].includes(status.state)) {
+        const endedAt = observedEnd(statusFile.modifiedAt);
         return {
           ...base,
           state: status.state === "succeeded" ? "completed" : "failed",
-          endedAt: status.updated_at || null,
+          endedAt,
+          // What the job says, for display only.
+          reportedAt: status.updated_at || null,
           exitCode: Number.isFinite(status.exit_code) ? status.exit_code : null,
-          syncKey: `status:${status.updated_at || status.state}`,
+          // From the observed time, so both web servers agree on the key and
+          // the job cannot make a new one by rewriting its own updated_at.
+          syncKey: `status:${statusFile.modifiedAt ? endedAt : status.state}`,
           // The job's own result (status.json), as opposed to an inference.
           reported: true,
           message: status.message || (status.state === "timeout" ? "Time limit reached" : undefined),
@@ -486,7 +515,7 @@ export default function createEc2ExecutionAdapter({
       }
 
       if (cancelled) {
-        return { ...base, state: "cancelled", endedAt: cancelled.at || null, syncKey: "cancelled" };
+        return { ...base, state: "cancelled", endedAt: observedEnd(cancelledFile.modifiedAt), syncKey: "cancelled" };
       }
 
       if (deadlineMs !== null && now() > deadlineMs) {

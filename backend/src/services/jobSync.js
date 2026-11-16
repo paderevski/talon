@@ -26,6 +26,24 @@ function normalizeResultFiles(items) {
   }));
 }
 
+// The seconds a finished job is billed. The times come from the web server's
+// side (EC2's launch time, when S3 stored the result, when the instance was
+// seen gone; see the EC2 adapter), never from what the job wrote about itself.
+// A missing or backwards end is billed up to now (the moment of this look),
+// not as zero, and the total never exceeds the time limit plus the boot
+// allowance, which is all that was reserved.
+export function billedDurationSeconds(job, execution, nowMs = Date.now()) {
+  const startedMs = Date.parse(execution.startedAt || "");
+  let seconds = durationSecondsBetween(execution.startedAt, execution.endedAt);
+  if (seconds === null && Number.isFinite(startedMs)) {
+    seconds = Math.max(1, Math.round((nowMs - startedMs) / 1000));
+  }
+  if (seconds !== null && job.maxRuntimeSeconds) {
+    seconds = Math.min(seconds, job.maxRuntimeSeconds + bootAllowanceSeconds(job.executionRef?.instanceType));
+  }
+  return seconds;
+}
+
 export function createJobSync({ jobsRepository, getExecutionStatus, getExecutionOutputFiles, now = () => Date.now() }) {
   async function markJobAsExecutionLost(job) {
     // Already finalized once (result stored): just make sure it shows as failed.
@@ -72,14 +90,17 @@ export function createJobSync({ jobsRepository, getExecutionStatus, getExecution
 
     const execution = await getExecutionStatus(job.executionRef);
     const mappedStatus = mapExecutionStateToJobStatus(execution.state);
-    const durationSeconds = durationSecondsBetween(execution.startedAt, execution.endedAt);
+    const terminal = isTerminalExecutionState(execution.state);
+    const durationSeconds = terminal ? billedDurationSeconds(job, execution, now()) : durationSecondsBetween(execution.startedAt, execution.endedAt);
 
-    if (isTerminalExecutionState(execution.state)) {
+    if (terminal) {
       const syncKey = execution.syncKey || execution.endedAt || execution.state;
       // Stored once. Only the job's own reported result may replace what was
       // stored (e.g. an "instance gone" guess); a later guess such as the
       // time limit passing must not relabel a finished job.
-      if (job.resultSyncKey === syncKey || (job.resultSyncKey && !execution.reported)) {
+      // A result the job reported is final too: rewriting status.json later
+      // must not change the stored end.
+      if (job.resultSyncKey === syncKey || (job.resultSyncKey && !execution.reported) || job.resultSyncKey?.startsWith("status:")) {
         return { job, execution };
       }
 
