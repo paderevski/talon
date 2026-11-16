@@ -40,6 +40,17 @@ variable "cpu_job_image" {
   }
 }
 
+variable "job_egress_quota_mb" {
+  description = "Outbound data one job's code may send to the internet, in MB (the student user's traffic on the instance, loopback excluded; downloads barely count). Past it the traffic is rejected and the job is stopped with a message in the log. 0 turns the limit off. Written to the talon-egress-mb tag of both job launch templates."
+  type        = number
+  default     = 5120
+
+  validation {
+    condition     = var.job_egress_quota_mb >= 0 && floor(var.job_egress_quota_mb) == var.job_egress_quota_mb
+    error_message = "job_egress_quota_mb must be a whole number of MB, 0 or more."
+  }
+}
+
 variable "job_instance_type" {
   description = "Default instance type in the job launch template (Graviton, matching the AMI; non-burstable, since t4g bills surplus CPU credits the job rate does not cover)."
   type        = string
@@ -236,11 +247,10 @@ resource "aws_iam_role" "job" {
   assume_role_policy = data.aws_iam_policy_document.ec2_assume.json
 }
 
-# Admin shell on a job instance for debugging (aws ssm start-session).
-resource "aws_iam_role_policy_attachment" "job_ssm_core" {
-  role       = aws_iam_role.job.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
+# No Systems Manager policy: the instance never accepts a connection, and the
+# managed policy would let the role read plain SSM parameters. For a debugging
+# shell on a job instance, attach AmazonSSMManagedInstanceCore by hand for the
+# duration (nothing in the backend or the scripts uses SSM on job instances).
 
 # The role is shared by all jobs, so it cannot be limited to one job id: a job
 # that escapes its sandbox could read another job's input or overwrite its
@@ -405,6 +415,7 @@ resource "aws_launch_template" "job" {
       talon-bucket    = aws_s3_bucket.jobs.id
       talon-image     = "cpu"
       talon-log-group = aws_cloudwatch_log_group.jobs.name
+      talon-egress-mb = tostring(var.job_egress_quota_mb)
     }
   }
 
@@ -488,6 +499,7 @@ resource "aws_launch_template" "job_gpu" {
       talon-bucket    = aws_s3_bucket.jobs.id
       talon-image     = "gpu"
       talon-log-group = aws_cloudwatch_log_group.jobs.name
+      talon-egress-mb = tostring(var.job_egress_quota_mb)
     }
   }
 

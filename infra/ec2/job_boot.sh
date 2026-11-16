@@ -10,6 +10,8 @@
 #   talon-image        cpu or gpu (PyTorch DLAMI); set by the launch template
 #   talon-log-group    CloudWatch log group for this boot log; set by the
 #                      launch template (empty: S3 only)
+#   talon-egress-mb    outbound data limit for the user's code, in MB (set by
+#                      the launch template; default 5120, 0 = no limit)
 # Input (<folder>/input/ in the bucket) is run.sh and, for real jobs,
 # repo.tgz (the cloned repository, unpacked to /work/repo).
 #
@@ -107,6 +109,145 @@ if batch and not put(batch):
 open(offset_file, "w").write(str(offset + end + 1))
 PY
 
+# Uploads the files of one output tree. Usage: talon-upload DIR DEST MODE
+# STATE_DIR MAX_FILES MAX_FILE_BYTES MAX_TOTAL_BYTES UID NEWER_FILE
+# (MODE output: every file; changed: files newer than NEWER_FILE, no hidden
+# paths, caches or virtual environments).
+# DIR is the student's, so nothing in it is trusted: it is walked with file
+# descriptors and every file is opened with O_NOFOLLOW (a symlink, whether
+# swapped in after the walk or part of the path, is never followed), must be a
+# regular file owned by the job user, and is copied into a root-only folder
+# before upload (what is counted is what is sent, even if the student keeps
+# writing). Accounting is one small record per file in STATE_DIR/up, named by
+# a hash of the S3 key, so no file name is ever parsed: the totals and the
+# caps hold across passes and for any name. A re-uploaded file counts once,
+# at its latest size (it replaces the object).
+
+cat > /usr/local/sbin/talon-upload <<'PY'
+import fcntl, hashlib, mimetypes, os, stat, subprocess, sys
+
+root, dest, mode, state, max_files, max_file, max_total, uid, newer = sys.argv[1:10]
+max_files, max_file, max_total, uid = int(max_files), int(max_file), int(max_total), int(uid)
+SPOOL = "/var/lib/talon-upload"  # created by job_boot.sh before the job user runs
+for d in (SPOOL, state):
+    st = os.lstat(d)
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != 0:
+        sys.exit("talon-upload: " + d + " is not a root-owned folder")
+for sub in ("up", "skip"):
+    os.makedirs(state + "/" + sub, mode=0o700, exist_ok=True)
+lock = open(state + "/lock", "w")
+fcntl.flock(lock, fcntl.LOCK_EX)  # one pass at a time (the loop's and the last one)
+
+def load(sub):
+    out = {}
+    for name in os.listdir(state + "/" + sub):
+        try:
+            out[name] = tuple(int(x) for x in open(state + "/" + sub + "/" + name).read().split())
+        except (OSError, ValueError):
+            pass
+    return out
+
+def record(sub, key, values):
+    tmp = state + "/tmp"
+    with open(tmp, "w") as f:
+        f.write(" ".join(str(v) for v in values))
+    os.replace(tmp, state + "/" + sub + "/" + key)
+
+def forget(sub, key):
+    try:
+        os.unlink(state + "/" + sub + "/" + key)
+    except OSError:
+        pass
+
+up = load("up")      # key -> (bytes counted, size, mtime_ns when uploaded)
+skip = load("skip")  # key -> (size, mtime_ns) of files over a limit
+total = sum(v[0] for v in up.values())
+newer_ns = os.stat(newer).st_mtime_ns if mode == "changed" else 0
+logged = 0
+
+try:
+    top = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+except OSError:
+    sys.exit(0)  # no such folder (or a symlink in its place): nothing to upload
+
+def candidates():
+    for dirpath, dirnames, filenames, dirfd in os.fwalk(".", dir_fd=top):
+        if mode == "changed":
+            dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in ("__pycache__", "node_modules", "venv")]
+            filenames = [f for f in filenames if not f.startswith(".") and not f.endswith(".pyc")]
+        for name in filenames:
+            yield os.path.normpath(os.path.join(dirpath, name)), name, dirfd
+
+def spool(fd, path, limit):  # at most limit bytes of fd into path
+    n = 0
+    out = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    try:
+        while n < limit:
+            chunk = os.read(fd, min(1 << 20, limit - n))
+            if not chunk:
+                break
+            view = memoryview(chunk)
+            while view:
+                view = view[os.write(out, view):]
+            n += len(chunk)
+    finally:
+        os.close(out)
+    return n
+
+for rel, name, dirfd in candidates():
+    key_path = dest + "/" + rel
+    key = hashlib.sha256(os.fsencode(key_path)).hexdigest()
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dirfd)
+    except OSError:
+        continue  # symlink, vanished, unreadable
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != uid or (mode == "changed" and st.st_mtime_ns <= newer_ns):
+            continue
+        sig = (st.st_size, st.st_mtime_ns)
+        if up.get(key, (0, None, None))[1:] == sig or skip.get(key) == sig:
+            continue
+        mine = up.get(key, (0,))[0]
+        why = None
+        if st.st_size > max_file:
+            why = "over the per-file limit"
+        elif len(up) - (key in up) >= max_files:
+            why = "over the file count limit"
+        elif total - mine + st.st_size > max_total:
+            why = "over the total size limit"
+        tmp = SPOOL + "/part"
+        if why is None:
+            try:
+                n = spool(fd, tmp, max_file + 1)
+                if n > max_file or total - mine + n > max_total:
+                    why = "over a size limit"
+                else:
+                    cmd = ["aws", "s3", "cp", tmp, key_path, "--only-show-errors"]
+                    ctype = mimetypes.guess_type(name)[0]
+                    if ctype:
+                        cmd += ["--content-type", ctype]
+                    if subprocess.run(cmd, stdin=subprocess.DEVNULL).returncode != 0:
+                        continue  # not recorded: the next pass tries again
+                    up[key] = (n, st.st_size, st.st_mtime_ns)
+                    total += n - mine
+                    record("up", key, up[key])
+                    forget("skip", key); skip.pop(key, None)
+            finally:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+        if why is not None:
+            skip[key] = sig
+            record("skip", key, sig)
+            if logged < 50:
+                logged += 1
+                print("talon-upload: not saved (" + why + "): " + repr(rel), file=sys.stderr)
+    finally:
+        os.close(fd)
+PY
+
 IMDS=http://169.254.169.254/latest
 TOKEN=$(curl -fsS -X PUT "$IMDS/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 900")
 imds() { curl -fsS -H "X-aws-ec2-metadata-token: $TOKEN" "$IMDS/$1"; }
@@ -119,6 +260,8 @@ BUCKET=$(tag talon-bucket)
 MAX=$(tag talon-max-seconds); MAX=${MAX:-1800}
 IMAGE=$(tag talon-image); IMAGE=${IMAGE:-cpu}
 LOG_GROUP=$(tag talon-log-group)
+EGRESS_MB=$(tag talon-egress-mb)
+case $EGRESS_MB in ''|*[!0-9]*) EGRESS_MB=5120 ;; esac
 INSTANCE_TYPE=$(imds meta-data/instance-type)
 S3P=$(tag talon-s3-prefix)
 [ -z "$S3P" ] && [[ "$JOB" == manual-* ]] && S3P="jobs/$JOB"
@@ -233,6 +376,27 @@ if ! iptables -I OUTPUT -d 169.254.169.254 -m owner --uid-owner student -j REJEC
   exit 1
 fi
 ip6tables -I OUTPUT -d fd00:ec2::254 -m owner --uid-owner student -j REJECT 2>/dev/null || true
+STUDENT_UID=$(id -u student)
+
+# Outbound data limit for the student's code only (root's own traffic, such as
+# the upload to S3, is not matched; neither is loopback). The quota rule lets
+# packets through until EGRESS_MB is used up, then the next rule rejects them
+# and its counter tells egress_watch to end the job. Downloads barely count:
+# only the acknowledgements go out. The instance has no IPv6 route. If the
+# rules cannot be set the job still runs (a cost limit, not a security one:
+# the budget alerts are the backstop) and the boot log says so.
+if [ "$EGRESS_MB" -gt 0 ]; then
+  if iptables -N TALON_EGRESS &&
+    iptables -A TALON_EGRESS -o lo -j RETURN &&
+    iptables -A TALON_EGRESS -m quota --quota $((EGRESS_MB * 1024 * 1024)) -j RETURN &&
+    iptables -A TALON_EGRESS -m comment --comment talon-egress-over -j REJECT &&
+    iptables -A OUTPUT -m owner --uid-owner student -j TALON_EGRESS; then
+    echo "outbound data limit for the job user: $EGRESS_MB MB"
+  else
+    EGRESS_MB=0
+    echo "WARNING: could not set the outbound data limit; the job runs without it"
+  fi
+fi
 
 mkdir -p /work/output
 step "downloading job input"
@@ -304,46 +468,75 @@ touch /work/.talon-start # files newer than this were created or changed by the 
 MAX_FILES=500
 MAX_FILE_BYTES=$((200 * 1024 * 1024))
 MAX_TOTAL_BYTES=$((500 * 1024 * 1024))
-STATE=/tmp/uploaded.state; : > "$STATE"
+# Upload state (root only; talon-upload above keeps it, so the limits hold
+# across the loop's passes and the last one) and the folder it copies files into.
+UPSTATE=/run/talon-upload
+install -d -m 700 "$UPSTATE" /var/lib/talon-upload
 
-# upload_tree DIR DEST [find tests...]: upload regular files (never symlinks)
-# not already uploaded in their current size and mtime.
+# upload_tree DIR DEST MODE: regular files of the job user, never through a
+# symlink, not already uploaded in their current size and mtime.
 upload_tree() {
-  local dir=$1 dest=$2 f size mtime rel key n total
-  shift 2
-  n=$(wc -l < "$STATE"); total=$(awk -F'|' '{s += $2} END {print s + 0}' "$STATE")
-  while IFS= read -r -d '' f; do
-    size=$(stat -c %s "$f" 2>/dev/null) || continue
-    mtime=$(stat -c %Y "$f" 2>/dev/null) || continue
-    rel=${f#"$dir"/}; key="$dest/$rel|$size|$mtime"
-    grep -qxF -- "$key" "$STATE" && continue
-    if [ "$size" -gt "$MAX_FILE_BYTES" ] || [ "$n" -ge "$MAX_FILES" ] || [ $((total + size)) -gt "$MAX_TOTAL_BYTES" ]; then
-      SKIPPED=$((SKIPPED + 1)); continue
-    fi
-    if aws s3 cp "$f" "$dest/$rel" --only-show-errors; then
-      echo "$key" >> "$STATE"; n=$((n + 1)); total=$((total + size))
-    fi
-  done < <(find "$dir" -type f "$@" -print0 2>/dev/null)
+  python3 /usr/local/sbin/talon-upload "$1" "$2" "$3" "$UPSTATE" \
+    "$MAX_FILES" "$MAX_FILE_BYTES" "$MAX_TOTAL_BYTES" "$STUDENT_UID" /work/.talon-start || true
 }
 
 sync_all() { # output files only; the log loop ships the logs
-  upload_tree /work/output "$PREFIX/output"
+  upload_tree /work/output "$PREFIX/output" output
   # Nothing hidden (any path part starting with "."): .git, .venv, .cache
   # (model and dataset caches), .ipynb_checkpoints, dotfiles.
-  upload_tree /work/repo "$PREFIX/changed" -newer /work/.talon-start \
-    ! -path '*/.*' ! -path '*/__pycache__/*' ! -name '*.pyc' ! -path '*/node_modules/*' \
-    ! -path '*/venv/*'
+  upload_tree /work/repo "$PREFIX/changed" changed
+}
+
+# Ends the job when the student's outbound quota is used up (the rule that
+# rejects the traffic has seen a packet).
+egress_watch() {
+  local over
+  while sleep 5; do
+    over=$(iptables -nvxL TALON_EGRESS 2>/dev/null | awk '/talon-egress-over/ {print $1}')
+    [ "${over:-0}" -gt 0 ] || continue
+    : > /run/talon-egress-over
+    step "outbound data limit reached ($EGRESS_MB MB sent); stopping the job"
+    systemctl kill --signal=SIGTERM talon-student-job.service
+    sleep 20
+    systemctl kill --signal=SIGKILL talon-student-job.service
+    return
+  done
 }
 
 status running
 ( while sleep 30; do sync_all; done ) &
 LOOP=$!
+WATCH=""
+if [ "$EGRESS_MB" -gt 0 ]; then egress_watch & WATCH=$!; fi
 T_RUN=$(date +%s)
 step "setup took $((T_RUN - T0))s; running the job (limit ${MAX}s)"
-runuser -u student -- bash -c 'cd /work && exec timeout --kill-after=30 "$0" bash run.sh' "$MAX" >> /tmp/job.log 2>&1
+# The student's code runs in its own transient unit (own cgroup, in its own
+# slice), not in this script's: it cannot starve or signal the supervisor and
+# the upload loop, its leftover processes die with the unit, and memory and
+# process counts are capped (MemoryMax leaves the rest of the RAM to this
+# script and the system; TasksMax stops a fork bomb). Output is appended to the
+# job log by systemd itself. RuntimeMaxSec is the time limit the student cannot
+# kill (`timeout` inside gives the usual exit code 124). The marker, touched
+# with full privileges before the command starts, tells "the job failed" from
+# "the unit did not start". Exit code of systemd-run --wait = the job's.
+rm -f /run/talon-job-started /run/talon-egress-over
+systemd-run --wait --collect --unit=talon-student-job --slice=talon-student.slice \
+  --uid=student --gid=student --setenv=PATH \
+  -p WorkingDirectory=/work \
+  -p StandardOutput=append:/tmp/job.log -p StandardError=append:/tmp/job.log \
+  -p MemoryMax=90% -p TasksMax=16384 -p NoNewPrivileges=yes \
+  -p RuntimeMaxSec=$((MAX + 60)) -p TimeoutStopSec=30 \
+  -p "ExecStartPre=+/usr/bin/touch /run/talon-job-started" \
+  /usr/bin/timeout --kill-after=30 "$MAX" bash run.sh
 CODE=$?
 T_DONE=$(date +%s)
-kill "$LOOP" 2>/dev/null; wait "$LOOP" 2>/dev/null
+kill "$LOOP" $WATCH 2>/dev/null; wait "$LOOP" 2>/dev/null
+JOB_MESSAGE=""
+if [ ! -e /run/talon-job-started ]; then
+  CODE=126; JOB_MESSAGE="could not start the job"
+elif [ -e /run/talon-egress-over ]; then
+  JOB_MESSAGE="outbound data limit reached ($EGRESS_MB MB)"
+fi
 step "job ended after $((T_DONE - T_RUN))s with exit code $CODE; saving output"
 
 case $CODE in
@@ -351,11 +544,13 @@ case $CODE in
   124) STATE_NAME=timeout ;;
   *)   STATE_NAME=failed ;;
 esac
+[ -n "$JOB_MESSAGE" ] && STATE_NAME=failed
 sync_all
+SKIPPED=$(find "$UPSTATE/skip" -type f 2>/dev/null | wc -l)
 [ "$SKIPPED" -gt 0 ] && step "$SKIPPED file(s) were not saved (limits: $MAX_FILES files, 200 MB per file, 500 MB total)."
 step "done ($STATE_NAME); shutting down"
 RESULT=$STATE_NAME; EXIT_CODE=$CODE
 emit_summary
 sleep 1 # let the timestamping pipe write the summary
 stop_log_loop; ship_logs # complete logs before the final status
-status "$STATE_NAME" "$CODE"
+status "$STATE_NAME" "$CODE" "$JOB_MESSAGE"

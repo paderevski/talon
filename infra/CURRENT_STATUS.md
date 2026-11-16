@@ -524,13 +524,21 @@ security review (2026-11-07), listed roughly in the order it suggested.
   rewriting `status.json` later changes nothing. Remaining: a job can still
   write a terminal status early to stop its own bill (its instance is then
   terminated by the reconciler, so it does not keep computing for free).
-- **Outbound data quota per job** (review #2, cost). The budget covers
-  instance time, not data sent to the internet (about $0.09/GB); a job
-  uploading for 24 h on a large machine could cost thousands of dollars.
-  iptables quota for the `student` user (`-m owner --uid-owner student -m
-  quota --quota 20G`, then reject); downloads barely count (only ACKs go
-  out). Or the reconciler checks each instance's `NetworkOut` and ends jobs
-  over a limit.
+- **Outbound data quota per job** (done in branch `job-box-hardening`,
+  needs a Terraform apply; no new image). The budget covers instance time,
+  not data sent to the internet (about $0.09/GB). `job_boot.sh` now adds an
+  iptables chain `TALON_EGRESS` for the `student` user only (loopback
+  exempt, root's S3 upload not matched): `-m quota` lets packets through
+  until `job_egress_quota_mb` (variable, default 5120 MB, 0 = off; passed
+  as the `talon-egress-mb` instance tag on both launch templates) is used
+  up, then a REJECT rule with comment `talon-egress-over`. A watcher
+  (`egress_watch`) sees that rule's counter, writes a line to the job log
+  and kills the student unit; the job ends `failed` with the message
+  "outbound data limit reached". Downloads barely count (only ACKs go
+  out); DNS counts a little. If the rules cannot be set the job runs
+  without the limit and the boot log says so. IPv6 is not covered (the
+  instances have no IPv6 route). Traffic to S3 through the gateway
+  endpoint counts like any other.
 - **Attribution and network audit** (review, auditing). AWS abuse reports
   give an IP and a time, and job public IPs change per launch: record each
   instance's public IPv4 in the boot summary and `executionRef`. Add VPC
@@ -539,14 +547,15 @@ security review (2026-11-07), listed roughly in the order it suggested.
   the account has an organization CloudTrail (not in our Terraform).
   Decide who may read these logs and for how long (students are minors),
   and say in the acceptable-use terms that jobs are monitored.
-- **Narrow the job role** (review #4). `AmazonSSMManagedInstanceCore`
-  grants `ssm:GetParameter(s)` on `*` (any parameter in the shared
-  account; Talon's secrets are safe on the customer KMS key, but any plain
-  or default-key parameter added later is readable from a job with root).
-  Replace it with Session Manager's minimum (`ssmmessages:*`,
-  `ec2messages:*`, `ssm:UpdateInstanceInformation`) or drop it, and deny
-  use of the role's credentials outside the VPC (`aws:EC2InstanceSourceVPC`;
-  check the key name). Superseded for S3 by presigned URLs (below).
+- **Narrow the job role** (review #4). `AmazonSSMManagedInstanceCore` is
+  dropped from the job role (branch `job-box-hardening`, needs a Terraform
+  apply): it granted `ssm:GetParameter(s)` on `*`, and nothing uses SSM on
+  job instances (the backend and `infra/scripts` only talk SSM to web
+  servers; a job instance never accepts a connection). Consequence: the
+  "admin shell on a job instance" idea (`aws ssm start-session`) needs the
+  policy attached by hand first. Still to do: deny use of the role's
+  credentials outside the VPC (`aws:EC2InstanceSourceVPC`; check the key
+  name). Superseded for S3 by presigned URLs (below).
 - **Keep job AMIs patched** (review #4). The Ubuntu AMI moves only on
   `terraform apply`, so the kernel goes stale and local root exploits
   matter more over time: refresh monthly, or bake an AMI with unattended
@@ -558,11 +567,25 @@ security review (2026-11-07), listed roughly in the order it suggested.
   keep DNS working and force lookups through the resolver, where Route 53
   Resolver DNS Firewall (AWS managed threat lists, tunnel and mining
   domains) and query logging apply.
-- **Kill student processes before the final upload** (review, low). A
-  `setsid` daemon outlives `timeout` and keeps running through the final
-  uploads, where it could swap a file for a symlink between `find` and the
-  upload (root then uploads a root-readable file). `pkill -KILL -u student`
-  before the last `sync_all`.
+- **Kill student processes before the final upload** (done in branch
+  `job-box-hardening`). The student's code now runs in its own transient
+  unit `talon-student-job` (slice `talon-student.slice`, started with
+  `systemd-run --wait` from `job_boot.sh`: MemoryMax=90%, TasksMax=16384,
+  NoNewPrivileges, RuntimeMaxSec=limit+60 as a limit the student cannot
+  kill; `timeout` inside still gives exit code 124), so a `setsid` daemon
+  dies with the unit when the job ends and cannot share the supervisor's
+  cgroup. The upload no longer trusts the tree at all: `talon-upload` (a
+  Python helper written by `job_boot.sh`, run by the 30 s loop and the last
+  pass) walks with file descriptors, opens every file with `O_NOFOLLOW`
+  (symlinks swapped in at any level are never followed), takes only regular
+  files owned by the job user, and copies each into a root-only folder
+  before `aws s3 cp` (what is counted is what is sent). Its accounting is
+  one record per file under `/run/talon-upload`, named by a hash of the S3
+  key, so a file name with `|` or a newline cannot confuse it and the
+  500 file / 200 MB / 500 MB caps hold across passes (a file uploaded
+  again counts once, at its latest size). The skipped-file count in the log
+  now includes files skipped in the loop's passes too. Works on both AMIs
+  (needs only python3, iptables and systemd 240 or later, already there).
 - **Egress proxy with an allow list** (follow-up to the review). Jobs in
   private subnets, no public IPs; the job security group reaches only a
   Squid proxy (CONNECT allow list: PyPI, PyTorch, Hugging Face, Kaggle,
@@ -1317,7 +1340,7 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   user, instance metadata blocked for it, no secrets on the box, HTTPS/DNS
   only outbound, local runner refused in production, admins too). Still
   open: per-job scoped credentials (the job role is shared across jobs),
-  optional hardening (`timeout` run as root, cgroup memory/task limits), a
+  optional hardening (cgroup limits and a unit of its own: done in `job-box-hardening`), a
   dedicated VPC with private subnets, and GuardDuty.
 
 ### 3. Security and privacy before real students
