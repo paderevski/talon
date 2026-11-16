@@ -170,7 +170,7 @@ export async function createUser(input, actorId) {
       await client.query(
         `INSERT INTO user_identities (user_id, provider, subject, password_hash)
          VALUES ($1, 'local', lower($2), $3)`,
-        [userId, username, createPasswordHash(password)],
+        [userId, username, await createPasswordHash(password)],
       );
       return userId;
     });
@@ -272,7 +272,7 @@ export async function resetPassword(userId, keepSid = "") {
       `INSERT INTO user_identities (user_id, provider, subject, password_hash)
        VALUES ($1, 'local', lower($2), $3)
        ON CONFLICT (provider, subject) DO UPDATE SET password_hash = EXCLUDED.password_hash`,
-      [userId, name, createPasswordHash(password)],
+      [userId, name, await createPasswordHash(password)],
     );
     await revokeSessions(client, userId, keepSid);
     return name;
@@ -304,12 +304,12 @@ export async function changeOwnPassword(userId, currentPassword, newPassword, ke
       "SELECT password_hash FROM user_identities WHERE user_id = $1 AND provider = 'local' FOR UPDATE",
       [userId],
     );
-    if (identity.rows.length === 0 || !verifyPassword(currentPassword, identity.rows[0].password_hash)) {
+    if (identity.rows.length === 0 || !(await verifyPassword(currentPassword, identity.rows[0].password_hash))) {
       throw new ManagementError("Current password is incorrect", 403);
     }
     await client.query(
       "UPDATE user_identities SET password_hash = $2 WHERE user_id = $1 AND provider = 'local'",
-      [userId, createPasswordHash(newPassword)],
+      [userId, await createPasswordHash(newPassword)],
     );
     await client.query("DELETE FROM sessions WHERE sess->>'userId' = $1 AND sid <> $2", [
       userId,

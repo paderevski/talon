@@ -482,7 +482,7 @@ const tests = [
     assert(
       await rejects(
         "INSERT INTO user_identities (user_id, provider, subject, password_hash) VALUES ($1, 'entra', 'oid-1', $2)",
-        [userId, createPasswordHash("x")],
+        [userId, await createPasswordHash("x")],
       ),
       "entra with hash accepted",
     );

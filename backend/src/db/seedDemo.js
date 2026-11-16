@@ -52,7 +52,7 @@ async function insertUser(client, { username, fullName, password, roles }) {
       INSERT INTO user_identities (user_id, provider, subject, password_hash)
       VALUES ($1, 'local', $2, $3)
     `,
-    [userId, username.toLowerCase(), createPasswordHash(password)],
+    [userId, username.toLowerCase(), await createPasswordHash(password)],
   );
 
   return userId;

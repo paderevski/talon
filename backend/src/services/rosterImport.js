@@ -327,7 +327,7 @@ export async function importRoster({ csv, defaultRole = "student", dryRun = true
         await client.query(
           `INSERT INTO user_identities (user_id, provider, subject, password_hash)
            VALUES ($1, 'local', lower($2), $3)`,
-          [userId, row.username, createPasswordHash(password)],
+          [userId, row.username, await createPasswordHash(password)],
         );
         credentials.push({ username: row.username, fullName: row.fullName, password });
 

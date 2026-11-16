@@ -16,7 +16,7 @@ async function fail(baseUrl, username, times) {
 }
 
 const row = (username) =>
-  withTestDb(async (pool) => (await pool.query("SELECT failures, locked_until FROM login_attempts WHERE username_key = $1", [username])).rows[0]);
+  withTestDb(async (pool) => (await pool.query("SELECT attempts FROM login_throttle WHERE scope = 'login_ip' AND username_key = $1", [username])).rows[0]);
 
 export async function run({ baseUrl }) {
   const admin = createCookieJar();
@@ -44,10 +44,10 @@ export async function run({ baseUrl }) {
 
     // Failures older than the window start the count again.
     await fail(baseUrl, "throttle_user", 4);
-    await withTestDb((pool) => pool.query("UPDATE login_attempts SET last_failure_at = now() - interval '20 minutes' WHERE username_key = 'throttle_user'"));
+    await withTestDb((pool) => pool.query("UPDATE login_throttle SET window_started_at = now() - interval '20 minutes' WHERE username_key = 'throttle_user'"));
     await fail(baseUrl, "throttle_user", 1);
     const restarted = await row("throttle_user");
-    assert(restarted.failures === 1 && restarted.locked_until === null, `count after the window: ${JSON.stringify(restarted)}`);
+    assert(restarted.attempts === 1, `count after the window: ${JSON.stringify(restarted)}`);
 
     // A success clears the count: 4 + success + 4 failures is not a lock.
     await fail(baseUrl, "throttle_user", 3);
@@ -56,6 +56,6 @@ export async function run({ baseUrl }) {
     await fail(baseUrl, "throttle_user", 4);
     assert((await attempt(baseUrl, "throttle_user", password)).ok, "still signs in after 4 new failures");
   } finally {
-    await withTestDb((pool) => pool.query("DELETE FROM login_attempts WHERE username_key = 'throttle_user'"));
+    await withTestDb((pool) => pool.query("DELETE FROM login_throttle WHERE username_key = 'throttle_user'"));
   }
 }

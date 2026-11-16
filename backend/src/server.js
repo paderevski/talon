@@ -20,6 +20,7 @@ import { checkDatabase } from "./db/health.js";
 import { lockIds, withTryAdvisoryLock } from "./db/advisoryLock.js";
 import { trustedProxies } from "./utils/trustedProxies.js";
 import { requestLogger } from "./utils/requestLog.js";
+import { requireSameOrigin } from "./auth/sameOrigin.js";
 
 const app = express();
 const port = Number(process.env.PORT || 5174);
@@ -43,6 +44,8 @@ app.use("/api", (_req, res, next) => {
   res.set({ "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
   next();
 });
+// Before any body is read: browsers' cross-site forged requests stop here.
+app.use("/api", requireSameOrigin());
 // No CORS: the frontend is same-origin (Vite proxy in dev, nginx in prod).
 app.use(express.json({ limit: "512kb" })); // roster imports are the large bodies
 
