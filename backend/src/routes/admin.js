@@ -4,6 +4,7 @@ import {
   addClassMember,
   createClass,
   createUser,
+  deleteUnusedUser,
   adjustBudget,
   listClasses,
   listUsers,
@@ -68,6 +69,12 @@ router.post("/users", handle(async (req, res) => {
 
 router.patch("/users/:userId", handle(async (req, res) => {
   await updateUser(req.params.userId, req.body ?? {}, req.user);
+  return res.json({ ok: true });
+}));
+
+// Permanent; only for accounts that were never used (see deleteUnusedUser).
+router.delete("/users/:userId", handle(async (req, res) => {
+  await deleteUnusedUser(req.params.userId, req.user);
   return res.json({ ok: true });
 }));
 
