@@ -11,6 +11,7 @@ import {
 } from "../budget/ledger.js";
 import { createPasswordHash, verifyPassword } from "../utils/passwords.js";
 import { clearFailures } from "../auth/loginThrottle.js";
+import { log } from "../utils/log.js";
 
 // Admin and teacher operations: users, classes, class membership, budgets.
 // Everything that changes more than one row runs in one transaction.
@@ -277,6 +278,114 @@ export async function updateUser(userId, input, actor) {
   } catch (error) {
     return uniqueViolation(error, "That email is already in use");
   }
+}
+
+// Permanently deletes an account that was never used (created by mistake).
+// Anything that would lose history or leave something behind refuses with a
+// 409 pointing at "disable" instead. Money the account only received is
+// handled so every balance still equals its ledger:
+//  - a grant (roster import, admin grant) vanishes with the account's ledger
+//    rows (the money was created for this account);
+//  - a transfer in (teacher allocation) is undone: both legs of the pair are
+//    removed and the source account's balance goes back up, as if it never
+//    happened (so "transfers net to zero" still holds).
+// Locking order: active admins, then the user row, then budget accounts by id.
+export async function deleteUnusedUser(userId, actor) {
+  const hint = "Disable the account instead.";
+  const deleted = await withTransaction(async (client) => {
+    if (userId === actor.id) {
+      throw new ManagementError("You cannot delete your own account", 400);
+    }
+    await assertAnotherActiveAdmin(client, userId);
+    const found = await client.query("SELECT id, username FROM users WHERE id = $1 FOR UPDATE", [userId]);
+    if (found.rows.length === 0) {
+      throw new ManagementError("User not found", 404);
+    }
+    const { username } = found.rows[0];
+
+    const exists = async (sql) => (await client.query(sql, [userId])).rows.length > 0;
+    if (await exists("SELECT 1 FROM jobs WHERE owner_user_id = $1 LIMIT 1")) {
+      throw new ManagementError(`${username} has submitted jobs (hidden ones count), so the account cannot be deleted. ${hint}`, 409);
+    }
+    if (await exists("SELECT 1 FROM classes WHERE teacher_id = $1 LIMIT 1")) {
+      throw new ManagementError(`${username} teaches a class. Reassign the class first, or ${hint.toLowerCase()}`, 409);
+    }
+    // GitHub and Google Drive links both live in `connections` (the older
+    // github_accounts / github_credentials tables no longer exist).
+    if (await exists("SELECT 1 FROM connections WHERE user_id = $1 LIMIT 1")) {
+      throw new ManagementError(
+        `${username} has a GitHub or Google Drive account connected. Disconnect it first (Unlink GitHub, or the connection's Disconnect) so the stored token is revoked, then delete.`,
+        409,
+      );
+    }
+
+    // Budget: lock this user's accounts, then look at every entry.
+    const accounts = await client.query(
+      "SELECT id FROM budget_accounts WHERE owner_user_id = $1 ORDER BY id FOR UPDATE",
+      [userId],
+    );
+    const accountIds = accounts.rows.map((row) => Number(row.id));
+    const entries = await client.query(
+      `SELECT id, account_id, amount_cents, kind, transfer_id, job_id
+       FROM budget_ledger WHERE account_id = ANY($1::bigint[]) ORDER BY id`,
+      [accountIds],
+    );
+    const usedMessage = `${username} has budget activity beyond money given to them (charges, refunds, adjustments, money taken back or sent on). ${hint}`;
+    if (entries.rows.some((e) => e.job_id !== null || Number(e.amount_cents) <= 0 || !["grant", "transfer"].includes(e.kind))) {
+      throw new ManagementError(usedMessage, 409);
+    }
+    const madeEntries = await client.query(
+      "SELECT 1 FROM budget_ledger WHERE created_by = $1 AND NOT (account_id = ANY($2::bigint[])) LIMIT 1",
+      [userId, accountIds],
+    );
+    if (madeEntries.rows.length > 0) {
+      throw new ManagementError(`${username} has made budget changes for other accounts, which would lose their record. ${hint}`, 409);
+    }
+
+    // Undo incoming transfers. Each must have exactly one matching source leg.
+    const transfers = entries.rows.filter((e) => e.kind === "transfer");
+    const legs = new Map(); // transfer id -> { id, accountId, cents } of the source leg
+    if (transfers.length > 0) {
+      const sources = await client.query(
+        `SELECT id, account_id, amount_cents, transfer_id FROM budget_ledger
+         WHERE transfer_id = ANY($1::uuid[]) AND NOT (account_id = ANY($2::bigint[]))`,
+        [transfers.map((e) => e.transfer_id), accountIds],
+      );
+      for (const row of sources.rows) {
+        if (legs.has(row.transfer_id)) {
+          throw new ManagementError(usedMessage, 409);
+        }
+        legs.set(row.transfer_id, { id: row.id, accountId: Number(row.account_id), cents: Number(row.amount_cents) });
+      }
+      for (const e of transfers) {
+        const leg = legs.get(e.transfer_id);
+        if (!leg || leg.cents !== -Number(e.amount_cents)) {
+          throw new ManagementError(usedMessage, 409);
+        }
+      }
+      const sourceIds = [...new Set([...legs.values()].map((leg) => leg.accountId))].sort((a, b) => a - b);
+      await client.query("SELECT id FROM budget_accounts WHERE id = ANY($1::bigint[]) ORDER BY id FOR UPDATE", [sourceIds]);
+      for (const leg of legs.values()) {
+        await client.query("DELETE FROM budget_ledger WHERE id = $1", [leg.id]);
+        await client.query("UPDATE budget_accounts SET balance_cents = balance_cents - $2 WHERE id = $1", [
+          leg.accountId,
+          leg.cents,
+        ]);
+      }
+    }
+
+    await revokeSessions(client, userId);
+    // Cascades: roles, sign-in identities, class membership, budget accounts
+    // and their ledger rows.
+    await client.query("DELETE FROM users WHERE id = $1", [userId]);
+    return { id: userId, username };
+  });
+  log.info(`admin ${actor.username} deleted unused user ${deleted.username}`, {
+    event: "admin.user_deleted",
+    userId: actor.id,
+    deletedUserId: deleted.id,
+    deletedUsername: deleted.username,
+  });
 }
 
 // New random password; signs the user out everywhere and clears any lockout.

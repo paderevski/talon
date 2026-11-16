@@ -1253,7 +1253,9 @@ Done, merged to `main` and deployed to the demo box (2026-10-25, a78f8ec):
 admin Students / Teachers / Admins lists (search, status and class filters,
 sort by name (last name), budget or last sign-in; add and edit users, roles,
 disable, reset password with a generated one-time password, clear login
-lockout; click any budget to add or remove money in place, with a
+lockout, delete an account that was never used (no jobs, charges, connections
+or classes; refused with a 409 otherwise, and received allocations are undone
+so balances still equal the ledger); click any budget to add or remove money in place, with a
 confirmation step; removal never goes below $0) and a Classes screen
 (create, rename, archive, add and remove teachers and students), a CSV
 roster import (paste or upload; columns username, name, email, role, class,

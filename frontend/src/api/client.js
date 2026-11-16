@@ -389,6 +389,9 @@ export const updateAdminUser = (id, changes) =>
   requestJson("PATCH", `/api/admin/users/${encodeURIComponent(id)}`, changes);
 export const resetAdminUserPassword = (id) =>
   requestJson("POST", `/api/admin/users/${encodeURIComponent(id)}/reset-password`);
+// Permanent; the server only allows it for accounts that were never used.
+export const deleteAdminUser = (id) =>
+  requestJson("DELETE", `/api/admin/users/${encodeURIComponent(id)}`);
 export const unlockAdminUser = (id) =>
   requestJson("POST", `/api/admin/users/${encodeURIComponent(id)}/unlock`);
 
