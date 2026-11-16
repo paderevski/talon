@@ -216,8 +216,8 @@ infra/scripts/secrets.sh set google-oauth-client-secret     # Google Drive conne
 ```
 
 `set` on an existing secret asks before replacing it; `rm` asks you to type
-the name. It refuses Terraform-managed parameters and the two the web
-servers generate (`session-secret`, `credentials-key`). The backend re-checks every minute while
+the name. It refuses Terraform-managed parameters and the two app secrets
+(`session-secret`, `credentials-key`), which only `secrets.sh init` creates, once. The backend re-checks every minute while
 anything is missing, so no restart is needed. Without the settings, GitHub
 sign-in is off and public repos still work.
 
@@ -234,7 +234,9 @@ and a new `TALON_CREDENTIALS_KEY_ID`, list the old one in
 `TALON_CREDENTIALS_OLD_KEYS="k1:old-secret"`, restart, run
 `npm run db:rotate-credentials-key --workspace backend`, then remove the old
 key. Changing the key without following these steps makes stored tokens
-unreadable, and those users must connect GitHub again.
+unreadable, and those users must connect GitHub again. On the AWS demo,
+`db:rotate-credentials-key` runs on a web server as the service (it needs the
+key), see `infra/README.md`, "Migrations and admin scripts".
 
 ## Tips for writing jobs
 
@@ -262,7 +264,9 @@ unreadable, and those users must connect GitHub again.
 The demo runs on two web servers behind an internal ALB, reachable only through an SSM tunnel. Creating
 it, deploying a branch, and the Terraform workflow are documented in
 [`infra/README.md`](infra/README.md) (for example
-`infra/scripts/deploy.sh <branch>` builds, migrates and restarts), and
+`infra/scripts/deploy.sh <branch>` migrates from your laptop, then builds and
+restarts each server; the servers themselves can only sign in to the database as
+the rows-only `talon_app`), and
 [`infra/CURRENT_STATUS.md`](infra/CURRENT_STATUS.md) lists what is blocked and
 what the gaps to production are (Entra ID sign-in, the ALB and WAF, student
 data compliance, and more).

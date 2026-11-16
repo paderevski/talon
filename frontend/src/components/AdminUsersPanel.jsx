@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   createAdminUser,
+  deleteAdminUser,
   resetAdminUserPassword,
   unlockAdminUser,
   unlinkAdminUserConnection,
@@ -28,6 +29,8 @@ export default function AdminUsersPanel({ users, classes, authUser, onChanged, t
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false); // the type-the-username step is showing
+  const [deleteName, setDeleteName] = useState("");
   const formRef = useRef(null);
 
   // The form opens above the lists; bring it into view from wherever the button was.
@@ -53,6 +56,8 @@ export default function AdminUsersPanel({ users, classes, authUser, onChanged, t
   }
 
   function openEdit(user) {
+    setIsDeleting(false);
+    setDeleteName("");
     setEditing(user);
     setForm({
       username: user.username,
@@ -67,6 +72,8 @@ export default function AdminUsersPanel({ users, classes, authUser, onChanged, t
   function closeForm() {
     setIsFormOpen(false);
     setEditing(null);
+    setIsDeleting(false);
+    setDeleteName("");
   }
 
   function toggleRole(role) {
@@ -235,6 +242,47 @@ export default function AdminUsersPanel({ users, classes, authUser, onChanged, t
               >
                 Unlink GitHub ({editing.githubLogin})
               </button>
+            ) : null}
+            {editing && !isDeleting ? (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                disabled={isBusy}
+                title="Only for accounts created by mistake and never used. Otherwise disable the account."
+                onClick={() => setIsDeleting(true)}
+              >
+                Delete user
+              </button>
+            ) : null}
+            {editing && isDeleting ? (
+              <>
+                <label className="form-hint" htmlFor="user-delete-confirm">
+                  Deleting is permanent and only works for accounts that were never used. Type {editing.username} to confirm:
+                </label>
+                <input
+                  id="user-delete-confirm"
+                  className="form-input"
+                  value={deleteName}
+                  autoComplete="off"
+                  onChange={(event) => setDeleteName(event.target.value)}
+                />
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  disabled={isBusy || deleteName !== editing.username}
+                  onClick={async () => {
+                    const done = await run(() => deleteAdminUser(editing.id), `Deleted ${editing.username}`);
+                    if (done) {
+                      closeForm();
+                    } else {
+                      setIsDeleting(false);
+                      setDeleteName("");
+                    }
+                  }}
+                >
+                  Delete permanently
+                </button>
+              </>
             ) : null}
             {editing ? null : (
               <span className="form-hint">A random password is generated and shown once.</span>

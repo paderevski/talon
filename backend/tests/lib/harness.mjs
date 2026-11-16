@@ -45,6 +45,12 @@ export async function withTestDb(fn) {
   }
 }
 
+// The submit response trims executionRef; the on-disk run folder is named by
+// the full reference's executionId, so read it back from the database.
+export async function executionIdOf(jobId) {
+  return withTestDb(async (pool) => (await pool.query("SELECT execution_ref->>'executionId' AS id FROM jobs WHERE id = $1", [jobId])).rows[0]?.id);
+}
+
 // Inserts a job owned by an existing user; returns its id.
 export async function insertTestJob(pool, { owner = "admin", name, status, executionId, durationSeconds = null }) {
   const result = await pool.query(

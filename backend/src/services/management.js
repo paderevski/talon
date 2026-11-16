@@ -11,6 +11,7 @@ import {
 } from "../budget/ledger.js";
 import { createPasswordHash, verifyPassword } from "../utils/passwords.js";
 import { clearFailures } from "../auth/loginThrottle.js";
+import { log } from "../utils/log.js";
 
 // Admin and teacher operations: users, classes, class membership, budgets.
 // Everything that changes more than one row runs in one transaction.
@@ -180,9 +181,31 @@ export async function createUser(input, actorId) {
   }
 }
 
+// Refuses a change that would leave no active admin. Locks every active admin
+// row (in id order, before the target row) so two concurrent demotions cannot
+// each see the other admin still in place.
+async function assertAnotherActiveAdmin(client, userId) {
+  const admins = await client.query(
+    `SELECT u.id FROM users u
+     WHERE u.status = 'active'
+       AND EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id = u.id AND r.role::text = 'admin')
+     ORDER BY u.id FOR UPDATE OF u`,
+  );
+  const ids = admins.rows.map((row) => String(row.id));
+  if (ids.includes(String(userId)) && ids.length === 1) {
+    throw new ManagementError("There must be at least one active admin", 409);
+  }
+}
+
 export async function updateUser(userId, input, actor) {
   try {
     return await withTransaction(async (client) => {
+      const losesAdmin =
+        input.status === "disabled" ||
+        (input.roles !== undefined && !cleanRoles(input.roles).includes("admin"));
+      if (losesAdmin) {
+        await assertAnotherActiveAdmin(client, userId);
+      }
       const found = await client.query("SELECT id FROM users WHERE id = $1 FOR UPDATE", [userId]);
       if (found.rows.length === 0) {
         throw new ManagementError("User not found", 404);
@@ -255,6 +278,81 @@ export async function updateUser(userId, input, actor) {
   } catch (error) {
     return uniqueViolation(error, "That email is already in use");
   }
+}
+
+// Permanently deletes an account that was never used (created by mistake).
+// Anything that would lose history or leave something behind refuses with a
+// 409 pointing at "disable" instead. Money the account only received is
+// handled so every balance still equals its ledger: a grant (roster import,
+// admin grant) vanishes with the account's ledger rows, since the money was
+// created for this account. Anything else, a teacher's transfer included, means
+// the account cannot be deleted: other accounts' ledger history is never
+// rewritten.
+// Locking order: active admins, then the user row, then budget accounts by id.
+export async function deleteUnusedUser(userId, actor) {
+  const hint = "Disable the account instead.";
+  const deleted = await withTransaction(async (client) => {
+    if (userId === actor.id) {
+      throw new ManagementError("You cannot delete your own account", 400);
+    }
+    await assertAnotherActiveAdmin(client, userId);
+    const found = await client.query("SELECT id, username FROM users WHERE id = $1 FOR UPDATE", [userId]);
+    if (found.rows.length === 0) {
+      throw new ManagementError("User not found", 404);
+    }
+    const { username } = found.rows[0];
+
+    const exists = async (sql) => (await client.query(sql, [userId])).rows.length > 0;
+    if (await exists("SELECT 1 FROM jobs WHERE owner_user_id = $1 LIMIT 1")) {
+      throw new ManagementError(`${username} has submitted jobs (hidden ones count), so the account cannot be deleted. ${hint}`, 409);
+    }
+    if (await exists("SELECT 1 FROM classes WHERE teacher_id = $1 LIMIT 1")) {
+      throw new ManagementError(`${username} teaches a class. Reassign the class first, or ${hint.toLowerCase()}`, 409);
+    }
+    // GitHub and Google Drive links both live in `connections` (the older
+    // github_accounts / github_credentials tables no longer exist).
+    if (await exists("SELECT 1 FROM connections WHERE user_id = $1 LIMIT 1")) {
+      throw new ManagementError(
+        `${username} has a GitHub or Google Drive account connected. Disconnect it first (Unlink GitHub, or the connection's Disconnect) so the stored token is revoked, then delete.`,
+        409,
+      );
+    }
+
+    // Budget: lock this user's accounts, then look at every entry.
+    const accounts = await client.query(
+      "SELECT id FROM budget_accounts WHERE owner_user_id = $1 ORDER BY id FOR UPDATE",
+      [userId],
+    );
+    const accountIds = accounts.rows.map((row) => Number(row.id));
+    const entries = await client.query(
+      `SELECT id, account_id, amount_cents, kind, transfer_id, job_id
+       FROM budget_ledger WHERE account_id = ANY($1::bigint[]) ORDER BY id`,
+      [accountIds],
+    );
+    const usedMessage = `${username} has budget activity other than a starting grant (a teacher's allocation, charges, refunds or adjustments). ${hint}`;
+    if (entries.rows.some((e) => e.job_id !== null || Number(e.amount_cents) <= 0 || e.kind !== "grant")) {
+      throw new ManagementError(usedMessage, 409);
+    }
+    const madeEntries = await client.query(
+      "SELECT 1 FROM budget_ledger WHERE created_by = $1 AND NOT (account_id = ANY($2::bigint[])) LIMIT 1",
+      [userId, accountIds],
+    );
+    if (madeEntries.rows.length > 0) {
+      throw new ManagementError(`${username} has made budget changes for other accounts, which would lose their record. ${hint}`, 409);
+    }
+
+    await revokeSessions(client, userId);
+    // Cascades: roles, sign-in identities, class membership, budget accounts
+    // and their ledger rows.
+    await client.query("DELETE FROM users WHERE id = $1", [userId]);
+    return { id: userId, username };
+  });
+  log.info(`admin ${actor.username} deleted unused user ${deleted.username}`, {
+    event: "admin.user_deleted",
+    userId: actor.id,
+    deletedUserId: deleted.id,
+    deletedUsername: deleted.username,
+  });
 }
 
 // New random password; signs the user out everywhere and clears any lockout.
@@ -439,6 +537,9 @@ export async function updateClass(classId, input) {
       await client.query("UPDATE classes SET teacher_id = $2 WHERE id = $1", [classId, input.teacherId || null]);
     }
     if (input.archived !== undefined) {
+      if (typeof input.archived !== "boolean") {
+        throw new ManagementError("Archived must be true or false");
+      }
       await client.query(
         `UPDATE classes SET archived_at = ${input.archived ? "COALESCE(archived_at, now())" : "NULL"}
          WHERE id = $1`,

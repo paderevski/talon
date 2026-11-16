@@ -1054,6 +1054,16 @@ const tests = [
     }
     assert(/verify-full/.test(refused), `IAM without TLS must be refused, got: ${refused}`);
 
+    const tunnelled = connectionConfig(
+      "postgres://talon_migrate@db.abc.us-east-1.rds.amazonaws.com:5432/talon?sslmode=verify-full",
+      { DATABASE_IAM_AUTH: "true", AWS_REGION: "us-east-1", DATABASE_CONNECT_HOST: "127.0.0.1", DATABASE_CONNECT_PORT: "15433" },
+      { createSigner },
+    );
+    assert(tunnelled.host === "127.0.0.1" && tunnelled.port === 15433, `tunnel address, got ${tunnelled.host}:${tunnelled.port}`);
+    assert(tunnelled.ssl.servername === "db.abc.us-east-1.rds.amazonaws.com" && tunnelled.ssl.rejectUnauthorized !== false, "certificate is still checked against the real name");
+    await tunnelled.password();
+    assert(signed.at(-1).hostname === "db.abc.us-east-1.rds.amazonaws.com" && signed.at(-1).port === 5432, "the token is signed for the real endpoint");
+
     const env = { DATABASE_URL: "postgres://talon_app@h/talon", DATABASE_MIGRATE_URL: "postgres://talon_migrate@h/talon" };
     useMigrationRole(env);
     assert(env.DATABASE_URL === "postgres://talon_migrate@h/talon", "migration role switches DATABASE_URL");
@@ -2043,8 +2053,10 @@ const tests = [
       config: { bucket: "b", launchTemplateId: "lt-1", subnetIds: ["subnet-denied", "subnet-a"] },
     });
     let message = "";
-    try { await strict.start(spec("r4")); } catch (e) { message = e.message; }
-    assert(/UnauthorizedOperation/.test(message), `a permission error must not try other subnets: ${message}`);
+    let detail = "";
+    try { await strict.start(spec("r4")); } catch (e) { message = e.message; detail = e.detail || ""; }
+    assert(/UnauthorizedOperation/.test(detail), `a permission error must not try other subnets: ${detail}`);
+    assert(!/UnauthorizedOperation|denied/.test(message), `AWS's text stays out of the reply: ${message}`);
 
     const full = createEc2ExecutionAdapter({
       ec2: aws.ec2, s3: aws.s3, prepareInput,

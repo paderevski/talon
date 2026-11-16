@@ -42,6 +42,28 @@ function readNumber(name, fallback) {
 const jobRateCentsPerHour = () => readNumber("JOB_RATE_CENTS_PER_HOUR", 0);
 const jobMaxRuntimeSeconds = () => readNumber("JOB_MAX_RUNTIME_SECONDS", 1800) || 1800;
 
+// Job JSON for clients: the execution reference is trimmed to what the UI
+// shows (machine type, instance ID, timestamps); the rest (S3 prefix, launch
+// IDs and the like) stays on the server.
+function publicJob(job) {
+  const ref = job?.executionRef;
+  if (!ref) {
+    return job;
+  }
+  const { provider, submittedAt, launchedAt, instanceType, instanceId } = ref;
+  return { ...job, executionRef: { provider, submittedAt, launchedAt, instanceType, instanceId } };
+}
+
+// Our own errors carry a status and a message meant for the user; anything
+// else (an AWS SDK error, say) is logged here and answered generically.
+function failWith(res, req, error, fallback, event) {
+  if (error?.status) {
+    return res.status(error.status).json({ message: error.message || fallback });
+  }
+  log.error(fallback, { event, requestId: req.id, jobId: req.params?.id, err: error });
+  return res.status(500).json({ message: fallback });
+}
+
 // Jobs the caller may not see are treated exactly like missing jobs, so
 // responses don't reveal that another user's job exists.
 async function findVisibleJob(req) {
@@ -148,16 +170,16 @@ router.get("/", async (req, res) => {
 
   if (status === "hidden") {
     return res.json({
-      items: itemsWithExecution.filter((job) => job.hidden),
+      items: itemsWithExecution.filter((job) => job.hidden).map(publicJob),
     });
   }
 
   if (!status || status === "all") {
-    return res.json({ items: visibleItems });
+    return res.json({ items: visibleItems.map(publicJob) });
   }
 
   return res.json({
-    items: visibleItems.filter((job) => job.status === status),
+    items: visibleItems.filter((job) => job.status === status).map(publicJob),
   });
 });
 
@@ -262,7 +284,7 @@ router.post("/", async (req, res) => {
           instanceId: ended.executionRef.instanceId,
         }))
         .catch((error) => log.error("background launch crashed", { event: "job.launch_crashed", jobId: job.id, err: error }));
-      return res.status(201).json({ message: "Job submitted; preparing to launch", job });
+      return res.status(201).json({ message: "Job submitted; preparing to launch", job: publicJob(job) });
     } catch (error) {
       const status = launchErrorStatus(error) || error?.status || 500;
       (status >= 500 ? log.error : log.info)("job not started", {
@@ -271,6 +293,7 @@ router.post("/", async (req, res) => {
         userId: req.user.id,
         status,
         ...(status >= 500 ? { err: error } : { error: error?.message }),
+        ...(error?.detail ? { detail: error.detail } : {}),
       });
       return res.status(status).json({
         message: status === 402 ? "Not enough budget left for this job." : error?.message || "Unable to start the job",
@@ -338,7 +361,7 @@ router.post("/", async (req, res) => {
 
   return res.status(201).json({
     message: "Job queued",
-    job: savedJob,
+    job: publicJob(savedJob),
   });
 });
 
@@ -354,7 +377,7 @@ router.get("/:id", async (req, res) => {
   }
 
   if (!job.executionRef) {
-    return res.json({ job, execution: null });
+    return res.json({ job: publicJob(job), execution: null });
   }
 
   try {
@@ -363,7 +386,7 @@ router.get("/:id", async (req, res) => {
       synchronized.execution || (await getExecutionStatus(job.executionRef));
 
     return res.json({
-      job: synchronized.job,
+      job: publicJob(synchronized.job),
       execution,
     });
   } catch (error) {
@@ -375,7 +398,7 @@ router.get("/:id", async (req, res) => {
       const lostJob = await markJobAsExecutionLost(job);
 
       return res.json({
-        job: lostJob,
+        job: publicJob(lostJob),
         execution: {
           state: "failed",
           submittedAt: job.executionRef.submittedAt || null,
@@ -388,16 +411,14 @@ router.get("/:id", async (req, res) => {
 
     if (error?.status === 404) {
       return res.json({
-        job,
+        job: publicJob(job),
         execution: null,
         noData: true,
         message: "Execution data is no longer available",
       });
     }
 
-    return res.status(error?.status || 500).json({
-      message: error?.message || "Unable to load job status",
-    });
+    return failWith(res, req, error, "Unable to load job status", "job.status_failed");
   }
 });
 
@@ -434,9 +455,7 @@ router.get("/:id/logs", async (req, res) => {
       });
     }
 
-    return res.status(error?.status || 500).json({
-      message: error?.message || "Unable to load job logs",
-    });
+    return failWith(res, req, error, "Unable to load job logs", "job.logs_failed");
   }
 });
 
@@ -466,9 +485,7 @@ router.get("/:id/files", async (req, res) => {
       });
     }
 
-    return res.status(error?.status || 500).json({
-      message: error?.message || "Unable to load output files",
-    });
+    return failWith(res, req, error, "Unable to load output files", "job.files_failed");
   }
 });
 
@@ -489,9 +506,20 @@ router.get("/:id/files/download", async (req, res) => {
       if (Number.isFinite(file.size)) {
         res.setHeader("Content-Length", file.size);
       }
+      // A failure after the headers are out can only end the response.
+      file.stream.on("error", (error) => {
+        log.error("download stream failed", { event: "job.download_failed", requestId: req.id, jobId: job.id, err: error });
+        if (res.headersSent) {
+          res.destroy(error);
+        } else {
+          res.removeHeader("Content-Disposition");
+          res.removeHeader("Content-Length");
+          res.status(500).json({ message: "Unable to download file" });
+        }
+      });
       return file.stream.pipe(res);
     } catch (error) {
-      return res.status(error?.status || 500).json({ message: error?.message || "Unable to download file" });
+      return failWith(res, req, error, "Unable to download file", "job.download_failed");
     }
   }
 
@@ -504,15 +532,10 @@ router.get("/:id/files/download", async (req, res) => {
 
     return res.download(resolved.absolutePath, resolved.downloadName);
   } catch (error) {
-    const message = error?.message || "Unable to download file";
-    const lowerMessage = message.toLowerCase();
-    const status =
-      error?.status ||
-      (lowerMessage.includes("enoent") || lowerMessage.includes("not found")
-        ? 404
-        : 500);
-
-    return res.status(status).json({ message });
+    if (!error?.status && error?.code === "ENOENT") {
+      return res.status(404).json({ message: "File not found" });
+    }
+    return failWith(res, req, error, "Unable to download file", "job.download_failed");
   }
 });
 
@@ -557,9 +580,7 @@ router.post("/:id/cancel", async (req, res) => {
     log.info("job cancel requested", { event: "job.cancel_requested", requestId: req.id, userId: req.user.id, jobId: job.id });
     return res.json({ ok: true, result });
   } catch (error) {
-    return res.status(error?.status || 500).json({
-      message: error?.message || "Unable to cancel job",
-    });
+    return failWith(res, req, error, "Unable to cancel job", "job.cancel_failed");
   }
 });
 
@@ -577,7 +598,7 @@ router.delete("/:id", async (req, res) => {
   if (currentJob.hidden) {
     return res.json({
       message: "Job already hidden",
-      job: currentJob,
+      job: publicJob(currentJob),
     });
   }
 
@@ -589,7 +610,7 @@ router.delete("/:id", async (req, res) => {
 
   return res.json({
     message: "Job hidden from default history",
-    job: hiddenJob,
+    job: publicJob(hiddenJob),
   });
 });
 
@@ -607,7 +628,7 @@ router.post("/:id/unhide", async (req, res) => {
   if (!currentJob.hidden) {
     return res.json({
       message: "Job already visible",
-      job: currentJob,
+      job: publicJob(currentJob),
     });
   }
 
@@ -615,7 +636,7 @@ router.post("/:id/unhide", async (req, res) => {
 
   return res.json({
     message: "Job restored to default history",
-    job: visibleJob,
+    job: publicJob(visibleJob),
   });
 });
 

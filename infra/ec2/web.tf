@@ -48,10 +48,10 @@ resource "aws_launch_template" "web" {
     git_ref        = var.git_ref
     region         = var.aws_region
     secrets_prefix = local.secrets_prefix
-    kms_alias      = aws_kms_alias.secrets.name
+
+    deployed_commit_param = aws_ssm_parameter.deployed_commit.name
 
     database_url         = format(local.db_url_base, local.db_app_user)
-    database_migrate_url = format(local.db_url_base, local.db_mig_user)
     db_master_secret_arn = aws_db_instance.main.master_user_secret[0].secret_arn
     cw_agent_param       = aws_ssm_parameter.cw_agent_config.name
 

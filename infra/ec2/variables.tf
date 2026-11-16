@@ -41,7 +41,7 @@ variable "repo_url" {
 }
 
 variable "git_ref" {
-  description = "Branch the instance builds on first boot."
+  description = "Branch a new server deploys until deploy.sh records a commit in SSM (deployed-commit); only the first value matters."
   type        = string
   default     = "main"
 }

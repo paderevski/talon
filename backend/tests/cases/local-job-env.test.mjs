@@ -1,7 +1,7 @@
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { assert, backendRoot, createCookieJar, login, startBackendForTests, waitFor } from "../lib/harness.mjs";
+import { assert, backendRoot, createCookieJar, executionIdOf, login, startBackendForTests, waitFor } from "../lib/harness.mjs";
 
 export const name = "local jobs do not see the server's secrets in their environment";
 
@@ -32,7 +32,7 @@ export async function run() {
       body: JSON.stringify({ name: "env-check", repo: "paderevski/minimal-rnn", branch: "main", entryScript: "script.py" }),
     });
     assert(submit.ok, `submit failed: ${submit.status}`);
-    const executionId = (await submit.json())?.job?.executionRef?.executionId;
+    const executionId = await executionIdOf((await submit.json())?.job?.id);
     assert(executionId, "missing execution id");
 
     const envFile = path.resolve(backendRoot, "data", "runs", executionId, "output", "env.txt");

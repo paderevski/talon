@@ -8,6 +8,54 @@ it differs from v7 and a short what-comes-next; v7 kept for history).
 
 ## Next up (as of 2026-11-07)
 
+-9. **Deploy hardening** (branch `deploy-hardening`, stacked on
+   `split-migrate-role`; not yet applied or deployed). `deploy.sh` resolves
+   the branch to a commit SHA once and every step uses it; the SHA is written
+   to SSM `/talon/demo/deployed-commit` (created in `deploy.tf` with the
+   value ignored by Terraform) after all servers have it, and a replacement
+   server deploys that commit, not the tip of `main`. Servers install with
+   `npm ci --ignore-scripts` (the frontend build and backend tests pass
+   without install scripts; only esbuild's check and macOS `fsevents` have
+   one). `talon-configure` and `db-bootstrap.sh` no longer take their script
+   from the `talon` user's checkout: root fetches into its own clone
+   (`/var/lib/talon-deploy/repo.git`) and runs the script from there at the
+   recorded commit (`talon-repo-script`). First-boot downloads: Node is a
+   pinned tarball with a SHA-256 check instead of the NodeSource `curl | bash`
+   (`/usr/local/bin/node`), the CloudWatch agent is a pinned version with a
+   SHA-256 check; the aws-cli snap is still installed from the store without a
+   pinned revision (snapd verifies it; `AWS_CLI_SNAP_CHANNEL` can hold a
+   channel). The RDS CA bundle is still fetched from AWS's trust store URL
+   unpinned (it is public and rotates). `talon-backend` is sandboxed
+   (`ProtectSystem=strict`, `ProtectHome`, kernel protections,
+   `RestrictSUIDSGID`, `LockPersonality`; writable: `/tmp`, `/var/lib/talon`,
+   `/opt/talon/backend/data`). All but the deploy.sh part reach servers
+   through the instance refresh that `terraform apply` starts (user data
+   changed). **Apply and let the refresh finish before the first
+   `deploy.sh`**: it refuses to run while a server still has the old tools.
+-8. **Servers can no longer change the schema or the secrets** (branch
+   `split-migrate-role`, not yet applied or deployed). The web role's
+   `rds-db:connect` is for `talon_app` only and `DATABASE_MIGRATE_URL` is gone
+   from `talon.env`, so code running as the service cannot run DDL. Migrations
+   run from the operator's laptop: `deploy.sh` opens an SSM port forward
+   through a web server to RDS (`infra/scripts/rds-tunnel.sh`), signs in as
+   `talon_migrate` with your own SSO credentials (IAM token, TLS
+   `verify-full`), and runs `npm run db:migrate` from a clean export of the
+   exact commit being deployed, before any server changes. `talon-deploy` on
+   the servers builds and restarts only; first boot no longer migrates.
+   Other schema-owner scripts (`db:create-admin`, `db:wipe`, ...) run the same
+   way: `infra/scripts/db-run.sh -- npm run db:create-admin --workspace
+   backend -- --username ...`. Row-only scripts that need the app's secrets
+   (`db:unlock`, `db:rotate-credentials-key`) still run on a web server as
+   the service. The web role can read `session-secret` and `credentials-key`
+   but no longer write them (no `PutParameter`, no KMS encrypt): a new
+   environment creates them once with `infra/scripts/secrets.sh init`
+   (existing values are never replaced). Backend: `DATABASE_CONNECT_HOST` /
+   `DATABASE_CONNECT_PORT` send the connection through the tunnel while the
+   real RDS name still signs the token and is checked in the certificate.
+   Changing `web_user_data.sh.tftpl` rolls the servers one at a time
+   (instance refresh); the data is untouched. Needs: your SSO identity must
+   allow `rds-db:connect` as `talon_migrate` (AdministratorAccess does).
+   Order of rollout: apply first, then deploy (see the PR notes).
 -7. **Test review, second pass** (merged, PR #19, deployed 2026-11-07): more tests (role changes
    mid-session, admin unlock and the throttle window, expired and tampered
    sessions, what a teacher sees after a student leaves or a class moves or
@@ -211,7 +259,7 @@ fixes only. Items 1 and 2 below describe the current EC2 path.
 | Web servers | Auto Scaling group `talon-demo-web` (`web.tf`): two t4g.small, Ubuntu 24.04 arm64, one per zone, from launch template `talon-demo-web`; tagged `Component=web`. Internal ALB `talon-demo-web` (`alb.tf`), health `GET /api/health/live` (app up, no database) every 10 s, unhealthy after 2 |
 | Elastic IP | None for the web servers (private). One per NAT gateway (1a, 1b) |
 | Inbound access | None from the internet. SSM Session Manager only (`tunnel.sh`: SSM port forward through a web server to the internal ALB, or with `TALON_ALB=public` to the internet-facing ALB). That ALB (`talon-public`, `public_alb.tf`, HTTP:80 only, no certificate yet) allows port 80 only from the two NAT gateways' Elastic IPs |
-| Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`. Postgres 16 on RDS `talon-demo` (`db.t4g.small`, Multi-AZ since 2026-11-05, TLS, IAM sign-in as `talon_app`; migrations as `talon_migrate`). `EC2_JOBS_ENABLED=true` |
+| Runtime | Node 24 LTS (pinned tarball, `/usr/local/bin/node`), nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`. Postgres 16 on RDS `talon-demo` (`db.t4g.small`, Multi-AZ since 2026-11-05, TLS, IAM sign-in as `talon_app`; migrations as `talon_migrate`, run from an operator's laptop, not from the servers). `EC2_JOBS_ENABLED=true` |
 | Deployed | `main`, unless `deploy.sh <branch>` put a test branch on the box (normally tested before merge; the branch may stay until the next deploy since it equals `main` after the PR). `infra/scripts/status.sh --deep` shows the commit, template versions and drift |
 | Approx cost | ~$165/month at list price, not read from the bill (Cost Explorer shows less: LCPS Savings Plans and discounts): two web servers ~$24 + EBS ~$3.20, internal ALB ~$17, two NAT gateways ~$66 + traffic, RDS db.t4g.small Multi-AZ ~$51, KMS key ~$1, alarms/S3/SNS pennies. Plus job instances, billed per second and charged to budgets |
 | Other AWS resources | SSM parameters under `/talon/demo/`, KMS key `alias/talon-demo-secrets`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), CloudWatch alarms (`monitoring.tf`: disk, backend errors, unknown job instance, failed logins, GPU and standard vCPUs; `alb.tf`: healthy hosts, ALB 5xx; `public_alb.tf` and `waf.tf`: the public ALB's unhealthy hosts and 5xx, WAF blocked requests), CloudWatch agent on each web server (installed and configured by `infra/server/configure.sh`; logs in `/talon/demo/{backend,syslog,nginx-access,nginx-error,bootstrap}`, 30 days; metrics in `Talon/Server`), saved Logs Insights queries `Talon/*` (`log_queries.tf`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and CPU/GPU launch templates (`jobs.tf`), 2 AWS Budgets alerts (`alarms.tf`: 150 USD a month, 10 USD a day) |
@@ -225,8 +273,10 @@ fixes only. Items 1 and 2 below describe the current EC2 path.
 aws sso login --profile lcps     # when credentials expire (usually daily)
 infra/scripts/tunnel.sh          # then open http://localhost:8080 (internal ALB)
 TALON_ALB=public infra/scripts/tunnel.sh 8081   # the internet-facing ALB (testing)
-infra/scripts/deploy.sh          # deploy origin/main (push first); data is never touched
-infra/scripts/deploy.sh B        # deploy branch B
+infra/scripts/deploy.sh          # migrate from this laptop, then deploy origin/main (push first); data is never touched
+infra/scripts/deploy.sh B        # deploy branch B (--no-migrate skips the migration step)
+infra/scripts/db-run.sh -- npm run db:create-admin --workspace backend -- --username you@lcps.org   # schema-owner scripts, via an SSM tunnel
+infra/scripts/secrets.sh init    # new environment only: create session-secret and credentials-key
 infra/scripts/shell.sh [id]      # shell on a web server (lists the others)
 infra/scripts/db-bootstrap.sh    # RDS roles and grants (needs db_bootstrap = true)
 infra/grafana/grafana.sh up      # Grafana on this laptop: http://localhost:3000 (infra/grafana/README.md)
@@ -246,12 +296,14 @@ On the box:
 sudo tail -f /var/log/talon/backend.log   # backend (JSON lines; not in journald)
 sudo journalctl -u talon-backend          # service start/stop only
 sudo tail -f /var/log/talon-bootstrap.log
-sudo /usr/local/bin/talon-deploy main
+sudo /usr/local/bin/talon-deploy [sha]    # no argument: the commit in SSM deployed-commit
+cat /etc/talon/deployed-sha               # the commit this server runs
 ```
 
 Key paths: app `/opt/talon`, config `/etc/talon/talon.env`, secrets
 `/etc/talon/secrets.env` (loaded from SSM Parameter Store), service user
-`talon`.
+`talon`, root-owned clone for deploys and root scripts
+`/var/lib/talon-deploy/repo.git`.
 
 
 ### Logs
@@ -361,8 +413,9 @@ Ordered so each item makes the next one easier. Items 1-8 and 12 are done;
 3. ~~**Keep the keys safe**~~ _(done 2026-10-25: `SESSION_SECRET` and
    `TALON_CREDENTIALS_KEY` are SSM SecureString parameters under
    `/talon/demo/`, encrypted with KMS `alias/talon-demo-secrets`, created by
-   the box on first boot and NOT managed by Terraform, so replacing the
-   instance keeps them. `talon-load-secrets` copies them to
+   the box on first boot (since `split-migrate-role`: by an operator with
+   `secrets.sh init`; the servers only read them) and NOT managed by
+   Terraform, so replacing the instance keeps them. `talon-load-secrets` copies them to
    `/etc/talon/secrets.env` before each backend start. Production refuses to
    start without them. Do not delete the parameters: stored GitHub tokens and
    backups depend on them.)_
@@ -800,8 +853,9 @@ Verify CloudFront VPC origin support for EC2 before choosing it.
   backend -- --yes-delete-everything` on one server (deletes all users,
   classes, jobs, links; refuses while EC2 jobs run), then create the admin.
 - Create the real first admin:
-  `npm run db:create-admin --workspace backend -- --username you@lcps.org`
-  (random password, printed once).
+  `infra/scripts/db-run.sh -- npm run db:create-admin --workspace backend -- --username you@lcps.org`
+  (random password, printed once; runs from your laptop as `talon_migrate`,
+  the servers cannot).
 - ~~Nightly `pg_dump` to S3~~ (done, item 4).
 
 ## EC2-launched jobs: design notes and build status
@@ -1248,7 +1302,9 @@ Done, merged to `main` and deployed to the demo box (2026-10-25, a78f8ec):
 admin Students / Teachers / Admins lists (search, status and class filters,
 sort by name (last name), budget or last sign-in; add and edit users, roles,
 disable, reset password with a generated one-time password, clear login
-lockout; click any budget to add or remove money in place, with a
+lockout, delete an account that was never used (no jobs, connections, classes
+taught or budget entries other than a starting grant; refused with a 409
+otherwise, so no other account's ledger history changes); click any budget to add or remove money in place, with a
 confirmation step; removal never goes below $0) and a Classes screen
 (create, rename, archive, add and remove teachers and students), a CSV
 roster import (paste or upload; columns username, name, email, role, class,

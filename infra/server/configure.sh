@@ -5,8 +5,8 @@
 # at the end of every talon-deploy (first boot and infra/scripts/deploy.sh);
 # safe to run again.
 #
-# Never run from the working tree: the file is extracted from the deployed
-# git commit (`git show HEAD:...`) to a root-owned path first.
+# Never run from the working tree: talon-repo-script extracts the file from
+# talon-deploy's root-owned clone, at the deployed commit, to a root-owned path.
 #
 # What it sets up:
 # - nginx: Talon's site (static frontend, /api proxied to the backend), enabled
@@ -33,6 +33,13 @@ set -euo pipefail
 
 changed_backend=false
 changed_nginx=false
+
+# CloudWatch agent release (Ubuntu arm64 package). To move to a newer one:
+# download .../ubuntu/arm64/latest/amazon-cloudwatch-agent.deb, read its
+# version (dpkg-deb -f <file> Version, without the trailing -1) and take its
+# sha256sum. The same file is served from every region's bucket.
+CWA_VERSION=1.300074.1b2005
+CWA_SHA256_ARM64=3af82796de0f5ebe230cf72fa9bbcf9270dda9d03cae72bdcf2bee2abe877b26
 
 # install_file <path> <mode>: writes stdin to <path> if different; returns 0
 # when the file changed.
@@ -248,8 +255,10 @@ cloudwatch_agent() {
   fi
   region="$(imds placement/region)" || { echo "configure: no region from instance metadata; CloudWatch agent skipped" >&2; return 1; }
   if [ ! -x "$cwa" ]; then
-    curl -fsSL "https://amazoncloudwatch-agent-$region.s3.$region.amazonaws.com/ubuntu/arm64/latest/amazon-cloudwatch-agent.deb" \
+    # A pinned release, installed only if it matches the checksum.
+    curl -fsSL "https://amazoncloudwatch-agent-$region.s3.$region.amazonaws.com/ubuntu/arm64/$CWA_VERSION/amazon-cloudwatch-agent.deb" \
       -o /run/amazon-cloudwatch-agent.deb &&
+      echo "$CWA_SHA256_ARM64  /run/amazon-cloudwatch-agent.deb" | sha256sum -c - >/dev/null &&
       apt-get install -y -q -o DPkg::Lock::Timeout=600 /run/amazon-cloudwatch-agent.deb >/dev/null
     rm -f /run/amazon-cloudwatch-agent.deb
     [ -x "$cwa" ] || { echo "configure: CloudWatch agent install failed" >&2; return 1; }

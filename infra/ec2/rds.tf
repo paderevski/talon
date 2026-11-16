@@ -8,9 +8,10 @@
 #   (manage_master_user_password). Never in Terraform state or the repo.
 #   Used only by infra/server/db-bootstrap.sh, and only while
 #   db_bootstrap = true lets the web role read it.
-# - talon_migrate (owns the database and schema: migrations, demo seed,
-#   admin scripts) and talon_app (the running backend: rows only). Both sign
-#   in with IAM tokens (rds-db:connect below); no password exists for them.
+# - talon_migrate (owns the database and schema: migrations, admin scripts)
+#   and talon_app (the running backend: rows only). Both sign in with IAM
+#   tokens (rds-db:connect); no password exists for them. Only talon_app is
+#   allowed to the web role below: talon_migrate is used by operators.
 #
 # First time: apply with db_bootstrap = true, run
 # infra/scripts/db-bootstrap.sh, deploy, then apply with db_bootstrap = false.
@@ -153,13 +154,17 @@ locals {
   db_user_arn = "arn:aws:rds-db:${var.aws_region}:${local.account_id}:dbuser:${aws_db_instance.main.resource_id}"
 }
 
-# The web servers sign in as the two app roles. Job instances use another
-# role and get nothing here; their security group cannot reach 5432 either.
+# The web servers sign in as talon_app only (rows, no DDL). The schema owner
+# talon_migrate is for operators: migrations and admin scripts run from a
+# laptop (infra/scripts/db-run.sh) with the operator's own rds-db:connect, so
+# code running as the service cannot change the schema. Job instances use
+# another role and get nothing here; their security group cannot reach 5432
+# either.
 data "aws_iam_policy_document" "db_connect" {
   statement {
-    sid       = "ConnectAsTalonRoles"
+    sid       = "ConnectAsAppRole"
     actions   = ["rds-db:connect"]
-    resources = ["${local.db_user_arn}/${local.db_app_user}", "${local.db_user_arn}/${local.db_mig_user}"]
+    resources = ["${local.db_user_arn}/${local.db_app_user}"]
   }
 }
 
