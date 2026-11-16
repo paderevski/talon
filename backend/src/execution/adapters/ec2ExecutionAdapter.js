@@ -467,7 +467,10 @@ export default function createEc2ExecutionAdapter({
         const zones = subnets.length === 1 ? "the one zone Talon uses" : `all ${subnets.length} zones Talon uses`;
         throw httpError(`No ${instanceType} machines are available right now (AWS has no capacity in ${zones}). Try again later or choose another machine.`, 503);
       }
-      throw httpError(`Could not launch an instance: ${lastError?.name || "unknown error"}${lastError?.message ? ` (${lastError.message})` : ""}`, 502);
+      // AWS's text stays in the server log (detail), not in the reply.
+      const launchError = httpError("Could not launch a machine. Try again in a few minutes.", 502);
+      launchError.detail = `${lastError?.name || "unknown error"}${lastError?.message ? ` (${lastError.message})` : ""}`;
+      throw launchError;
     },
 
     async getStatus(ref) {

@@ -1,6 +1,6 @@
 import { writeFile, stat } from "node:fs/promises";
 import path from "node:path";
-import { assert, backendRoot, waitFor, waitForJobTerminalState, apiFetch } from "../lib/harness.mjs";
+import { assert, backendRoot, executionIdOf, waitFor, waitForJobTerminalState, apiFetch } from "../lib/harness.mjs";
 
 export const name = "hybrid artifacts include output_dir and repo_changed";
 
@@ -37,7 +37,7 @@ export async function run({ baseUrl }) {
   const submitPayload = await submitResponse.json();
 
   const jobId = submitPayload?.job?.id;
-  const executionId = submitPayload?.job?.executionRef?.executionId;
+  const executionId = await executionIdOf(jobId);
 
   assert(
     typeof jobId === "string" && jobId.length > 0,

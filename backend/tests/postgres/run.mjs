@@ -2053,8 +2053,10 @@ const tests = [
       config: { bucket: "b", launchTemplateId: "lt-1", subnetIds: ["subnet-denied", "subnet-a"] },
     });
     let message = "";
-    try { await strict.start(spec("r4")); } catch (e) { message = e.message; }
-    assert(/UnauthorizedOperation/.test(message), `a permission error must not try other subnets: ${message}`);
+    let detail = "";
+    try { await strict.start(spec("r4")); } catch (e) { message = e.message; detail = e.detail || ""; }
+    assert(/UnauthorizedOperation/.test(detail), `a permission error must not try other subnets: ${detail}`);
+    assert(!/UnauthorizedOperation|denied/.test(message), `AWS's text stays out of the reply: ${message}`);
 
     const full = createEc2ExecutionAdapter({
       ec2: aws.ec2, s3: aws.s3, prepareInput,
