@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { importRoster } from "../api/client";
 import { formatDollars } from "../utils/format";
+import { csvField } from "../utils/csv";
 
 const template = [
   "username,name,email,role,class,budget",
@@ -8,9 +9,6 @@ const template = [
   "teacher_one,Teacher One,teacher.one@example.org,teacher,Intro to ML,100",
   "",
 ].join("\n");
-
-// Quote a CSV field if it has a comma, quote or newline.
-const csvField = (value) => (/[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value);
 
 function download(filename, text) {
   const url = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
@@ -69,7 +67,7 @@ export default function AdminImportPanel({ onChanged }) {
   }
 
   const passwordsCsv = result
-    ? `${["username,name,password", ...result.credentials.map((c) => [c.username, c.fullName, c.password].map(csvField).join(","))].join("\n")}\n`
+    ? `${["username,name,password", ...result.credentials.map((c) => [csvField(c.username), csvField(c.fullName), csvField(c.password, { neutralize: false })].join(","))].join("\n")}\n`
     : "";
 
   return (
