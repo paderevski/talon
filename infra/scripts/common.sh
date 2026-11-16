@@ -44,6 +44,19 @@ web_instance_id() {
   fi
 }
 
+# prepare_checkout <repo-dir> <sha>: exports that commit (not your working
+# tree) to a new temp directory, installs the backend's dependencies there
+# without running install scripts, and prints the directory. The caller
+# removes it.
+prepare_checkout() {
+  local repo="$1" sha="$2" dir
+  dir="$(mktemp -d)"
+  git -C "$repo" archive "$sha" | tar -x -C "$dir" \
+    && (cd "$dir" && npm ci --workspace backend --ignore-scripts --no-audit --no-fund >&2) \
+    || { rm -rf "$dir"; return 1; }
+  echo "$dir"
+}
+
 # run_ssm <instance-id> <comment> <commands-json-array>: runs a shell script
 # through SSM Run Command, waits, prints the output; fails unless it succeeded.
 run_ssm() {

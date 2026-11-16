@@ -16,6 +16,7 @@
 # reopens the tunnel if it drops. Credentials, the admin password and logs
 # live in $TALON_GRAFANA_HOME (default ~/.talon-grafana), never in the repo.
 source "$(dirname "$0")/../scripts/common.sh"
+source "$(dirname "$0")/../scripts/rds-tunnel.sh" # rds_endpoint
 
 GRAFANA_DIR="$(cd "$(dirname "$0")" && pwd)"
 HOME_DIR="${TALON_GRAFANA_HOME:-$HOME/.talon-grafana}"
@@ -120,11 +121,6 @@ print(json.dumps({"uid": os.environ["DS_UID"], "name": "Talon Postgres", "type":
 }
 
 # --- Database: RDS over SSM, or local -------------------------------------
-
-rds_endpoint() {
-  aws rds describe-db-instances --db-instance-identifier "talon-$TALON_ENV" \
-    --query 'DBInstances[0].Endpoint.Address' --output text
-}
 
 start_tunnel() {
   local host="$1" id
