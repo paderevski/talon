@@ -1,7 +1,7 @@
 import { createWriteStream } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 // Google Drive API v3, read only, with a user's access token. Used by the
@@ -101,11 +101,34 @@ export function createDriveClient({ token, fetch: fetchImpl = globalThis.fetch }
     return current;
   }
 
-  async function download(id, destination) {
+  // Downloads one file. budget: { used, max } counts the bytes actually
+  // received (shared by every download of a copy), because the size Drive
+  // reports can be missing or wrong. Past max the request is aborted and
+  // the partial file removed.
+  async function download(id, destination, { budget = null } = {}) {
     const params = new URLSearchParams({ alt: "media", supportsAllDrives: "true" });
     const response = await get(`${driveApi}/files/${encodeURIComponent(id)}?${params}`);
     await mkdir(path.dirname(destination), { recursive: true });
-    await pipeline(Readable.fromWeb(response.body), createWriteStream(destination, { flags: "wx" }));
+    const counter = new Transform({
+      transform(chunk, _encoding, callback) {
+        if (budget) {
+          budget.used += chunk.length;
+          if (budget.used > budget.max) {
+            return callback(httpError(`The code is larger than ${Math.round(budget.max / 1024 / 1024)} MB`));
+          }
+        }
+        return callback(null, chunk);
+      },
+    });
+    try {
+      await pipeline(Readable.fromWeb(response.body), counter, createWriteStream(destination, { flags: "wx" }));
+    } catch (error) {
+      // Not when the name was already taken: that file is another download's.
+      if (error?.code !== "EEXIST") {
+        await rm(destination, { force: true });
+      }
+      throw error;
+    }
   }
 
   // Copies a folder tree into `dir`. Native Google files, skipped folders
@@ -174,11 +197,12 @@ export function createDriveClient({ token, fetch: fetchImpl = globalThis.fetch }
     let done = 0;
     let reported = 0;
     const started = Date.now();
+    const budget = { used: 0, max: maxBytes };
     const worker = async () => {
       while (next < plan.length) {
         checkCancelled();
         const item = plan[next++];
-        await download(item.id, path.join(dir, ...item.path.split("/")));
+        await download(item.id, path.join(dir, ...item.path.split("/")), { budget });
         done += 1;
         // About every 10 seconds, and at the end.
         if (done === plan.length || Date.now() - reported > 10_000) {

@@ -1,7 +1,7 @@
 import { normalizeDrivePath } from "talon-shared/repo";
 import { getConnectionRegistry } from "../connections/registry.js";
 import { createDriveClient, safeName } from "./fetchers/drive.js";
-import { snapshotLimits } from "./snapshot.js";
+import { formatBytes, snapshotLimits } from "./snapshot.js";
 
 function badRequest(message) {
   return Object.assign(new Error(message), { status: 400 });
@@ -63,7 +63,11 @@ export function createDriveSource({ provider = null, fetch: fetchImpl = undefine
       } else {
         const file = await client.getFile(ref.fileId);
         const name = safeName(file.name);
-        await client.download(file.id, `${dir}/${name}`);
+        const sizeLimit = limits.maxUnpackedBytes;
+        if (Number(file.size || 0) > sizeLimit) {
+          throw badRequest(`${name} is larger than ${formatBytes(sizeLimit)} (it is ${formatBytes(Number(file.size))}). Pick a smaller file or a folder without it.`);
+        }
+        await client.download(file.id, `${dir}/${name}`, { budget: { used: 0, max: sizeLimit } });
         copied = { files: [{ id: file.id, path: name, md5: file.md5Checksum || null, modifiedTime: file.modifiedTime || null, size: Number(file.size || 0) }], skipped: [] };
       }
       return {

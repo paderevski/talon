@@ -65,6 +65,38 @@ export const ec2JobLimits = () => ({
   gpuTotal: readLimit("EC2_MAX_GPU_JOBS_TOTAL", 3), // GPU jobs at once, everyone together
 });
 
+// Launches that failed while fetching the code (a clone or Drive copy that
+// failed or was too big). A failed launch refunds everything and frees the
+// user's job slot, so repeating one costs nothing; past this many in the
+// window the user must wait. Kept in memory on each web server: a restart
+// clears it and the two servers count separately (so the real ceiling is up
+// to twice the limit).
+export const fetchFailureLimits = () => ({
+  max: readLimit("EC2_MAX_FETCH_FAILURES", 5),
+  windowMs: readLimit("EC2_FETCH_FAILURE_WINDOW_MINUTES", 15) * 60 * 1000,
+});
+const fetchFailures = new Map(); // username -> times (ms) of recent failures
+
+const recentFetchFailures = (userId, now = Date.now()) => {
+  const { windowMs } = fetchFailureLimits();
+  const recent = (fetchFailures.get(userId) ?? []).filter((at) => now - at < windowMs);
+  if (recent.length) fetchFailures.set(userId, recent); else fetchFailures.delete(userId);
+  return recent;
+};
+export const recordFetchFailure = (userId) => fetchFailures.set(userId, [...recentFetchFailures(userId), Date.now()]);
+export const resetFetchFailures = () => fetchFailures.clear();
+
+function assertFetchFailuresBelowLimit(userId) {
+  const { max, windowMs } = fetchFailureLimits();
+  const recent = recentFetchFailures(userId);
+  if (max > 0 && recent.length >= max) {
+    const minutes = Math.max(1, Math.ceil((recent[0] + windowMs - Date.now()) / 60_000));
+    const error = new Error(`Your last ${recent.length} jobs could not fetch their code. Check the repository or Drive item, and try again in about ${minutes} minute${minutes === 1 ? "" : "s"}.`);
+    error.status = 429;
+    throw error;
+  }
+}
+
 // GPU machines are for admins only unless EC2_GPU_ADMIN_ONLY=false.
 export const gpuAllowed = (isAdmin) => isAdmin || process.env.EC2_GPU_ADMIN_ONLY === "false";
 
@@ -118,6 +150,9 @@ export async function reserveEc2Job({ jobsRepository, user, isAdmin, payload, so
     ownerUsername: user.username,
   };
   const limits = ec2JobLimits();
+  if (!isAdmin) {
+    assertFetchFailuresBelowLimit(user.username);
+  }
 
   const job = await jobsRepository.createWithReservation({
     ownerUserId: user.id,
@@ -185,6 +220,9 @@ export async function runEc2Launch({ jobsRepository, adapter, job, spec, credent
     if (await isCancelled()) {
       log.info("launch stopped: the job was cancelled", { event: "job.launch_cancelled", jobId: job.id });
       return jobsRepository.findById(job.id);
+    }
+    if (error?.fetchFailure && spec.ownerUsername) {
+      recordFetchFailure(spec.ownerUsername);
     }
     const status = launchErrorStatus(error) || error?.status || 500;
     (status >= 500 ? log.error : log.info)("job not started", {

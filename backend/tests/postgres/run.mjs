@@ -30,7 +30,7 @@ import { bootAllowanceSeconds, hourlyRateCentsFor, imageFor, isAllowedRuntime, l
 import { parseTalonLine } from "../../../frontend/src/utils/jobProgress.js";
 import createEc2ExecutionAdapter, { assertEntryScript, buildRunScript } from "../../src/execution/adapters/ec2ExecutionAdapter.js";
 import { JobLimitError } from "../../src/repositories/postgres/jobsPostgresRepository.js";
-import { launchEc2Job, parseEnvironmentVariables, startEc2Job } from "../../src/services/ec2Jobs.js";
+import { launchEc2Job, parseEnvironmentVariables, resetFetchFailures, startEc2Job } from "../../src/services/ec2Jobs.js";
 import { parseScriptArgs } from "../../src/utils/scriptArgs.js";
 import { createEc2Reconciler } from "../../src/services/ec2Reconciler.js";
 import { createJobSync } from "../../src/services/jobSync.js";
@@ -110,7 +110,7 @@ function makeFakeDrive(tree) {
   const meta = (id) => {
     const f = tree[id];
     const content = f.content ?? "";
-    return { id, name: f.name, mimeType: f.mimeType || "text/plain", size: f.mimeType === folder ? undefined : String(Buffer.byteLength(content)), md5Checksum: `md5-${id}`, modifiedTime: "2026-11-07T00:00:00Z", trashed: Boolean(f.trashed) };
+    return { id, name: f.name, mimeType: f.mimeType || "text/plain", size: f.mimeType === folder ? undefined : String(f.reportedSize ?? Buffer.byteLength(content)), md5Checksum: `md5-${id}`, modifiedTime: "2026-11-07T00:00:00Z", trashed: Boolean(f.trashed) };
   };
   const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
   const fetch = async (url) => {
@@ -850,6 +850,53 @@ const tests = [
     assert(ok.scriptArgs === "--save-model --epochs 2" && JSON.stringify(startedWith.scriptArgs) === JSON.stringify(["--save-model", "--epochs", "2"]), `args: ${ok.scriptArgs} / ${JSON.stringify(startedWith.scriptArgs)}`);
   }],
 
+  ["ec2 jobs: repeated failed fetches pause a student's launches for a while", async () => {
+    const saved = { total: process.env.EC2_MAX_JOBS_TOTAL, max: process.env.EC2_MAX_FETCH_FAILURES };
+    process.env.EC2_MAX_JOBS_TOTAL = "1000";
+    process.env.EC2_MAX_FETCH_FAILURES = "2";
+    resetFetchFailures();
+    try {
+      const jobs = createJobsPostgresRepository({ pool });
+      const userId = await scalar("SELECT id FROM users WHERE username = 'student_a2'");
+      const accountId = await withTransaction((client) => ensureAccount(client, userId, "personal"), { pool });
+      await pool.query("UPDATE budget_accounts SET balance_cents = balance_cents + 500 WHERE id = $1", [accountId]);
+      await pool.query("INSERT INTO budget_ledger (account_id, amount_cents, kind, note) VALUES ($1, 500, 'grant', 'test top-up')", [accountId]);
+      const user = { id: userId, username: "student_a2" };
+      const launch = (adapter, isAdmin = false, who = user) => launchEc2Job({
+        jobsRepository: jobs, user: who, isAdmin, adapter,
+        payload: { name: "fetch-fail", repo: "x/y", instanceType: "c7g.large", maxRuntimeSeconds: 1800 },
+      });
+      const failWith = (extra) => ({ async start() { throw Object.assign(new Error("too big"), extra); } });
+      const outcome = async (promise) => { try { await promise; return "ok"; } catch (error) { return `${error.status ?? ""} ${error.message}`; } };
+
+      // A failure that is not about fetching does not count.
+      assert((await outcome(launch(failWith({})))) === " too big", "plain failure passes through");
+      assert((await outcome(launch(failWith({ fetchFailure: true })))) === " too big", "first fetch failure");
+      assert((await outcome(launch(failWith({ fetchFailure: true })))) === " too big", "second fetch failure");
+      const blocked = await outcome(launch({ async start() { return { provider: "ec2", executionId: "x", jobId: "x", instanceId: "i-x" }; } }));
+      assert(/^429 Your last 2 jobs could not fetch their code/.test(blocked), `third attempt: ${blocked}`);
+
+      // Admins and other students are unaffected.
+      const admin = { id: await scalar("SELECT id FROM users WHERE username = 'admin'"), username: "admin" };
+      assert((await outcome(launch(failWith({ fetchFailure: true }), true, admin))) === " too big", "admin is not blocked");
+      const other = { id: await scalar("SELECT id FROM users WHERE username = 'student_a3'"), username: "student_a3" };
+      const otherAccount = await withTransaction((client) => ensureAccount(client, other.id, "personal"), { pool });
+      await pool.query("UPDATE budget_accounts SET balance_cents = balance_cents + 500 WHERE id = $1", [otherAccount]);
+      await pool.query("INSERT INTO budget_ledger (account_id, amount_cents, kind, note) VALUES ($1, 500, 'grant', 'test top-up')", [otherAccount]);
+      assert((await outcome(launch(failWith({}), false, other))) === " too big", "another student can still launch");
+
+      // The count expires with the window.
+      process.env.EC2_FETCH_FAILURE_WINDOW_MINUTES = "0";
+      assert((await outcome(launch(failWith({})))) === " too big", "after the window the student can launch again");
+    } finally {
+      delete process.env.EC2_FETCH_FAILURE_WINDOW_MINUTES;
+      resetFetchFailures();
+      for (const [name, value] of [["EC2_MAX_JOBS_TOTAL", saved.total], ["EC2_MAX_FETCH_FAILURES", saved.max]]) {
+        if (value === undefined) delete process.env[name]; else process.env[name] = value;
+      }
+    }
+  }],
+
   ["ec2 reconciler: terminates orphan, finished and overrun instances, leaves live ones", async () => {
     const jobs = createJobsPostgresRepository({ pool });
     const owner = await scalar("SELECT id FROM users WHERE username = 'admin'");
@@ -1431,6 +1478,47 @@ const tests = [
     }
   }],
 
+  ["drive limits: a single file is refused from its reported size, and any download is cut off at the byte cap", async () => {
+    const saved = process.env.TALON_MAX_INPUT_UNPACKED_BYTES;
+    process.env.TALON_MAX_INPUT_UNPACKED_BYTES = "100";
+    const dir = await mkdtemp(path.join(os.tmpdir(), "talon-drive-cap-"));
+    try {
+      const tree = {
+        honest0001: { name: "honest.bin", parent: "x", content: "a".repeat(5000) },
+        liar000001: { name: "liar.bin", parent: "x", content: "a".repeat(5000), reportedSize: 10 },
+        small00001: { name: "small.txt", parent: "x", content: "ok" },
+        fold000001: { name: "f", mimeType: driveFolderMime, parent: "x" },
+        part0000001: { name: "p1.bin", parent: "fold000001", content: "a".repeat(60), reportedSize: 1 },
+        part0000002: { name: "p2.bin", parent: "fold000001", content: "a".repeat(60), reportedSize: 1 },
+      };
+      const fake = makeFakeDrive(tree);
+      const source = createDriveSource({ fetch: fake.fetch });
+      const fetchFile = (fileId, name) => source.fetchInto({ fileId }, path.join(dir, name), "t");
+
+      let message = "";
+      try { await fetchFile("honest0001", "a"); } catch (error) { message = `${error.status} ${error.message}`; }
+      assert(/^400 honest\.bin is larger than 100 B \(it is 4\.9 KB\)/.test(message), `reported size: ${message}`);
+      assert(!fake.calls.some((c) => c.includes("alt=media")), "nothing may be downloaded when the reported size is over the limit");
+
+      message = "";
+      try { await fetchFile("liar000001", "b"); } catch (error) { message = `${error.status} ${error.message}`; }
+      assert(/^400 The code is larger than/.test(message), `wrong size: ${message}`);
+      assert(!(await readdir(path.join(dir, "b"))).length, "the partial file must be removed");
+
+      const copied = await fetchFile("small00001", "c");
+      assert(copied.fileCount === 1 && (await readdir(path.join(dir, "c")))[0] === "small.txt", "a small file still copies");
+
+      // The folder path counts the received bytes of all files together.
+      const client = createDriveClient({ token: "t", fetch: fake.fetch });
+      message = "";
+      try { await client.copyFolder("fold000001", path.join(dir, "d"), { maxFiles: 10, maxBytes: 100, concurrency: 1 }); } catch (error) { message = `${error.status} ${error.message}`; }
+      assert(/^400 The code is larger than/.test(message), `folder total: ${message}`);
+    } finally {
+      if (saved === undefined) delete process.env.TALON_MAX_INPUT_UNPACKED_BYTES; else process.env.TALON_MAX_INPUT_UNPACKED_BYTES = saved;
+      await rm(dir, { recursive: true, force: true });
+    }
+  }],
+
   ["google drive: browse and locate stay inside picked items", async () => {
     const userId = await scalar("SELECT id FROM users WHERE username = 'student_a1'");
     const store = driveStore();
@@ -1673,6 +1761,27 @@ const tests = [
       for (const [name, value] of [["GIT_CONFIG_COUNT", saved.count], ["GIT_CONFIG_KEY_0", saved.key], ["GIT_CONFIG_VALUE_0", saved.value]]) {
         if (value === undefined) delete process.env[name]; else process.env[name] = value;
       }
+      await rm(dir, { recursive: true, force: true });
+    }
+  }],
+
+  ["git fetcher: a clone is stopped and removed when its folder grows past the cap", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "talon-git-cap-"));
+    const saved = process.env.TALON_GIT_BIN;
+    try {
+      // A "git" that writes 3 MB into the destination and then hangs.
+      const fakeGit = path.join(dir, "fake-git.sh");
+      await writeFile(fakeGit, '#!/bin/sh\nfor last; do :; done\nmkdir -p "$last"\nhead -c 3000000 /dev/zero > "$last/big"\nexec sleep 60\n', { mode: 0o755 });
+      process.env.TALON_GIT_BIN = fakeGit;
+      const target = path.join(dir, "out");
+      const started = Date.now();
+      let message = "";
+      try { await cloneInto({ host: "github.com", repoPath: "owner/huge", branch: "main", dir: target, maxBytes: 1_000_000, pollMs: 50 }); } catch (error) { message = `${error.status} ${error.message}`; }
+      assert(/^400 owner\/huge@main is larger than 1 MB/.test(message), `cap message: ${message}`);
+      assert(Date.now() - started < 20_000, "the clone must be killed, not waited out");
+      assert(!(await readdir(dir)).includes("out"), "the partial clone must be removed");
+    } finally {
+      if (saved === undefined) delete process.env.TALON_GIT_BIN; else process.env.TALON_GIT_BIN = saved;
       await rm(dir, { recursive: true, force: true });
     }
   }],
