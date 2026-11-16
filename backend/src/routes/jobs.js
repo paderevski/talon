@@ -293,6 +293,7 @@ router.post("/", async (req, res) => {
         userId: req.user.id,
         status,
         ...(status >= 500 ? { err: error } : { error: error?.message }),
+        ...(error?.detail ? { detail: error.detail } : {}),
       });
       return res.status(status).json({
         message: status === 402 ? "Not enough budget left for this job." : error?.message || "Unable to start the job",
