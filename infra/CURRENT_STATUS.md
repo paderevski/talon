@@ -214,7 +214,7 @@ fixes only. Items 1 and 2 below describe the current EC2 path.
 | Runtime | Node 24 LTS, nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`. Postgres 16 on RDS `talon-demo` (`db.t4g.small`, Multi-AZ since 2026-11-05, TLS, IAM sign-in as `talon_app`; migrations as `talon_migrate`). `EC2_JOBS_ENABLED=true` |
 | Deployed | `main`, unless `deploy.sh <branch>` put a test branch on the box (normally tested before merge; the branch may stay until the next deploy since it equals `main` after the PR). `infra/scripts/status.sh --deep` shows the commit, template versions and drift |
 | Approx cost | ~$165/month at list price, not read from the bill (Cost Explorer shows less: LCPS Savings Plans and discounts): two web servers ~$24 + EBS ~$3.20, internal ALB ~$17, two NAT gateways ~$66 + traffic, RDS db.t4g.small Multi-AZ ~$51, KMS key ~$1, alarms/S3/SNS pennies. Plus job instances, billed per second and charged to budgets |
-| Other AWS resources | SSM parameters under `/talon/demo/`, KMS key `alias/talon-demo-secrets`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), CloudWatch alarms (`monitoring.tf`: disk, backend errors, unknown job instance, failed logins, GPU and standard vCPUs; `alb.tf`: healthy hosts, ALB 5xx), CloudWatch agent on each web server (installed and configured by `infra/server/configure.sh`; logs in `/talon/demo/{backend,syslog,nginx-access,nginx-error,bootstrap}`, 30 days; metrics in `Talon/Server`), saved Logs Insights queries `Talon/*` (`log_queries.tf`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and CPU/GPU launch templates (`jobs.tf`), 2 AWS Budgets alerts (`alarms.tf`: 150 USD a month, 10 USD a day) |
+| Other AWS resources | SSM parameters under `/talon/demo/`, KMS key `alias/talon-demo-secrets`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), CloudWatch alarms (`monitoring.tf`: disk, backend errors, unknown job instance, failed logins, GPU and standard vCPUs; `alb.tf`: healthy hosts, ALB 5xx; `public_alb.tf` and `waf.tf`: the public ALB's unhealthy hosts and 5xx, WAF blocked requests), CloudWatch agent on each web server (installed and configured by `infra/server/configure.sh`; logs in `/talon/demo/{backend,syslog,nginx-access,nginx-error,bootstrap}`, 30 days; metrics in `Talon/Server`), saved Logs Insights queries `Talon/*` (`log_queries.tf`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and CPU/GPU launch templates (`jobs.tf`), 2 AWS Budgets alerts (`alarms.tf`: 150 USD a month, 10 USD a day) |
 | Root volume | 20 GB gp3, encrypted with the default AWS-managed EBS key (the architecture doc asks for a KMS key; not changed) |
 | OS patching | `unattended-upgrades` enabled on the box (checked) |
 | Terraform state | S3 `talon-tfstate-<account id>` (versioned, locked); `infra/state` stack's own state is local and tiny |
@@ -732,7 +732,16 @@ Verify CloudFront VPC origin support for EC2 before choosing it.
   imports exceed 8 KB), login rate limit per IP (`waf_login_rate_limit`,
   300 per 5 min, loose because schools share addresses; no general per-IP
   limit for the same reason). Logs in `aws-waf-logs-talon-public` (30 days,
-  cookies redacted).
+  cookie and authorization headers and the query string redacted). Branch
+  `waf-and-alarms` adds, in COUNT mode until `waf_new_rules_block = true`:
+  `AWSManagedRulesSQLiRuleSet`, a per-IP rate rule on `POST /api/jobs`
+  (`waf_job_submit_rate_limit`, 300 per 5 min) and one on writes
+  (POST/PUT/PATCH/DELETE under `/api/`, `waf_write_rate_limit`, 1500 per 5
+  min); still no limit on GETs (job pages poll every 2 s). Capacity about
+  1,155 of 1,500 WCU. Public ALB alarms (`public_alb.tf`: unhealthy hosts,
+  ALB 5xx, target 5xx) and a WAF blocked-requests alarm (`waf.tf`,
+  `waf_blocked_alarm_threshold`, 100 per 5 min). Body inspection stays at
+  the fixed 8 KB limit for ALBs; larger bodies are only checked by the app.
 - **Security headers** (branch `security-headers`). Express: no
   `X-Powered-By`; `Cache-Control: no-store` and `X-Content-Type-Options:
   nosniff` on every `/api` response (`server.js`). nginx (`configure.sh`,
