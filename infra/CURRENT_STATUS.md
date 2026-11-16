@@ -484,12 +484,15 @@ Ideas worth doing that are not in the ordered list yet. Move one up into
 security review (2026-11-07), listed roughly in the order it suggested.
 
 - **Cap the job log; read it with a byte range** (review #3, availability).
-  `getLogs` (`ec2ExecutionAdapter.js`) downloads the whole `logs/job.log`
-  on every poll, and the log has no size limit: a script printing in a
-  loop can make it gigabytes and exhaust both web servers' memory while
-  people watch. Cap it on the box (keep the first and last N MB, say so in
-  the log) and have the server read a byte range with a size limit. Small,
-  and protects everyone.
+  Server half done 2026-11-15 (branch `job-log-cap`): `getLogs`
+  (`ec2ExecutionAdapter.js`) now takes a byte offset as its cursor and reads
+  at most 512 KB per poll with ranged GETs (a first view of a big log gets
+  the first 128 KB, a "not shown" note and the latest 512 KB; lines are cut
+  at 10,000 characters; `JOB_LOG_CHUNK_BYTES`, `JOB_LOG_HEAD_BYTES`,
+  `JOB_LOG_LINE_MAX_CHARS`), and `status.json` and the like are read with a
+  1 MB cap. Still to do: cap the file on the box (keep the first and last
+  N MB, say so in the log) in `job_boot.sh`; that needs a Terraform apply,
+  and until then the log can still grow without limit in S3.
 - **Outbound data quota per job** (review #2, cost). The budget covers
   instance time, not data sent to the internet (about $0.09/GB); a job
   uploading for 24 h on a large machine could cost thousands of dollars.

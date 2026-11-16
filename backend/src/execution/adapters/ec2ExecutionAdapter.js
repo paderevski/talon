@@ -44,6 +44,63 @@ const ssmPrefix = () => process.env.TALON_SSM_PREFIX || "/talon/demo";
 // The SDK does not look the region up from the instance, so say it.
 const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "us-east-1";
 
+// The job log has no size limit (a script can print in a loop), so it is
+// never read whole: each poll asks S3 for at most logChunkBytes(). A viewer
+// starting on a log bigger than that sees the first logHeadBytes() (the
+// "[talon]" setup steps are there) and then the most recent chunk. Lines
+// longer than logLineMaxChars() are cut. Control files (status.json and the
+// like) are small by design; anything over CONTROL_FILE_MAX_BYTES is ignored.
+const readLimit = (name, fallback) => {
+  const value = Number(process.env[name]);
+  return process.env[name] !== undefined && process.env[name] !== "" && Number.isSafeInteger(value) && value > 0 ? value : fallback;
+};
+const logChunkBytes = () => readLimit("JOB_LOG_CHUNK_BYTES", 512 * 1024);
+const logHeadBytes = () => Math.min(readLimit("JOB_LOG_HEAD_BYTES", 128 * 1024), logChunkBytes());
+const logLineMaxChars = () => readLimit("JOB_LOG_LINE_MAX_CHARS", 10000);
+const CONTROL_FILE_MAX_BYTES = 1024 * 1024;
+
+const NEWLINE = 0x0a;
+const utf8 = new TextDecoder("utf-8"); // not fatal: bad bytes become U+FFFD
+
+// Bytes to text, one line per entry: "\r\n" tolerated, empty lines dropped,
+// long lines cut (not in the middle of a surrogate pair).
+function decodeLines(bytes) {
+  const max = logLineMaxChars();
+  const lines = [];
+  let from = 0;
+  while (from < bytes.length) {
+    let end = bytes.indexOf(NEWLINE, from);
+    if (end === -1) {
+      end = bytes.length;
+    }
+    let line = utf8.decode(bytes.subarray(from, end)).replace(/\r$/, "");
+    if (line.length > max) {
+      const last = line.charCodeAt(max - 1);
+      line = `${line.slice(0, last >= 0xd800 && last <= 0xdbff ? max - 1 : max)} … [line cut]`;
+    }
+    if (line.length > 0) {
+      lines.push(line);
+    }
+    from = end + 1;
+  }
+  return lines;
+}
+
+// The complete lines in `bytes` (which start at a line start) and how many
+// bytes they use. A trailing line without its newline is left for a later
+// poll, unless the window is `full` and holds no newline at all (then it is
+// one long line, cut and consumed).
+function takeCompleteLines(bytes, { full = false } = {}) {
+  const lastNewline = bytes.lastIndexOf(NEWLINE);
+  if (lastNewline === -1) {
+    return full ? { lines: decodeLines(bytes), used: bytes.length } : { lines: [], used: 0 };
+  }
+  return { lines: decodeLines(bytes.subarray(0, lastNewline + 1)), used: lastNewline + 1 };
+}
+
+// An invalid cursor (not a whole number >= 0) starts from the beginning.
+const cleanCursor = (cursor) => (Number.isSafeInteger(cursor) && cursor > 0 ? cursor : 0);
+
 function httpError(message, status) {
   const error = new Error(message);
   error.status = status;
@@ -197,16 +254,32 @@ export default function createEc2ExecutionAdapter({
   };
   let nextSubnet = 0;
 
-  async function readText(bucket, key) {
+  // bytes [start, end] of an object, with the object's total size (S3 reports
+  // it in ContentRange). null: no such object, or nothing at or after start
+  // (S3 answers 416 InvalidRange, also for an empty object).
+  async function readRange(bucket, key, start, end) {
     try {
-      const out = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
-      return await out.Body.transformToString();
+      const out = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key, Range: `bytes=${start}-${end}` }));
+      const bytes = await out.Body.transformToByteArray();
+      const total = Number(/\/(\d+)$/.exec(out.ContentRange ?? "")?.[1]);
+      return { bytes, total: Number.isFinite(total) ? total : start + bytes.length };
     } catch (error) {
-      if (error?.name === "NoSuchKey" || error?.$metadata?.httpStatusCode === 404) {
+      const status = error?.$metadata?.httpStatusCode;
+      if (error?.name === "NoSuchKey" || error?.name === "InvalidRange" || status === 404 || status === 416) {
         return null;
       }
       throw error;
     }
+  }
+
+  // Small control files only: a bigger object is treated as unreadable, the
+  // same way malformed JSON is.
+  async function readText(bucket, key) {
+    const part = await readRange(bucket, key, 0, CONTROL_FILE_MAX_BYTES);
+    if (part === null || part.bytes.length > CONTROL_FILE_MAX_BYTES) {
+      return null;
+    }
+    return utf8.decode(part.bytes);
   }
 
   async function readJson(bucket, key) {
@@ -219,6 +292,24 @@ export default function createEc2ExecutionAdapter({
     } catch {
       return null;
     }
+  }
+
+  // The last logChunkBytes() of the log, from the start of a line: the line
+  // cut by the window's edge is dropped (one byte is read before the window to
+  // tell whether the edge is a line start). start: offset of the first line
+  // returned; next: where to continue (after the last newline).
+  async function readLogTail(bucket, key, total) {
+    const windowStart = total - logChunkBytes() + 1;
+    const part = await readRange(bucket, key, windowStart - 1, total - 1);
+    const bytes = part?.bytes ?? new Uint8Array(0);
+    const firstNewline = bytes[0] === NEWLINE ? 0 : bytes.indexOf(NEWLINE);
+    if (firstNewline === -1) {
+      // No newline anywhere: one very long line, shown cut.
+      return { start: windowStart, lines: decodeLines(bytes.subarray(1)), next: total };
+    }
+    const start = windowStart + firstNewline;
+    const taken = takeCompleteLines(bytes.subarray(firstNewline + 1));
+    return { start, lines: taken.lines, next: start + taken.used };
   }
 
   async function describeInstance(instanceId) {
@@ -436,12 +527,37 @@ export default function createEc2ExecutionAdapter({
       };
     },
 
+    // The cursor is a byte offset into logs/job.log, which only ever grows
+    // (the instance re-uploads the growing file), and always sits just after
+    // a newline. Reads are bounded, see logChunkBytes above. A cursor from
+    // before byte offsets (a line count) is read as a byte offset: at worst it
+    // starts in the middle of a line once.
     async getLogs(ref, cursor = 0) {
       const cfg = await getConfig();
-      const text = (await readText(cfg.bucket, `${prefix(ref)}/logs/job.log`)) ?? "";
-      const lines = text.split(/\r?\n/).filter((line) => line.length > 0);
-      const offset = Number.isFinite(cursor) && cursor >= 0 ? cursor : 0;
-      return { lines: lines.slice(offset), nextCursor: Math.max(offset, lines.length) };
+      const key = `${prefix(ref)}/logs/job.log`;
+      const chunk = logChunkBytes();
+      const head = logHeadBytes();
+      const start = cleanCursor(cursor);
+      // The reply to this read also says how big the log is.
+      const part = await readRange(cfg.bucket, key, start, start + chunk - 1);
+      if (part === null) {
+        return { lines: [], nextCursor: start }; // no log yet, or a cursor past its end
+      }
+      const behind = part.total - start > chunk;
+      // A first read just over one chunk is read in two polls, not cut in two
+      // pieces with the head and the tail overlapping.
+      if (!behind || (start === 0 && part.total <= chunk + head)) {
+        const taken = takeCompleteLines(part.bytes, { full: part.bytes.length >= chunk });
+        return { lines: taken.lines, nextCursor: start + taken.used };
+      }
+
+      // More new output than one chunk: the beginning (first read only), a
+      // note about what is skipped, and the most recent lines.
+      const tail = await readLogTail(cfg.bucket, key, part.total);
+      const first = start === 0 ? takeCompleteLines(part.bytes.subarray(0, head), { full: true }) : { lines: [], used: start };
+      const skipped = formatBytes(tail.start - first.used);
+      const note = `[log] … ${skipped} of output not shown; showing the most recent lines …`;
+      return { lines: [...first.lines, note, ...tail.lines], nextCursor: tail.next };
     },
 
     // Two sources, as with the local runner: files the script wrote to
