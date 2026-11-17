@@ -561,9 +561,18 @@ security review (2026-11-07), listed roughly in the order it suggested.
   the first 128 KB, a "not shown" note and the latest 512 KB; lines are cut
   at 10,000 characters; `JOB_LOG_CHUNK_BYTES`, `JOB_LOG_HEAD_BYTES`,
   `JOB_LOG_LINE_MAX_CHARS`), and `status.json` and the like are read with a
-  1 MB cap. Still to do: cap the file on the box (keep the first and last
-  N MB, say so in the log) in `job_boot.sh`; that needs a Terraform apply,
-  and until then the log can still grow without limit in S3.
+  1 MB cap. Instance half done 2026-11-16 (branch `job-log-cap-instance`,
+  needs a Terraform apply, not yet tested on a real instance): the student
+  unit's stdout and stderr go to a root-only FIFO (`/run/talon-job.fifo`)
+  read by `talon-logcap` (root, outside the unit, written by `job_boot.sh`).
+  It copies the first 10 MiB to `/tmp/job.log` live, then adds a note line,
+  keeps only the latest 10 MiB in memory and appends it at the end after a
+  "N MB of output not kept" line (`LOG_HEAD_BYTES`, `LOG_TAIL_BYTES`). The
+  supervisor stops it (stop file, 60 s limit) after the unit ends and before
+  the "job ended" lines and the final upload. If the FIFO or the capper
+  cannot be set up, the old `append:` properties are used and the boot log
+  says WARNING (job uncapped). Lines root writes during the job (egress
+  note) land among the head, not after the tail.
 - **Billing times are the web server's, not the job's** (done 2026-11-16,
   branch `server-side-billing-times`). A job instance can write its own
   `status.json`, so the bill no longer reads times from it. Start: EC2's
