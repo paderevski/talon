@@ -326,7 +326,7 @@ if skipped:
         skipped += nl + 1
         data = data[nl + 1:]
     emit(note("%.1f MB of output not kept" % (skipped / 1048576)))
-    emit(data)
+emit(data)  # past the head but nothing skipped (under head + tail): all of it
 PY
 
 IMDS=http://169.254.169.254/latest
@@ -628,27 +628,39 @@ step "setup took $((T_RUN - T0))s; running the job (limit ${MAX}s)"
 # process counts are capped (MemoryMax leaves the rest of the RAM to this
 # script and the system; TasksMax stops a fork bomb). Output goes through a
 # FIFO to talon-logcap (root, outside the unit), which writes the job log and
-# keeps only the first and last LOG_*_BYTES of it; if that cannot be set up,
-# systemd appends to the job log itself, without a cap. RuntimeMaxSec is the time limit the student cannot
-# kill (`timeout` inside gives the usual exit code 124). The marker, touched
-# with full privileges before the command starts, tells "the job failed" from
-# "the unit did not start". Exit code of systemd-run --wait = the job's.
+# keeps only the first and last LOG_*_BYTES of it. If the cap cannot be set
+# up, or the unit does not start with its output on the FIFO, systemd appends
+# to the job log itself, without a cap (a retry is safe: the marker shows no
+# student code ran). RuntimeMaxSec is the time limit the student cannot kill
+# (`timeout` inside gives the usual exit code 124). The marker, touched with
+# full privileges before the command starts, tells "the job failed" from "the
+# unit did not start". Exit code of systemd-run --wait = the job's.
+UNCAPPED=(-p StandardOutput=append:/tmp/job.log -p StandardError=append:/tmp/job.log)
+run_unit() {
+  systemd-run --wait --collect --unit=talon-student-job --slice=talon-student.slice \
+    --uid=student --gid=student --setenv=PATH \
+    -p WorkingDirectory=/work \
+    "$@" \
+    -p MemoryMax=90% -p TasksMax=16384 -p NoNewPrivileges=yes \
+    -p RuntimeMaxSec=$((MAX + 60)) -p TimeoutStopSec=30 \
+    -p "ExecStartPre=+/usr/bin/touch /run/talon-job-started" \
+    /usr/bin/timeout --kill-after=30 "$MAX" bash run.sh
+}
 rm -f /run/talon-job-started /run/talon-egress-over
 if start_logcap; then
-  LOG_PROPS=(-p "StandardOutput=file:$LOG_FIFO" -p StandardError=inherit)
+  run_unit -p "StandardOutput=file:$LOG_FIFO" -p StandardError=inherit
+  CODE=$?
+  if [ ! -e /run/talon-job-started ]; then
+    stop_logcap
+    echo "WARNING: the job did not start with the job log cap; retrying without it"
+    run_unit "${UNCAPPED[@]}"
+    CODE=$?
+  fi
 else
   echo "WARNING: could not start the job log cap; the job runs without it"
-  LOG_PROPS=(-p StandardOutput=append:/tmp/job.log -p StandardError=append:/tmp/job.log)
+  run_unit "${UNCAPPED[@]}"
+  CODE=$?
 fi
-systemd-run --wait --collect --unit=talon-student-job --slice=talon-student.slice \
-  --uid=student --gid=student --setenv=PATH \
-  -p WorkingDirectory=/work \
-  "${LOG_PROPS[@]}" \
-  -p MemoryMax=90% -p TasksMax=16384 -p NoNewPrivileges=yes \
-  -p RuntimeMaxSec=$((MAX + 60)) -p TimeoutStopSec=30 \
-  -p "ExecStartPre=+/usr/bin/touch /run/talon-job-started" \
-  /usr/bin/timeout --kill-after=30 "$MAX" bash run.sh
-CODE=$?
 T_DONE=$(date +%s)
 kill "$LOOP" $WATCH 2>/dev/null; wait "$LOOP" 2>/dev/null
 stop_logcap # the tail of the output lands before the lines below
