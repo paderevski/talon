@@ -40,6 +40,28 @@ variable "cpu_job_image" {
   }
 }
 
+variable "cpu_job_ami_id" {
+  description = "Pin the CPU job image to this AMI id (overrides cpu_job_image). Empty: follow cpu_job_image, which moves to a new image on any apply after a pipeline build. Pinned, a new image goes live only when this changes: test it with infra/scripts/job-image.sh first; roll back by restoring the previous id."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.cpu_job_ami_id == "" || can(regex("^ami-[0-9a-f]{8,17}$", var.cpu_job_ami_id))
+    error_message = "cpu_job_ami_id must be empty or an AMI id (ami-...)."
+  }
+}
+
+variable "gpu_job_ami_id" {
+  description = "Pin the GPU job image to this AMI id. Empty: follow gpu_job_ami_parameter, which moves to Amazon's newest build of that PyTorch line on any apply. Pinned, a new image goes live only when this changes (test with infra/scripts/job-image.sh)."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.gpu_job_ami_id == "" || can(regex("^ami-[0-9a-f]{8,17}$", var.gpu_job_ami_id))
+    error_message = "gpu_job_ami_id must be empty or an AMI id (ami-...)."
+  }
+}
+
 variable "job_egress_quota_mb" {
   description = "Outbound data one job's code may send to the internet, in MB (the student user's traffic on the instance, loopback excluded; downloads barely count). Past it the traffic is rejected and the job is stopped with a message in the log. 0 turns the limit off. Written to the talon-egress-mb tag of both job launch templates."
   type        = number
@@ -336,15 +358,19 @@ locals {
 }
 
 # The baked image's id, written by the Image Builder pipeline (image.tf).
-# Read only in baked mode: the parameter exists after the first build.
+# Read only in baked mode without a pin: the parameter exists after the first
+# build.
 data "aws_ssm_parameter" "cpu_job_baked_ami" {
-  count = var.cpu_job_image == "baked" ? 1 : 0
+  count = var.cpu_job_ami_id == "" && var.cpu_job_image == "baked" ? 1 : 0
   name  = local.cpu_image_param
 }
 
 locals {
+  # A pinned id wins; otherwise the lookups (which move forward on apply).
   # AMI ids are public: insecure_value keeps them readable in the plan.
-  cpu_job_ami_id = var.cpu_job_image == "baked" ? one(data.aws_ssm_parameter.cpu_job_baked_ami[*].insecure_value) : data.aws_ssm_parameter.ubuntu_ami.insecure_value
+  cpu_job_ami_id = (var.cpu_job_ami_id != "" ? var.cpu_job_ami_id :
+  var.cpu_job_image == "baked" ? one(data.aws_ssm_parameter.cpu_job_baked_ami[*].insecure_value) : data.aws_ssm_parameter.ubuntu_ami.insecure_value)
+  gpu_job_ami_id = var.gpu_job_ami_id != "" ? var.gpu_job_ami_id : one(data.aws_ssm_parameter.gpu_job_ami[*].insecure_value)
 }
 
 resource "aws_launch_template" "job" {
@@ -433,7 +459,8 @@ resource "aws_launch_template" "job" {
 # as the CPU template, on the x86_64 PyTorch Deep Learning AMI. job_boot.sh
 # reads the talon-image tag to know which image it is on.
 data "aws_ssm_parameter" "gpu_job_ami" {
-  name = var.gpu_job_ami_parameter
+  count = var.gpu_job_ami_id == "" ? 1 : 0
+  name  = var.gpu_job_ami_parameter
 }
 
 moved {
@@ -444,7 +471,7 @@ moved {
 resource "aws_launch_template" "job_gpu" {
   name                   = "${local.name}-job-gpu"
   description            = "Talon GPU job instance (PyTorch Deep Learning AMI, Ubuntu x86_64)"
-  image_id               = data.aws_ssm_parameter.gpu_job_ami.value
+  image_id               = local.gpu_job_ami_id
   instance_type          = var.gpu_job_instance_types[0]
   vpc_security_group_ids = [aws_security_group.job.id]
   update_default_version = true
@@ -554,7 +581,7 @@ locals {
   # insecure_value: AMI ids are public and readable in the plan.
   job_ami_ids = distinct([
     local.cpu_job_ami_id,
-    data.aws_ssm_parameter.gpu_job_ami.insecure_value,
+    local.gpu_job_ami_id,
   ])
   job_max_root_gb = max(var.job_max_volume_gb, var.job_root_volume_gb, var.gpu_job_root_volume_gb)
 
