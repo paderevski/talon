@@ -25,7 +25,8 @@
 # CloudWatch every 5 seconds (stream <job id>/<instance id>). The last line is
 # a JSON summary (event job.boot_summary) with the result and phase timings.
 # The job log, /tmp/job.log, is what the app shows: setup steps ("[talon]
-# HH:MM:SS ...", via step) then the student's output. Both logs go to S3
+# HH:MM:SS ...", via step) then the student's output, capped by talon-logcap
+# (the first and the last 10 MB of it; see below). Both logs go to S3
 # (logs/job.log, logs/boot.log) every 3 seconds when changed, and on exit.
 #
 # No `set -e`: every path must reach the upload and the shutdown.
@@ -248,6 +249,86 @@ for rel, name, dirfd in candidates():
         os.close(fd)
 PY
 
+# Caps the student's output. Usage: talon-logcap FIFO LOGFILE HEAD_BYTES
+# TAIL_BYTES. Root runs it outside the student's unit; the unit's stdout and
+# stderr are the FIFO, so the student only ever holds the write end of a pipe
+# that leads here (the FIFO and LOGFILE are root's). The first HEAD_BYTES go to
+# LOGFILE as they arrive (so the log still streams live), then one note line,
+# and from then on only the latest TAIL_BYTES are kept in memory and appended
+# at the end, after a line saying how much was dropped. The FIFO is opened
+# read-write: this process is itself a writer, so opening never blocks and the
+# pipe never reports EOF between the unit's start-up commands (they open and
+# close it too). The supervisor ends it by creating FIFO.stop once the unit is
+# gone; it then drains what is left in the pipe. FIFO.ready says it is reading.
+cat > /usr/local/sbin/talon-logcap <<'PY'
+import collections, os, select, sys, time
+
+fifo, log_path, head_max, tail_max = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])
+rd = os.open(fifo, os.O_RDWR | os.O_NONBLOCK)
+out = os.open(log_path, os.O_WRONLY | os.O_APPEND | os.O_CLOEXEC)
+written, last, kept, skipped, noted = 0, b"", 0, 0, False
+tail = collections.deque()
+
+def emit(data):
+    while data:
+        try:
+            data = data[os.write(out, data):]
+        except OSError:
+            return  # disk full or the like: drop it, but keep reading so the job never blocks
+
+def note(text):  # a "[talon] HH:MM:SS ..." line, as step writes them, on a line of its own
+    line = "[talon] %s %s\n" % (time.strftime("%H:%M:%S", time.gmtime()), text)
+    return (b"" if last in (b"", b"\n") else b"\n") + line.encode()
+
+def feed(data):
+    global written, last, kept, skipped, noted
+    if written < head_max:
+        part = data[: head_max - written]
+        emit(part)
+        written += len(part)
+        last = part[-1:]
+        data = data[len(part):]
+    if not data:
+        return
+    if not noted:
+        noted = True
+        emit(note("output passed %d MB: the rest is not shown live; the last %d MB will be added when the job ends"
+                  % (head_max >> 20, tail_max >> 20)))
+        last = b"\n"
+    tail.append(data)
+    kept += len(data)
+    while kept - len(tail[0]) >= tail_max:  # the oldest chunk is not needed
+        old = tail.popleft()
+        kept -= len(old)
+        skipped += len(old)
+
+open(fifo + ".ready", "w").close()
+while True:
+    stopping = os.path.exists(fifo + ".stop")  # checked before the read: a read that finds nothing then means drained
+    if not stopping:
+        select.select([rd], [], [], 0.2)
+    try:
+        chunk = os.read(rd, 1 << 16)
+    except BlockingIOError:
+        chunk = b""
+    if chunk:
+        feed(chunk)
+    elif stopping:
+        break
+
+data = b"".join(tail)
+if kept > tail_max:
+    skipped += kept - tail_max
+    data = data[kept - tail_max:]
+if skipped:
+    nl = data.find(b"\n")  # start the kept part at a line boundary when there is one
+    if 0 <= nl < len(data) - 1:
+        skipped += nl + 1
+        data = data[nl + 1:]
+    emit(note("%.1f MB of output not kept" % (skipped / 1048576)))
+emit(data)  # past the head but nothing skipped (under head + tail): all of it
+PY
+
 IMDS=http://169.254.169.254/latest
 TOKEN=$(curl -fsS -X PUT "$IMDS/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 900")
 imds() { curl -fsS -H "X-aws-ec2-metadata-token: $TOKEN" "$IMDS/$1"; }
@@ -299,6 +380,37 @@ stop_log_loop() { # let the loop finish its upload, so ours is the last
   touch /run/talon-logs.stop; wait "$LOG_LOOP"; LOG_LOOP=""
 }
 
+# The cap on the student's output (see talon-logcap): the first and the last
+# LOG_HEAD_BYTES / LOG_TAIL_BYTES of it are kept in the job log.
+LOG_HEAD_BYTES=$((10 * 1024 * 1024))
+LOG_TAIL_BYTES=$((10 * 1024 * 1024))
+LOG_FIFO=/run/talon-job.fifo
+LOGCAP=""
+start_logcap() { # before the unit, so the reader is there when systemd opens the FIFO
+  rm -f "$LOG_FIFO" "$LOG_FIFO.stop" "$LOG_FIFO.ready"
+  mkfifo -m 600 "$LOG_FIFO" || return 1
+  python3 /usr/local/sbin/talon-logcap "$LOG_FIFO" /tmp/job.log "$LOG_HEAD_BYTES" "$LOG_TAIL_BYTES" </dev/null &
+  LOGCAP=$!
+  local i
+  for i in $(seq 1 50); do
+    [ -e "$LOG_FIFO.ready" ] && return 0
+    kill -0 "$LOGCAP" 2>/dev/null || break
+    sleep 0.1
+  done
+  kill -KILL "$LOGCAP" 2>/dev/null; wait "$LOGCAP" 2>/dev/null; LOGCAP=""
+  return 1
+}
+stop_logcap() { # the unit is gone: the capper drains the pipe, adds the tail and exits
+  [ -n "$LOGCAP" ] || return 0
+  : > "$LOG_FIFO.stop"
+  ( sleep 60; kill -KILL "$LOGCAP" 2>/dev/null ) &
+  local dog=$!
+  wait "$LOGCAP" 2>/dev/null
+  kill "$dog" 2>/dev/null
+  LOGCAP=""
+  rm -f "$LOG_FIFO" "$LOG_FIFO.stop" "$LOG_FIFO.ready"
+}
+
 ship_boot_log() {
   [ -n "$LOG_GROUP" ] && command -v aws >/dev/null || return 0
   flock -w 30 /run/talon-cwlog.lock \
@@ -337,7 +449,7 @@ finish() {
   sleep 1 # let the timestamping pipe write the last lines
   ship_boot_log
   if command -v aws >/dev/null && [ -n "${PREFIX:-}" ]; then
-    stop_log_loop; ship_logs
+    stop_logcap; stop_log_loop; ship_logs
   fi
   # Flush the CloudWatch agent's last interval (baked CPU image; a no-op elsewhere).
   timeout 15 systemctl stop amazon-cloudwatch-agent >/dev/null 2>&1 || true
@@ -514,23 +626,46 @@ step "setup took $((T_RUN - T0))s; running the job (limit ${MAX}s)"
 # slice), not in this script's: it cannot starve or signal the supervisor and
 # the upload loop, its leftover processes die with the unit, and memory and
 # process counts are capped (MemoryMax leaves the rest of the RAM to this
-# script and the system; TasksMax stops a fork bomb). Output is appended to the
-# job log by systemd itself. RuntimeMaxSec is the time limit the student cannot
-# kill (`timeout` inside gives the usual exit code 124). The marker, touched
-# with full privileges before the command starts, tells "the job failed" from
-# "the unit did not start". Exit code of systemd-run --wait = the job's.
+# script and the system; TasksMax stops a fork bomb). Output goes through a
+# FIFO to talon-logcap (root, outside the unit), which writes the job log and
+# keeps only the first and last LOG_*_BYTES of it. If the cap cannot be set
+# up, or the unit does not start with its output on the FIFO, systemd appends
+# to the job log itself, without a cap (a retry is safe: the marker shows no
+# student code ran). RuntimeMaxSec is the time limit the student cannot kill
+# (`timeout` inside gives the usual exit code 124). The marker, touched with
+# full privileges before the command starts, tells "the job failed" from "the
+# unit did not start". Exit code of systemd-run --wait = the job's.
+UNCAPPED=(-p StandardOutput=append:/tmp/job.log -p StandardError=append:/tmp/job.log)
+run_unit() {
+  systemd-run --wait --collect --unit=talon-student-job --slice=talon-student.slice \
+    --uid=student --gid=student --setenv=PATH \
+    -p WorkingDirectory=/work \
+    "$@" \
+    -p MemoryMax=90% -p TasksMax=16384 -p NoNewPrivileges=yes \
+    -p RuntimeMaxSec=$((MAX + 60)) -p TimeoutStopSec=30 \
+    -p "ExecStartPre=+/usr/bin/touch /run/talon-job-started" \
+    /usr/bin/timeout --kill-after=30 "$MAX" bash run.sh
+}
 rm -f /run/talon-job-started /run/talon-egress-over
-systemd-run --wait --collect --unit=talon-student-job --slice=talon-student.slice \
-  --uid=student --gid=student --setenv=PATH \
-  -p WorkingDirectory=/work \
-  -p StandardOutput=append:/tmp/job.log -p StandardError=append:/tmp/job.log \
-  -p MemoryMax=90% -p TasksMax=16384 -p NoNewPrivileges=yes \
-  -p RuntimeMaxSec=$((MAX + 60)) -p TimeoutStopSec=30 \
-  -p "ExecStartPre=+/usr/bin/touch /run/talon-job-started" \
-  /usr/bin/timeout --kill-after=30 "$MAX" bash run.sh
-CODE=$?
+if start_logcap; then
+  run_unit -p "StandardOutput=file:$LOG_FIFO" -p StandardError=inherit
+  CODE=$?
+  if [ ! -e /run/talon-job-started ]; then
+    stop_logcap
+    echo "WARNING: the job did not start with the job log cap; retrying without it"
+    run_unit "${UNCAPPED[@]}"
+    CODE=$?
+  fi
+else
+  echo "WARNING: could not start the job log cap; the job runs without it"
+  run_unit "${UNCAPPED[@]}"
+  CODE=$?
+fi
 T_DONE=$(date +%s)
 kill "$LOOP" $WATCH 2>/dev/null; wait "$LOOP" 2>/dev/null
+stop_logcap # the tail of the output lands before the lines below
+# A job stopped mid-line (time limit, kill): start our lines on a new line.
+[ -s /tmp/job.log ] && [ -n "$(tail -c 1 /tmp/job.log)" ] && echo >> /tmp/job.log
 JOB_MESSAGE=""
 if [ ! -e /run/talon-job-started ]; then
   CODE=126; JOB_MESSAGE="could not start the job"
