@@ -664,6 +664,8 @@ fi
 T_DONE=$(date +%s)
 kill "$LOOP" $WATCH 2>/dev/null; wait "$LOOP" 2>/dev/null
 stop_logcap # the tail of the output lands before the lines below
+# A job stopped mid-line (time limit, kill): start our lines on a new line.
+[ -s /tmp/job.log ] && [ -n "$(tail -c 1 /tmp/job.log)" ] && echo >> /tmp/job.log
 JOB_MESSAGE=""
 if [ ! -e /run/talon-job-started ]; then
   CODE=126; JOB_MESSAGE="could not start the job"
