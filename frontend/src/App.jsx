@@ -109,7 +109,7 @@ function getStoredAuthUser() {
       return null;
     }
 
-    return toAuthUser(parsed);
+    return toSessionUser(parsed);
   } catch {
     return null;
   }
@@ -118,7 +118,7 @@ function getStoredAuthUser() {
 // The fields the app keeps about the signed-in user (from /api/auth/login,
 // /api/auth/me, or localStorage). localSignIn is false for people who only
 // sign in with Microsoft: they have no Talon password to change.
-function toAuthUser(user) {
+function toSessionUser(user) {
   return {
     username: String(user.username ?? "").trim(),
     fullName: String(user.fullName ?? "").trim(),
@@ -254,7 +254,7 @@ export default function App() {
           onLogoutRef.current?.({ skipServer: true, keepMessage: true });
           return;
         }
-        const sessionUser = toAuthUser(user);
+        const sessionUser = toSessionUser(user);
         setAuthUser(sessionUser);
         setBudgetBalance(typeof user.budgetBalance === "number" ? user.budgetBalance : null);
         window.localStorage.setItem(authStorageKey, JSON.stringify(sessionUser));
@@ -639,7 +639,7 @@ export default function App() {
 
     try {
       const response = await login(username, password);
-      const user = response.user ? toAuthUser(response.user) : null;
+      const user = response.user ? toSessionUser(response.user) : null;
       setAuthUser(user);
       setBudgetBalance(typeof response.user?.budgetBalance === "number" ? response.user.budgetBalance : null);
       if (user?.username) {
