@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { GatewayError, cancelJob, fetchComputeOptions, fetchCurrentUser, fetchJobFiles, fetchJobs, fetchConnections, fetchResults, hideJob, login, logout, setUnauthorizedHandler, submitJob, unhideJob } from "./api/client";
+import { GatewayError, cancelJob, entraLoginUrl, fetchAuthOptions, fetchComputeOptions, fetchCurrentUser, fetchJobFiles, fetchJobs, fetchConnections, fetchResults, hideJob, login, logout, setUnauthorizedHandler, submitJob, unhideJob } from "./api/client";
 import NewJobPanel from "./components/NewJobPanel";
 import JobStatusPanel from "./components/JobStatusPanel";
 import ResultsPanel from "./components/ResultsPanel";
@@ -109,14 +109,51 @@ function getStoredAuthUser() {
       return null;
     }
 
-    return {
-      username: parsed.username.trim(),
-      fullName: String(parsed.fullName ?? "").trim(),
-      role: normalizeUserRole(parsed.role),
-    };
+    return toAuthUser(parsed);
   } catch {
     return null;
   }
+}
+
+// The fields the app keeps about the signed-in user (from /api/auth/login,
+// /api/auth/me, or localStorage). hasPassword is false for people who only
+// sign in with Microsoft: they have no Talon password to change.
+function toAuthUser(user) {
+  return {
+    username: String(user.username ?? "").trim(),
+    fullName: String(user.fullName ?? "").trim(),
+    role: normalizeUserRole(user.role),
+    hasPassword: user.hasPassword !== false,
+  };
+}
+
+// ?signin=<code> is set by the server when Microsoft sign-in did not work
+// (routes/auth.js). Read it once and remove it from the address bar.
+const signInMessages = {
+  "not-configured": "Microsoft sign-in is not set up on this server.",
+  state: "That sign-in expired or was already used. Please try again.",
+  denied: "Microsoft sign-in was cancelled.",
+  "not-assigned": "Your Microsoft account has not been given access to Talon. Ask your teacher.",
+  "no-account": "There is no Talon account for your Microsoft account yet. Ask your teacher to add you.",
+  disabled: "Your Talon account is turned off. Ask your teacher or an admin.",
+  "already-linked": "This Talon account is linked to a different Microsoft account. Ask an admin.",
+  ambiguous: "More than one Talon account uses your email address. Ask an admin to fix it.",
+  domain: "Sign in with your school Microsoft account.",
+  "no-email": "Microsoft did not send an email address for your account. Ask an admin.",
+  retry: "Sign-in was interrupted. Please try again.",
+  failed: "Microsoft sign-in did not work. Try again, and ask an admin if it keeps happening.",
+};
+
+function takeSignInResult() {
+  const params = new URLSearchParams(window.location.search);
+  if (!params.has("signin")) {
+    return "";
+  }
+  const code = params.get("signin") || "";
+  params.delete("signin");
+  const query = params.toString();
+  window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
+  return signInMessages[code] || signInMessages.failed;
 }
 
 // One-time cleanup: the GitHub username used to be kept in the browser.
@@ -143,6 +180,7 @@ function takeConnectionResult() {
 
 // Once per page load (not in a state initializer: StrictMode runs those twice).
 const connectionResultOnLoad = takeConnectionResult();
+const signInErrorOnLoad = takeSignInResult();
 
 export default function App() {
   const [authUser, setAuthUser] = useState(getStoredAuthUser);
@@ -157,7 +195,8 @@ export default function App() {
   const [budgetBalance, setBudgetBalance] = useState(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [authError, setAuthError] = useState("");
+  const [authError, setAuthError] = useState(signInErrorOnLoad);
+  const [authOptions, setAuthOptions] = useState({ entra: false });
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
@@ -211,19 +250,29 @@ export default function App() {
           return;
         }
         if (!user) {
-          onLogoutRef.current?.({ skipServer: true });
+          // Keep a ?signin= message (Microsoft sign-in refused) on screen.
+          onLogoutRef.current?.({ skipServer: true, keepMessage: true });
           return;
         }
-        const sessionUser = {
-          username: String(user.username ?? "").trim(),
-          fullName: String(user.fullName ?? "").trim(),
-          role: normalizeUserRole(user.role),
-        };
+        const sessionUser = toAuthUser(user);
         setAuthUser(sessionUser);
         setBudgetBalance(typeof user.budgetBalance === "number" ? user.budgetBalance : null);
         window.localStorage.setItem(authStorageKey, JSON.stringify(sessionUser));
       })
       .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Whether the login page offers Microsoft sign-in.
+  useEffect(() => {
+    let cancelled = false;
+    fetchAuthOptions().then((options) => {
+      if (!cancelled) {
+        setAuthOptions(options);
+      }
+    });
     return () => {
       cancelled = true;
     };
@@ -590,13 +639,7 @@ export default function App() {
 
     try {
       const response = await login(username, password);
-      const user = response.user
-        ? {
-          username: String(response.user.username ?? "").trim(),
-          fullName: String(response.user.fullName ?? "").trim(),
-          role: normalizeUserRole(response.user.role),
-        }
-        : null;
+      const user = response.user ? toAuthUser(response.user) : null;
       setAuthUser(user);
       setBudgetBalance(typeof response.user?.budgetBalance === "number" ? response.user.budgetBalance : null);
       if (user?.username) {
@@ -613,7 +656,7 @@ export default function App() {
     }
   };
 
-  const onLogout = ({ skipServer = false } = {}) => {
+  const onLogout = ({ skipServer = false, keepMessage = false } = {}) => {
     if (!skipServer) {
       logout();
     }
@@ -623,7 +666,9 @@ export default function App() {
     setIsMobileNavOpen(false);
     setUsername("");
     setPassword("");
-    setAuthError("");
+    if (!keepMessage) {
+      setAuthError("");
+    }
     setJobs([]);
     setResults([]);
     setFilesByJobId({});
@@ -642,6 +687,15 @@ export default function App() {
           <p className="login-kicker">Welcome</p>
           <h1 className="login-title">Sign in to Talon</h1>
           <img src={talonLogo} alt="Talon" className="login-logo" />
+
+          {authOptions.entra ? (
+            <>
+              <a className="btn btn-primary login-button login-microsoft" href={entraLoginUrl}>
+                Sign in with Microsoft
+              </a>
+              <div className="login-divider"><span>or with a Talon password</span></div>
+            </>
+          ) : null}
 
           <form className="login-form" onSubmit={onLogin}>
             <label className="form-label" htmlFor="login-username">Username</label>
@@ -667,7 +721,11 @@ export default function App() {
 
             {authError ? <div className="login-error">{authError}</div> : null}
 
-            <button type="submit" className="btn btn-primary login-button" disabled={isAuthenticating}>
+            <button
+              type="submit"
+              className={`btn ${authOptions.entra ? "btn-secondary" : "btn-primary"} login-button`}
+              disabled={isAuthenticating}
+            >
               {isAuthenticating ? "Signing in..." : "Sign in"}
             </button>
           </form>
@@ -710,17 +768,19 @@ export default function App() {
             </button>
             <div className="user-menu-hint">Click for account menu</div>
             <div className={`user-menu${isUserMenuOpen ? " open" : ""}`} role="menu">
-              <button
-                type="button"
-                className="user-menu-item"
-                role="menuitem"
-                onClick={() => {
-                  setIsUserMenuOpen(false);
-                  setIsPasswordDialogOpen(true);
-                }}
-              >
-                Change password
-              </button>
+              {authUser.hasPassword ? (
+                <button
+                  type="button"
+                  className="user-menu-item"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsUserMenuOpen(false);
+                    setIsPasswordDialogOpen(true);
+                  }}
+                >
+                  Change password
+                </button>
+              ) : null}
               <a className="user-menu-item" href="#connections" role="menuitem" onClick={() => setIsUserMenuOpen(false)}>
                 Connections
               </a>

@@ -70,8 +70,8 @@ locals {
     "Failed logins" = {
       groups = [local.lg.backend]
       query  = <<-EOQ
-        filter event in ["auth.login_failed", "auth.login_locked"]
-        | stats count(*) as attempts, max(@timestamp) as last by username, ip, event
+        filter event in ["auth.login_failed", "auth.login_locked", "auth.entra_refused", "auth.entra_error"]
+        | stats count(*) as attempts, max(@timestamp) as last by username, ip, event, reason
         | sort attempts desc
       EOQ
     }

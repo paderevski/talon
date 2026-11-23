@@ -341,6 +341,22 @@ export const removeConnectionItem = (provider, itemId) =>
 export const connectUrl = (provider, mode = "") =>
   `/api/connections/${encodeURIComponent(provider)}/connect${mode ? `?mode=${encodeURIComponent(mode)}` : ""}`;
 
+// What the login page offers: { entra: boolean }. Never throws: without an
+// answer the page shows the password form only.
+export async function fetchAuthOptions() {
+  try {
+    const response = await fetch("/api/auth/options", { credentials: "same-origin" });
+    const body = response.ok ? await response.json() : {};
+    return { entra: body?.entra === true };
+  } catch {
+    return { entra: false };
+  }
+}
+
+// Full-page navigation: the server redirects to Microsoft and back to / (or
+// to /?signin=<code> when sign-in was refused).
+export const entraLoginUrl = "/api/auth/entra/login";
+
 export async function fetchCurrentUser() {
   const response = await fetch("/api/auth/me", { credentials: "same-origin" });
   if (response.status === 401) {

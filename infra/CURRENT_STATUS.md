@@ -247,8 +247,8 @@ fixes only. Items 1 and 2 below describe the current EC2 path.
 4. Test g6e.2xlarge on the box when it has capacity. GPU machines are open
    to students (`ec2_gpu_admin_only = false`, the Terraform default since
    2026-11-04; changing it rolls the web servers).
-5. Not code: ask LCPS IT for the `talon.lcps.org` DNS records and the Entra
-   App Registration (lead time); decide exposure and subnet for ALB/WAF.
+5. Not code: decide exposure and subnet for ALB/WAF. (The `talon.lcps.org`
+   DNS records and the Entra App Registration have arrived from LCPS IT.)
 
 ## Running now
 
@@ -515,8 +515,29 @@ toward two servers)
 
 **Blocked on others**
 
-9. **Entra ID sign-in** - waiting on the LCPS App Registration (ask early;
-   IT lead time).
+9. **Entra ID sign-in** - _code done on branch `entraID` (2026-11-23), not
+   deployed._ LCPS IT made the App Registration (tenant ID, client ID,
+   secret) and limits sign-in to an assigned list of users. "Sign in with
+   Microsoft" on the login page: OIDC authorization code + PKCE as a
+   confidential client (`backend/src/auth/entra.js`; ID token verified with
+   Node's crypto, no new dependency). Matching (`services/entraSignIn.js`):
+   a linked Microsoft object id (`user_identities` provider `entra`) wins;
+   else the one user whose email or username is the address is linked
+   (never re-linked to a second Microsoft account); else a new student
+   (`entra_auto_create = "off"` refuses instead). Optional
+   `entra_email_domains`. Passwords keep working (admins, break-glass);
+   Microsoft-only users get no "Change password". Settings: `entra.tf`
+   (SSM `entra-tenant-id`, `entra-client-id`, `entra-auto-create`,
+   `entra-email-domains`; `entra-client-secret` by hand). Logs:
+   `auth.login` with `provider=entra`, `auth.entra_refused` (reason),
+   `auth.entra_error`; in the "Failed logins" saved query. Tested against a
+   fake Microsoft (`tests/cases/auth-entra-sign-in.test.mjs`) and in the
+   browser locally; **not yet against the real tenant.** To go live:
+   (1) secret into SSM by hand; (2) `entra_tenant_id`/`entra_client_id` in
+   `terraform.tfvars`, plan, apply (adds SSM parameters and an IAM policy
+   only, no server roll); (3) deploy the branch; (4) sign in with a
+   real account. Open: the secret's expiry date (renew before it);
+   whether IT also registered the localhost redirect URIs.
 10. **ALB + WAF go-public** - hostname chosen (`talon.lcps.org`, needs
     LCPS IT to add DNS records). **Step 1 done 2026-11-10:** the
     internet-facing ALB `talon-public` exists (`public_alb.tf`) but admits
