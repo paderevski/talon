@@ -134,10 +134,10 @@ export async function run({ baseUrl }) {
   const offCallback = await fetch(`${baseUrl}/api/auth/entra/callback?code=x&state=y`, { redirect: "manual" });
   assert(offCallback.headers.get("location") === "/?signin=state", `unconfigured callback went to ${offCallback.headers.get("location")}`);
 
-  // A password user still sees hasPassword (the Change password menu).
+  // Password users have localSignIn (they get the Change password menu).
   const jane = createCookieJar();
   await login(jane, baseUrl, "jane_smith", "talon123");
-  assert((await me(jane, baseUrl))?.hasPassword === true, "password users have hasPassword");
+  assert((await me(jane, baseUrl))?.localSignIn === true, "password users have localSignIn");
 
   const fake = await startFakeMicrosoft();
   const entraEnv = {
@@ -176,7 +176,7 @@ export async function run({ baseUrl }) {
     assert(first.location === "/", `teacher sign-in went to ${first.location}`);
     const teacher = await me(first.jar, base);
     assert(teacher?.username === "entra.teacher" && teacher.roles.includes("teacher"), `teacher /me ${JSON.stringify(teacher)}`);
-    assert(teacher.hasPassword === false, "a Microsoft-only user has no Talon password");
+    assert(teacher.localSignIn === false, "a Microsoft-only user has no Talon password");
     assert(first.jar.get("talon.sid") !== first.cookieBefore, "sign-in must issue a new session id");
 
     // Later sign-ins go by the Microsoft object id, whatever the email says.
@@ -197,7 +197,7 @@ export async function run({ baseUrl }) {
     assert(created.location === "/", `new student went to ${created.location}`);
     const kid = await me(created.jar, base);
     assert(kid?.username === `newkid@${domain}` && kid.fullName === "New Kid" && kid.role === "student" && kid.roles.length === 1, `new student ${JSON.stringify(kid)}`);
-    assert(kid.hasPassword === false, "new student has no password");
+    assert(kid.localSignIn === false, "new student has no password");
     const again = await microsoftSignIn(base, fake, { oid: oid(4), email: `newkid@${domain}` });
     assert((await me(again.jar, base))?.id === kid.id, "second sign-in is the same user");
     const counts = await withTestDb((pool) => pool.query(

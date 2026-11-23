@@ -116,14 +116,14 @@ function getStoredAuthUser() {
 }
 
 // The fields the app keeps about the signed-in user (from /api/auth/login,
-// /api/auth/me, or localStorage). hasPassword is false for people who only
+// /api/auth/me, or localStorage). localSignIn is false for people who only
 // sign in with Microsoft: they have no Talon password to change.
 function toAuthUser(user) {
   return {
     username: String(user.username ?? "").trim(),
     fullName: String(user.fullName ?? "").trim(),
     role: normalizeUserRole(user.role),
-    hasPassword: user.hasPassword !== false,
+    localSignIn: user.localSignIn !== false,
   };
 }
 
@@ -768,7 +768,7 @@ export default function App() {
             </button>
             <div className="user-menu-hint">Click for account menu</div>
             <div className={`user-menu${isUserMenuOpen ? " open" : ""}`} role="menu">
-              {authUser.hasPassword ? (
+              {authUser.localSignIn ? (
                 <button
                   type="button"
                   className="user-menu-item"
