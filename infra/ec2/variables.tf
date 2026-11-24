@@ -77,8 +77,36 @@ variable "google_picker_api_key" {
   default     = ""
 }
 
+variable "entra_tenant_id" {
+  description = "Entra ID (LCPS) tenant ID, a GUID, for Sign in with Microsoft (not secret; empty = off)"
+  type        = string
+  default     = ""
+}
+
+variable "entra_client_id" {
+  description = "Application (client) ID of the LCPS App Registration for Talon (not secret)"
+  type        = string
+  default     = ""
+}
+
+variable "entra_auto_create" {
+  description = "student: a tenant user IT allowed in but with no Talon account gets a student account; off: refused"
+  type        = string
+  default     = "student"
+  validation {
+    condition     = contains(["student", "off"], var.entra_auto_create)
+    error_message = "entra_auto_create must be student or off."
+  }
+}
+
+variable "entra_email_domains" {
+  description = "Optional comma list (e.g. lcps.org): Microsoft sign-ins may link or create accounts only for these email domains"
+  type        = string
+  default     = ""
+}
+
 variable "public_url" {
-  description = "Where browsers reach Talon; callbacks are <public_url>/api/github/callback and <public_url>/api/connections/google_drive/callback"
+  description = "Where browsers reach Talon; callbacks are <public_url>/api/github/callback, <public_url>/api/connections/google_drive/callback and <public_url>/api/auth/entra/callback"
   type        = string
   default     = "http://localhost:8080" # SSM tunnel (infra/scripts/tunnel.sh)
 }

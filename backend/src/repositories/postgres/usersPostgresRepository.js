@@ -12,7 +12,8 @@ function primaryRole(roles) {
 const userSelect = `
   SELECT u.id, u.username, u.display_name, u.email, u.status,
          u.storage_quota_bytes, u.storage_used_bytes,
-         ARRAY(SELECT r.role::text FROM user_roles r WHERE r.user_id = u.id ORDER BY r.role) AS roles
+         ARRAY(SELECT r.role::text FROM user_roles r WHERE r.user_id = u.id ORDER BY r.role) AS roles,
+         EXISTS (SELECT 1 FROM user_identities i WHERE i.user_id = u.id AND i.provider = 'local') AS local_sign_in
   FROM users u
 `;
 
@@ -32,6 +33,8 @@ function mapUserRow(row) {
     roles,
     storageQuotaBytes: Number(row.storage_quota_bytes),
     storageUsedBytes: Number(row.storage_used_bytes),
+    // False for users who only sign in with Microsoft (no Talon password).
+    localSignIn: row.local_sign_in !== false,
   };
 }
 

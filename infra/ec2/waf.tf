@@ -17,11 +17,14 @@
 #    paid EC2 instances): COUNT at first.
 # 7. Write-request rate limit per client IP (POST/PUT/PATCH/DELETE under
 #    /api/): COUNT at first.
+# 8. Microsoft sign-in rate limit per client IP (GET /api/auth/entra/...,
+#    var.waf_login_rate_limit in 5 minutes): COUNT at first. Each one
+#    writes a session row, and the callback calls Microsoft.
 # There is no general per-IP limit on reads (GET), for the same shared-address
 # reason: the frontend polls job status and logs every 2 seconds per open job
 # page, so a class legitimately sends thousands of GETs in 5 minutes.
 #
-# Rules 5-7 are new and ship in COUNT mode: WAF records what they would have
+# Rules 5-8 are new and ship in COUNT mode: WAF records what they would have
 # blocked (metric CountedRequests, and the log's labels and rule lists) but
 # lets the request through. Request bodies here carry script arguments, repo
 # paths and roster CSV text that could trip the SQLi rules, and the real
@@ -36,7 +39,7 @@
 # are redacted (OAuth callbacks carry code and state in the query string). Blocked requests: filter action = BLOCK.
 #
 # Capacity (WCU, limit 1,500): IP reputation 25 + known bad inputs 200 +
-# common 700 + SQLi 200 + three rate rules (about 10 each) = about 1,155.
+# common 700 + SQLi 200 + four rate rules (about 10 each) = about 1,165.
 #
 # Cost: about 5 USD a month for the web ACL, 1 USD per rule (7; a managed rule
 # group counts as one), plus 0.60 USD per million requests.
@@ -75,7 +78,7 @@ variable "waf_write_rate_limit" {
 }
 
 variable "waf_new_rules_block" {
-  description = "false: the SQLi rule set and the job-submission and write-request rate rules only count (requests pass, WAF records the match). true: they block. Switch after watching the counts on real traffic."
+  description = "false: the SQLi rule set and the job-submission, write-request and Microsoft sign-in rate rules only count (requests pass, WAF records the match). true: they block. Switch after watching the counts on real traffic."
   type        = bool
   default     = false
 }
@@ -243,6 +246,52 @@ resource "aws_wafv2_web_acl" "public" {
     visibility_config {
       cloudwatch_metrics_enabled = true
       metric_name                = "login-rate-limit"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  # Sign in with Microsoft: GET /api/auth/entra/login and /callback (each
+  # sign-in is one of each). Same limit as password logins.
+  rule {
+    name     = "entra-sign-in-rate-limit"
+    priority = 45
+
+    action {
+      dynamic "block" {
+        for_each = var.waf_new_rules_block ? [1] : []
+        content {}
+      }
+      dynamic "count" {
+        for_each = var.waf_new_rules_block ? [] : [1]
+        content {}
+      }
+    }
+
+    statement {
+      rate_based_statement {
+        limit                 = var.waf_login_rate_limit
+        evaluation_window_sec = 300
+        aggregate_key_type    = "IP"
+
+        scope_down_statement {
+          byte_match_statement {
+            search_string         = "/api/auth/entra/"
+            positional_constraint = "STARTS_WITH"
+            field_to_match {
+              uri_path {}
+            }
+            text_transformation {
+              priority = 0
+              type     = "LOWERCASE"
+            }
+          }
+        }
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "entra-sign-in-rate-limit"
       sampled_requests_enabled   = true
     }
   }

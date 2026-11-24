@@ -9,10 +9,16 @@ import {
   reservePasswordAttempt,
 } from "../auth/loginThrottle.js";
 import { changeOwnPassword, sendManagementError } from "../services/management.js";
+import { createEntraClient } from "../auth/entra.js";
+import { signInWithEntra } from "../services/entraSignIn.js";
 import { log } from "../utils/log.js";
 
 const router = Router();
 const usersRepository = await getUsersRepository();
+const entra = createEntraClient();
+
+// Back to the login page with a code it explains (?signin=<code>).
+const backToLogin = (res, code) => res.redirect(303, `/?signin=${encodeURIComponent(code)}`);
 
 function regenerateSession(req) {
   return new Promise((resolve, reject) => {
@@ -87,6 +93,61 @@ router.post("/login", async (req, res) => {
   } catch (error) {
     log.error("login error", { event: "auth.login_error", ...loginFields(req, username), err: error });
     return res.status(500).json({ message: "Unable to validate credentials" });
+  }
+});
+
+// What the login page offers. Unauthenticated, so booleans only.
+router.get("/options", async (_req, res) => {
+  res.json({ entra: (await entra.status()).configured });
+});
+
+// Sign in with Microsoft (auth/entra.js). Both are browser navigations:
+// they answer with redirects, never JSON.
+router.get("/entra/login", async (req, res) => {
+  try {
+    const { url, pending } = await entra.beginLogin({ host: req.get("host") });
+    req.session.entraLogin = pending;
+    await saveSession(req);
+    return res.redirect(303, url);
+  } catch (error) {
+    if (error.code === "not-configured") {
+      return backToLogin(res, "not-configured");
+    }
+    log.error("Microsoft sign-in could not start", { event: "auth.entra_error", requestId: req.id, ip: req.ip, err: error });
+    return backToLogin(res, "failed");
+  }
+});
+
+router.get("/entra/callback", async (req, res) => {
+  const pending = req.session?.entraLogin;
+  if (req.session) {
+    delete req.session.entraLogin; // one use only
+  }
+  const fields = { requestId: req.id, ip: req.ip };
+  let identity;
+  try {
+    identity = await entra.finishLogin(pending, req.query);
+    const { userId, outcome } = await signInWithEntra(identity, identity.policy);
+
+    // New session id on login (prevents session fixation).
+    await regenerateSession(req);
+    req.session.userId = userId;
+    await saveSession(req);
+    const user = await usersRepository.findById(userId);
+    log.info("login", { event: "auth.login", ...fields, provider: "entra", outcome, username: user?.username, userId });
+    return res.redirect(303, "/");
+  } catch (error) {
+    const code = error.code && /^[a-z-]+$/.test(error.code) ? error.code : "failed";
+    const level = code === "failed" ? "error" : "warn";
+    log[level]("Microsoft sign-in refused", {
+      event: code === "failed" ? "auth.entra_error" : "auth.entra_refused",
+      ...fields,
+      reason: code,
+      detail: error.message,
+      // Who tried (no tokens): the Microsoft object id and email, when known.
+      ...(identity ? { oid: identity.oid, username: identity.email.slice(0, 200) } : {}),
+    });
+    return backToLogin(res, code);
   }
 });
 

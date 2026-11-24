@@ -95,6 +95,28 @@ body {
   margin-top: 10px;
 }
 
+.login-microsoft {
+  display: block;
+  text-align: center;
+  text-decoration: none;
+}
+
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 10px;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.login-divider::before,
+.login-divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--border);
+}
+
 .topbar {
   position: fixed;
   top: 0;

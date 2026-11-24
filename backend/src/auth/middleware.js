@@ -64,5 +64,6 @@ export function publicUser(user) {
     fullName: user.fullName,
     role: user.role,
     roles: user.roles ?? [user.role],
+    localSignIn: user.localSignIn !== false,
   };
 }

@@ -215,6 +215,13 @@ export async function startBackendForTests({ env: extraEnv = {}, reset = true } 
       GOOGLE_OAUTH_CLIENT_SECRET: "",
       GOOGLE_PICKER_API_KEY: "",
       GOOGLE_PROJECT_NUMBER: "",
+      // ...and never to Microsoft (auth-entra-sign-in uses a fake one).
+      ENTRA_TENANT_ID: "",
+      ENTRA_CLIENT_ID: "",
+      ENTRA_CLIENT_SECRET: "",
+      ENTRA_AUTHORITY_URL: "",
+      ENTRA_AUTO_CREATE: "",
+      ENTRA_EMAIL_DOMAINS: "",
       // ...and never clone from github.com (see gitFixtures).
       TALON_GIT_BIN: fixtureGitBin(),
       ...extraEnv,
