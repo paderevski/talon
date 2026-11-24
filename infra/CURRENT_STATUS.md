@@ -639,10 +639,10 @@ security review (2026-11-07), listed roughly in the order it suggested.
   policy attached by hand first. Still to do: deny use of the role's
   credentials outside the VPC (`aws:EC2InstanceSourceVPC`; check the key
   name). Superseded for S3 by presigned URLs (below).
-- **Keep job AMIs patched** (review #4). The Ubuntu AMI moves only on
-  `terraform apply`, so the kernel goes stale and local root exploits
-  matter more over time: refresh monthly, or bake an AMI with unattended
-  security upgrades (also removes the boot-time AWS CLI install).
+- **Keep job AMIs patched** (review #4). Done 2026-11-17: the CPU image is
+  rebuilt with OS security updates on the 1st of each month, and both job
+  images are pinned and switched on purpose after a smoke test (see "Job
+  image updates" under "CPU job image").
 - **DNS only through the VPC resolver; DNS Firewall** (review #5). The job
   security group allows port 53 to anywhere, so jobs can use any DNS
   server and send UDP 53 anywhere. Traffic to the Amazon resolver is not
@@ -747,10 +747,23 @@ carries `imageRelease` (`stock` when absent).
   `aws imagebuilder start-image-pipeline-execution --image-pipeline-arn <arn>`
   (output `cpu_image_pipeline_arn`). The AMI id is written to the SSM
   parameter `/imagebuilder/talon-demo/cpu-job` (Image Builder's service-linked
-  role can write only under `/imagebuilder/`); the launch template follows
-  that parameter only on `terraform apply`, like the stock AMI. Bump
-  `cpu_image_version` when the component text changes (recipes and
-  components are immutable).
+  role can write only under `/imagebuilder/`). Bump `cpu_image_version` when
+  the component text changes (recipes and components are immutable).
+- **Job image updates (pinned since 2026-11-17).** `cpu_job_ami_id` and
+  `gpu_job_ami_id` in the gitignored `terraform.tfvars` pin both job
+  templates; empty, they follow the SSM parameters above and move on any
+  apply (the GPU template had moved through five DLAMI builds that way).
+  Students get a fixed environment between switches: CPU is Ubuntu 24.04
+  with Python 3.12 (an LTS keeps that version; PyTorch comes from each job's
+  `requirements.txt`), GPU is the PyTorch 2.12 DLAMI (Python 3.13, CUDA 13).
+  Monthly, after the CPU build on the 1st: `infra/scripts/job-image.sh
+  status` (pinned vs newest, CPU and GPU), `job-image.sh test cpu|gpu
+  <ami-id>` (smoke job: Python, pip in a venv, metadata block; GPU also CUDA
+  and a PyTorch matmul; tagged `Component=manual-test`, folder deleted
+  after), then put the id in `terraform.tfvars` and apply. Rollback: restore
+  the previous id (keep that image until the next switch). Bigger moves (a
+  new Ubuntu LTS, Python minor, PyTorch line) once a year in the summer,
+  announced to students.
 - **No lifecycle policy** on purpose: deleting images on a schedule could
   remove the one the template points at. Delete old AMIs and snapshots by
   hand, after checking that no launch template uses them.
