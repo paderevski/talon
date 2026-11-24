@@ -486,6 +486,20 @@ const tests = [
       ),
       "entra with hash accepted",
     );
+    // One Microsoft account per user (two first sign-ins at once could
+    // otherwise both link).
+    await pool.query("INSERT INTO user_identities (user_id, provider, subject) VALUES ($1, 'entra', 'oid-a')", [userId]);
+    try {
+      let code = null;
+      try {
+        await pool.query("INSERT INTO user_identities (user_id, provider, subject) VALUES ($1, 'entra', 'oid-b')", [userId]);
+      } catch (error) {
+        code = error.code;
+      }
+      assert(code === "23505", `second entra identity for one user: got ${code}`);
+    } finally {
+      await pool.query("DELETE FROM user_identities WHERE user_id = $1 AND provider = 'entra'", [userId]);
+    }
   }],
   ["github accounts: tokens round-trip, are encrypted at rest, removed with the user", async () => {
     const store = createGithubAccountsStore({ pool });

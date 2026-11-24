@@ -1,7 +1,10 @@
 # Sign in with Microsoft (Entra ID, the LCPS tenant). The App Registration
 # is LCPS IT's (Web platform, delegated openid/profile/email with admin
-# consent, user assignment limited to Talon's users). See
-# backend/src/auth/entra.js.
+# consent, user assignment limited to Talon's users). It must also add the
+# optional ID token claims `email` and `xms_edov` (Token configuration):
+# Talon trusts only an email Microsoft marks verified, so without them only
+# accounts an admin linked (db-link-entra) can sign in. Only plain students
+# are linked by email automatically. See backend/src/auth/entra.js.
 #
 # Non-secret settings are SSM String parameters from the variables below.
 # The client secret is a SecureString parameter created BY HAND (never in

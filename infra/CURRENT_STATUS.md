@@ -522,15 +522,23 @@ toward two servers)
    confidential client (`backend/src/auth/entra.js`; ID token verified with
    Node's crypto, no new dependency). Matching (`services/entraSignIn.js`):
    a linked Microsoft object id (`user_identities` provider `entra`) wins;
-   else the one user whose email or username is the address is linked
-   (never re-linked to a second Microsoft account); else a new student
-   (`entra_auto_create = "off"` refuses instead). Optional
+   else, by **verified** email only (the `email` claim with `xms_edov`
+   true and no guest `idp`; never the UPN), the one user whose email or
+   username is the address is linked, **only if that user is a plain
+   student** (teachers, admins and users with no role are refused with
+   `link-by-admin`; an admin links them with `npm run db:link-entra --
+   --username <u> --oid <object id>` via `db-run.sh`; `--unlink` undoes);
+   never a second Microsoft account per user (unique index, migration
+   015); else a new student (`entra_auto_create = "off"` refuses
+   instead). **IT must add the optional ID token claims `email` and
+   `xms_edov`** or no first sign-in can match. Optional
    `entra_email_domains`. Passwords keep working (admins, break-glass);
    Microsoft-only users get no "Change password". Settings: `entra.tf`
    (SSM `entra-tenant-id`, `entra-client-id`, `entra-auto-create`,
    `entra-email-domains`; `entra-client-secret` by hand). Logs:
    `auth.login` with `provider=entra`, `auth.entra_refused` (reason),
-   `auth.entra_error`; in the "Failed logins" saved query. Tested against a
+   `auth.entra_error`; in the "Failed logins" saved query (missing fields
+   shown as "-", with the Microsoft object id for linking). Tested against a
    fake Microsoft (`tests/cases/auth-entra-sign-in.test.mjs`) and in the
    browser locally; **not yet against the real tenant.** To go live:
    (1) secret into SSM by hand; (2) `entra_tenant_id`/`entra_client_id` in

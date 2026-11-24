@@ -1,8 +1,11 @@
+import { execFile } from "node:child_process";
 import http from "node:http";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { createHash, generateKeyPairSync, randomBytes, sign } from "node:crypto";
-import { assert, createCookieJar, login, startBackendForTests, withTestDb } from "../lib/harness.mjs";
+import { assert, createCookieJar, login, startBackendForTests, testDatabaseUrl, withTestDb } from "../lib/harness.mjs";
 
-export const name = "Microsoft (Entra) sign-in: off unless configured; links by email, creates students, checks state, PKCE and the ID token";
+export const name = "Microsoft (Entra) sign-in: off unless configured; links students by verified email only, staff by admin; creates students, checks state, PKCE and the ID token";
 
 const tenant = "11111111-2222-3333-4444-555555555555";
 const clientId = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
@@ -92,6 +95,7 @@ async function microsoftSignIn(baseUrl, fake, claims = {}, { key = fake.privateK
   const valid = {
     iss: `${fake.base}/${tenant}/v2.0`, aud: clientId, tid: tenant, iat: now, nbf: now, exp: now + 3600,
     nonce: params.get("nonce"), oid: oid(1), name: "Someone", preferred_username: `someone@${domain}`,
+    email: `someone@${domain}`, xms_edov: true,
   };
   const code = randomBytes(12).toString("hex");
   fake.codes.set(code, {
@@ -118,7 +122,20 @@ async function expectRefused(baseUrl, fake, code, claims, options) {
   return result;
 }
 
-const testUsers = `lower(username) LIKE '%@${domain}' OR lower(email) LIKE '%@${domain}' OR username = 'entra.teacher'`;
+const testUsers = `lower(username) LIKE '%@${domain}' OR lower(email) LIKE '%@${domain}' OR username LIKE 'entra.%'`;
+
+// The admin's link script (scripts/db-link-entra.mjs) against the test database.
+const linkScript = fileURLToPath(new URL("../../scripts/db-link-entra.mjs", import.meta.url));
+async function linkEntra(...args) {
+  try {
+    const { stdout } = await promisify(execFile)(process.execPath, [linkScript, ...args], {
+      env: { ...process.env, DATABASE_URL: testDatabaseUrl },
+    });
+    return { ok: true, output: stdout };
+  } catch (error) {
+    return { ok: false, output: `${error.stdout}${error.stderr}` };
+  }
+}
 
 async function cleanUp() {
   await withTestDb((pool) => pool.query(`DELETE FROM users WHERE ${testUsers}`));
@@ -161,6 +178,11 @@ export async function run({ baseUrl }) {
         await pool.query("INSERT INTO user_roles (user_id, role) VALUES ($1, $2)", [rows[0].id, role]);
       };
       await add("entra.teacher", `Teacher.One@${domain.toUpperCase()}`, "teacher"); // made by an admin
+      await add("entra.admin", `boss@${domain}`, "admin");
+      await add("entra.both", `both@${domain}`, "student");
+      await pool.query("INSERT INTO user_roles (user_id, role) SELECT id, 'teacher' FROM users WHERE username = 'entra.both'");
+      await pool.query("INSERT INTO users (username, email, display_name) VALUES ('entra.norole', $1, 'No Role')", [`norole@${domain}`]);
+      await add("entra.student", `Student.One@${domain}`, "student");
       await add(`byname@${domain}`, null, "student"); // imported with the email as username
       await add("dup.one", `dup@${domain}`, "student");
       await add(`dup@${domain}`, null, "student");
@@ -170,21 +192,62 @@ export async function run({ baseUrl }) {
     const base = server.baseUrl;
     assert((await (await fetch(`${base}/api/auth/options`)).json()).entra === true, "options with settings");
 
-    // First sign-in of a user an admin created: linked by email (any case),
-    // keeps their roles, new session id.
-    const first = await microsoftSignIn(base, fake, { oid: oid(1), preferred_username: `teacher.one@${domain}`, name: "Teacher One" });
+    // Only an address Microsoft marks verified is trusted: not the UPN, not
+    // an unverified email, not a guest's.
+    await expectRefused(base, fake, "no-email", { oid: oid(20), email: undefined, preferred_username: `student.one@${domain}` });
+    await expectRefused(base, fake, "no-email", { oid: oid(20), email: `student.one@${domain}`, xms_edov: undefined });
+    await expectRefused(base, fake, "no-email", { oid: oid(20), email: `student.one@${domain}`, xms_edov: false });
+    await expectRefused(base, fake, "no-email", { oid: oid(20), email: `student.one@${domain}`, xms_edov: "0" });
+    await expectRefused(base, fake, "no-email", { oid: oid(20), email: `student.one@${domain}`, idp: "https://sts.windows.net/99999999-0000-0000-0000-000000000000/" });
+    const unlinked = await withTestDb((pool) => pool.query("SELECT count(*)::int AS n FROM user_identities WHERE subject = $1", [oid(20)]));
+    assert(unlinked.rows[0].n === 0, "no link from an unverified address");
+
+    // First sign-in of a student an admin created: linked by verified email
+    // (any case, xms_edov as a string too), new session id.
+    const student = await microsoftSignIn(base, fake, { oid: oid(20), email: `student.one@${domain}`, xms_edov: "1", name: "Student One" });
+    assert(student.location === "/", `student sign-in went to ${student.location}`);
+    const studentMe = await me(student.jar, base);
+    assert(studentMe?.username === "entra.student" && studentMe.roles.length === 1, `student /me ${JSON.stringify(studentMe)}`);
+    assert(student.jar.get("talon.sid") !== student.cookieBefore, "sign-in must issue a new session id");
+
+    // Anyone who is not a plain student is never linked automatically.
+    await expectRefused(base, fake, "link-by-admin", { oid: oid(1), email: `teacher.one@${domain}` });
+    await expectRefused(base, fake, "link-by-admin", { oid: oid(21), email: `boss@${domain}` });
+    await expectRefused(base, fake, "link-by-admin", { oid: oid(22), email: `both@${domain}` });
+    await expectRefused(base, fake, "link-by-admin", { oid: oid(23), email: `norole@${domain}` });
+    const staffLinks = await withTestDb((pool) => pool.query(
+      "SELECT count(*)::int AS n FROM user_identities WHERE subject = ANY($1)", [[oid(1), oid(21), oid(22), oid(23)]],
+    ));
+    assert(staffLinks.rows[0].n === 0, "no staff account linked automatically");
+
+    // An admin links the teacher with the script; then Microsoft sign-in
+    // works and keeps their roles.
+    const bad = await linkEntra("--username", "entra.teacher", "--oid", "not-a-guid");
+    assert(!bad.ok, "link script refuses a non-GUID object id");
+    const taken = await linkEntra("--username", "entra.teacher", "--oid", oid(20));
+    assert(!taken.ok && /already linked to 'entra.student'/.test(taken.output), `link script refuses a used object id: ${taken.output}`);
+    const linked = await linkEntra("--username", "entra.teacher", "--oid", oid(1).toUpperCase());
+    assert(linked.ok && /Linked Microsoft account/.test(linked.output), `link script: ${linked.output}`);
+    const twice = await linkEntra("--username", "entra.teacher", "--oid", oid(24));
+    assert(!twice.ok && /--unlink first/.test(twice.output), `link script refuses a second Microsoft account: ${twice.output}`);
+    const first = await microsoftSignIn(base, fake, { oid: oid(1), email: undefined, xms_edov: undefined, name: "Teacher One" });
     assert(first.location === "/", `teacher sign-in went to ${first.location}`);
     const teacher = await me(first.jar, base);
     assert(teacher?.username === "entra.teacher" && teacher.roles.includes("teacher"), `teacher /me ${JSON.stringify(teacher)}`);
     assert(teacher.localSignIn === false, "a Microsoft-only user has no Talon password");
-    assert(first.jar.get("talon.sid") !== first.cookieBefore, "sign-in must issue a new session id");
 
     // Later sign-ins go by the Microsoft object id, whatever the email says.
-    const renamed = await microsoftSignIn(base, fake, { oid: oid(1), preferred_username: `renamed@${domain}` });
+    const renamed = await microsoftSignIn(base, fake, { oid: oid(1), email: `renamed@${domain}` });
     assert((await me(renamed.jar, base))?.username === "entra.teacher", "linked account found by object id");
 
     // Another Microsoft account with that email does not take the user over.
     await expectRefused(base, fake, "already-linked", { oid: oid(2), email: `teacher.one@${domain}` });
+
+    // Unlinking stops Microsoft sign-in for that account.
+    const unlinkedTeacher = await linkEntra("--username", "entra.teacher", "--unlink");
+    assert(unlinkedTeacher.ok && /Unlinked/.test(unlinkedTeacher.output), `unlink: ${unlinkedTeacher.output}`);
+    await expectRefused(base, fake, "link-by-admin", { oid: oid(1), email: `teacher.one@${domain}` });
+    assert((await linkEntra("--username", "entra.teacher", "--oid", oid(1))).ok, "relink");
 
     // Matched by username: linked, and the address recorded as its email.
     const byName = await microsoftSignIn(base, fake, { oid: oid(3), email: `ByName@${domain}`, preferred_username: "ignored" });
@@ -212,7 +275,7 @@ export async function run({ baseUrl }) {
     await expectRefused(base, fake, "ambiguous", { oid: oid(5), email: `dup@${domain}` });
     await expectRefused(base, fake, "disabled", { oid: oid(6), email: `gone@${domain}` });
     await expectRefused(base, fake, "domain", { oid: oid(7), email: "outsider@elsewhere.test" });
-    await expectRefused(base, fake, "no-email", { oid: oid(8), email: undefined, preferred_username: "not-an-email" });
+    await expectRefused(base, fake, "no-email", { oid: oid(8), email: "not-an-email" });
     const otherDomain = await microsoftSignIn(base, fake, { oid: oid(9), email: "someone@other.test" });
     assert(otherDomain.location === "/", "second allowed domain (written as @other.test)");
 

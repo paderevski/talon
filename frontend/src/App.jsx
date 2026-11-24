@@ -139,7 +139,8 @@ const signInMessages = {
   "already-linked": "This Talon account is linked to a different Microsoft account. Ask an admin.",
   ambiguous: "More than one Talon account uses your email address. Ask an admin to fix it.",
   domain: "Sign in with your school Microsoft account.",
-  "no-email": "Microsoft did not send an email address for your account. Ask an admin.",
+  "no-email": "Microsoft did not send a verified school email address for your account. Ask an admin.",
+  "link-by-admin": "Staff accounts are connected to Microsoft by an admin. Ask an admin to link your account, or sign in with your Talon password.",
   retry: "Sign-in was interrupted. Please try again.",
   failed: "Microsoft sign-in did not work. Try again, and ask an admin if it keeps happening.",
 };
