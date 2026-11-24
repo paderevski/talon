@@ -71,7 +71,8 @@ locals {
       groups = [local.lg.backend]
       query  = <<-EOQ
         filter event in ["auth.login_failed", "auth.login_locked", "auth.entra_refused", "auth.entra_error"]
-        | stats count(*) as attempts, max(@timestamp) as last by username, ip, event, reason
+        | fields @timestamp, event, coalesce(username, "-") as user, coalesce(ip, "-") as client, coalesce(reason, "-") as why, coalesce(oid, "-") as microsoftOid
+        | stats count(*) as attempts, max(@timestamp) as last by user, client, event, why, microsoftOid
         | sort attempts desc
       EOQ
     }

@@ -23,6 +23,8 @@ import { log } from "../utils/log.js";
 //   ENTRA_EMAIL_DOMAINS  entra-email-domains  (String, Terraform; optional
 //                        comma list, e.g. "lcps.org": email linking and new
 //                        accounts only for these domains)
+// The App Registration must add the optional ID token claims `email` and
+// `xms_edov` (see verifiedEmailFromClaims).
 //   TALON_PUBLIC_URL     public-url           (shared with GitHub and Google)
 // Without the first three the login page shows no Microsoft button.
 //
@@ -66,14 +68,36 @@ function decodePart(part) {
   }
 }
 
-// The email to match on: `email` when Entra sends it, else
-// preferred_username when it looks like one (usually the UPN, which in
-// school tenants is the school email).
-export function emailFromClaims(claims) {
+// The address Talon may match on or create an account with: the `email`
+// claim, and only when Microsoft marks it verified (xms_edov: the address's
+// domain is verified in the user's home tenant and the user is a member
+// there, not a guest). Nothing else is trusted: preferred_username (the UPN)
+// and an unverified email can be set to anyone's address by a tenant admin
+// or a guest invitation. Also refused when the token names another identity
+// provider (idp differs from iss: a guest or external account).
+// Needs the optional ID token claims `email` and `xms_edov` on the App
+// Registration (Token configuration); without them Microsoft sends no
+// verified address and only already-linked users can sign in.
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const isTrue = (value) => value === true || value === 1 || ["1", "true"].includes(String(value ?? "").toLowerCase());
+
+export function verifiedEmailFromClaims(claims) {
+  if (!isTrue(claims.xms_edov)) {
+    return "";
+  }
+  if (claims.idp !== undefined && claims.idp !== claims.iss) {
+    return "";
+  }
+  const text = String(claims.email ?? "").trim().toLowerCase();
+  return emailPattern.test(text) && text.length <= 200 ? text : "";
+}
+
+// For logs only (who tried): whatever address the token carries, verified or not.
+export function claimedEmailFromClaims(claims) {
   for (const value of [claims.email, claims.preferred_username]) {
     const text = String(value ?? "").trim().toLowerCase();
-    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text) && text.length <= 200) {
-      return text;
+    if (text) {
+      return text.slice(0, 200);
     }
   }
   return "";
@@ -250,8 +274,9 @@ export function createEntraClient({
       return { url: `${doc.authorization_endpoint}?${params}`, pending };
     },
 
-    // query: the callback's query string. Returns { oid, email, name,
-    // policy: { autoCreate, emailDomains } } or throws EntraLoginError.
+    // query: the callback's query string. Returns { oid, email (verified,
+    // or ""), claimedEmail (logs only), name, policy: { autoCreate,
+    // emailDomains } } or throws EntraLoginError.
     async finishLogin(pending, query = {}) {
       if (
         !pending || !sameSecret(query.state, pending.state)
@@ -301,9 +326,20 @@ export function createEntraClient({
       }
 
       const claims = await verifyIdToken(grant.id_token, { cfg, doc, nonce: pending.nonce });
+      // Which claims the App Registration sends (names only, no values), and
+      // the two the email check depends on: shows at a glance whether IT
+      // added the optional claims `email` and `xms_edov`.
+      log.info("Microsoft ID token received", {
+        event: "auth.entra_claims",
+        claims: Object.keys(claims).sort().join(","),
+        hasEmail: Boolean(claims.email),
+        xmsEdov: claims.xms_edov === undefined ? "missing" : String(claims.xms_edov),
+        guest: claims.idp !== undefined && claims.idp !== claims.iss,
+      });
       return {
         oid: String(claims.oid).toLowerCase(),
-        email: emailFromClaims(claims),
+        email: verifiedEmailFromClaims(claims),
+        claimedEmail: claimedEmailFromClaims(claims),
         name: String(claims.name ?? "").trim().slice(0, 200),
         policy: {
           autoCreate: String(cfg.autoCreate || "student").trim().toLowerCase() !== "off",

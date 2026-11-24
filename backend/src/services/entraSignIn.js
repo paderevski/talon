@@ -5,11 +5,16 @@ import { setRoles } from "./management.js";
 // one transaction:
 //   1. The Microsoft account (its object id, oid) is already linked: that
 //      user. Email changes on the Microsoft side do not matter any more.
-//   2. Otherwise, by email: the one user whose email, or username, is that
-//      address gets the Microsoft account linked (first sign-in of a user
-//      an admin created or imported). A user already linked to another
-//      Microsoft account is not re-linked (an address can move to another
-//      person); two users matching is refused.
+//   2. Otherwise, by verified email (auth/entra.js trusts only an address
+//      Microsoft marks verified): the one user whose email, or username, is
+//      that address gets the Microsoft account linked (first sign-in of a
+//      student an admin created or imported). Only plain students are
+//      linked this way: a user with any other role (teacher, admin) or no
+//      role is refused with link-by-admin, and an admin links them with
+//      scripts/db-link-entra.mjs. A user already linked to a Microsoft
+//      account is not re-linked (an address can move to another person;
+//      the database also allows one Microsoft account per user); two users
+//      matching is refused.
 //   3. Otherwise a new student account (unless policy.autoCreate is off).
 //      IT's user assignment on the app registration decides who gets here.
 // Email linking and new accounts are limited to policy.emailDomains when set.
@@ -52,7 +57,7 @@ export async function signInWithEntra({ oid, email, name }, policy = {}, { pool 
       }
 
       if (!email) {
-        throw new EntraSignInError("no-email", "Microsoft sent no email address");
+        throw new EntraSignInError("no-email", "Microsoft sent no verified email address");
       }
       if (emailDomains.length && !emailDomains.includes(domainOf(email))) {
         throw new EntraSignInError("domain", `email domain ${domainOf(email)} is not allowed`);
@@ -60,7 +65,8 @@ export async function signInWithEntra({ oid, email, name }, policy = {}, { pool 
 
       const matches = await client.query(
         `SELECT u.id, u.status, u.email,
-                EXISTS (SELECT 1 FROM user_identities e WHERE e.user_id = u.id AND e.provider = 'entra') AS has_entra
+                EXISTS (SELECT 1 FROM user_identities e WHERE e.user_id = u.id AND e.provider = 'entra') AS has_entra,
+                ARRAY(SELECT r.role::text FROM user_roles r WHERE r.user_id = u.id ORDER BY r.role) AS roles
          FROM users u
          WHERE lower(u.email) = $1 OR lower(u.username) = $1
          ORDER BY u.id
@@ -80,6 +86,12 @@ export async function signInWithEntra({ oid, email, name }, policy = {}, { pool 
         }
         if (match.status !== "active") {
           throw new EntraSignInError("disabled", "the matching Talon account is disabled");
+        }
+        if (!(match.roles.length === 1 && match.roles[0] === "student")) {
+          throw new EntraSignInError(
+            "link-by-admin",
+            `the matching Talon user has roles [${match.roles.join(", ")}]; only students are linked automatically`,
+          );
         }
         userId = match.id;
         outcome = "linked";
@@ -109,8 +121,9 @@ export async function signInWithEntra({ oid, email, name }, policy = {}, { pool 
       return { userId, outcome };
     }, pool ? { pool } : undefined);
   } catch (error) {
-    // Two first sign-ins at once (same person, two tabs): the loser hits a
-    // unique index. Trying again finds what the winner made.
+    // Two first sign-ins at once (same person, two tabs; or two Microsoft
+    // accounts with one address): the loser hits a unique index. Trying
+    // again finds what the winner made (or refuses with already-linked).
     if (error?.code === "23505") {
       throw new EntraSignInError("retry", "a concurrent sign-in created this account; sign in again");
     }

@@ -144,8 +144,13 @@ router.get("/entra/callback", async (req, res) => {
       ...fields,
       reason: code,
       detail: error.message,
-      // Who tried (no tokens): the Microsoft object id and email, when known.
-      ...(identity ? { oid: identity.oid, username: identity.email.slice(0, 200) } : {}),
+      // Who tried (no tokens): the Microsoft object id and email, when known
+      // (emailVerified false: the address is the token's claim, not trusted).
+      ...(identity ? {
+        oid: identity.oid,
+        username: identity.email || identity.claimedEmail,
+        emailVerified: Boolean(identity.email),
+      } : {}),
     });
     return backToLogin(res, code);
   }
