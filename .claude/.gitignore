@@ -1,5 +1,0 @@
-# Claude Code: local state and agent worktrees. A shared .claude/settings.json
-# or .claude/skills/ could still be committed later on purpose.
-.claude/worktrees/
-.claude/.cc-writes/
-.claude/settings.local.json
