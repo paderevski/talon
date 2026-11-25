@@ -2,6 +2,7 @@ import { Router } from "express";
 import { getUsersRepository } from "../repositories/usersRepository.js";
 import {
   addClassMember,
+  assignStudentsToClass,
   createClass,
   createUser,
   deleteUnusedUser,
@@ -145,6 +146,21 @@ router.post("/classes/:classId/members", handle(async (req, res) => {
   }
   await addClassMember(Number(req.params.classId), userId, memberRole);
   return res.status(201).json({ ok: true });
+}));
+
+// Several students into one class, optionally with a starting budget each.
+router.post("/classes/:classId/students", handle(async (req, res) => {
+  const { userIds, budget } = req.body ?? {};
+  const result = await assignStudentsToClass({ classId: Number(req.params.classId), userIds, budget }, req.user.id);
+  log.info("students assigned", {
+    event: "admin.students_assigned",
+    requestId: req.id,
+    userId: req.user.id,
+    classId: Number(req.params.classId),
+    added: result.added,
+    grantedCents: result.grantedCents,
+  });
+  return res.status(201).json({ ok: true, ...result, grantedDollars: result.grantedCents / 100 });
 }));
 
 router.delete("/classes/:classId/members/:userId", handle(async (req, res) => {

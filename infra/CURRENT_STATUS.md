@@ -531,7 +531,11 @@ toward two servers)
    never a second Microsoft account per user (unique index, migration
    015); else a new student (`entra_auto_create = "off"` refuses
    instead). **IT must add the optional ID token claims `email` and
-   `xms_edov`** or no first sign-in can match. Optional
+   `xms_edov`** or no first sign-in can match. Students whose first
+   Microsoft sign-in created their account (no class, $0) see a "not in a
+   class yet" notice; admins set them up in **Admin -> Not in a class**
+   (several at once: class + optional starting budget each, an admin grant;
+   `POST /api/admin/classes/:id/students`). Optional
    `entra_email_domains`. Passwords keep working (admins, break-glass);
    Microsoft-only users get no "Change password". Settings: `entra.tf`
    (SSM `entra-tenant-id`, `entra-client-id`, `entra-auto-create`,

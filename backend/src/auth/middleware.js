@@ -65,5 +65,6 @@ export function publicUser(user) {
     role: user.role,
     roles: user.roles ?? [user.role],
     localSignIn: user.localSignIn !== false,
+    inClass: user.inClass === true,
   };
 }

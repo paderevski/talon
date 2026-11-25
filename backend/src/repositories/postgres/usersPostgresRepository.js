@@ -13,7 +13,9 @@ const userSelect = `
   SELECT u.id, u.username, u.display_name, u.email, u.status,
          u.storage_quota_bytes, u.storage_used_bytes,
          ARRAY(SELECT r.role::text FROM user_roles r WHERE r.user_id = u.id ORDER BY r.role) AS roles,
-         EXISTS (SELECT 1 FROM user_identities i WHERE i.user_id = u.id AND i.provider = 'local') AS local_sign_in
+         EXISTS (SELECT 1 FROM user_identities i WHERE i.user_id = u.id AND i.provider = 'local') AS local_sign_in,
+         EXISTS (SELECT 1 FROM class_members m JOIN classes c ON c.id = m.class_id
+                 WHERE m.user_id = u.id AND c.archived_at IS NULL) AS in_class
   FROM users u
 `;
 
@@ -35,6 +37,8 @@ function mapUserRow(row) {
     storageUsedBytes: Number(row.storage_used_bytes),
     // False for users who only sign in with Microsoft (no Talon password).
     localSignIn: row.local_sign_in !== false,
+    // A student in at least one active class (false: nobody has set them up yet).
+    inClass: row.in_class === true,
   };
 }
 
