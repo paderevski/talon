@@ -10,11 +10,7 @@ export function hasRole(user, role) {
   return (user?.roles ?? [user?.role]).includes(role);
 }
 
-// Whether a user may start jobs. For now this is the role default (students
-// and admins can; teachers cannot); a per-user override comes later.
-export function canRunJobs(user) {
-  return hasRole(user, "student") || hasRole(user, "admin");
-}
+export { canRunJobs } from "./jobPermission.js";
 
 // Which owners' jobs/results a user may see: admins see everyone; everyone
 // sees their own; teachers also see students in classes they teach.

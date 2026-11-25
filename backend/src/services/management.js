@@ -12,6 +12,7 @@ import {
 import { createPasswordHash, verifyPassword } from "../utils/passwords.js";
 import { clearFailures } from "../auth/loginThrottle.js";
 import { log } from "../utils/log.js";
+import { canRunJobs } from "../auth/jobPermission.js";
 
 // Admin and teacher operations: users, classes, class membership, budgets.
 // Everything that changes more than one row runs in one transaction.
@@ -111,7 +112,7 @@ async function revokeSessions(client, userId, keepSid = "") {
 
 export async function listUsers({ pool = getPool() } = {}) {
   const result = await pool.query(`
-    SELECT u.id, u.username, u.email, u.display_name, u.status, u.last_login_at, u.created_at,
+    SELECT u.id, u.username, u.email, u.display_name, u.status, u.last_login_at, u.created_at, u.can_run_jobs,
            ARRAY(SELECT r.role::text FROM user_roles r WHERE r.user_id = u.id ORDER BY r.role) AS roles,
            ARRAY(SELECT i.provider FROM user_identities i WHERE i.user_id = u.id ORDER BY i.provider) AS sign_in,
            personal.balance_cents AS personal_cents,
@@ -142,6 +143,10 @@ export async function listUsers({ pool = getPool() } = {}) {
     fullName: row.display_name,
     status: row.status,
     roles: row.roles,
+    // The admin's setting (true, false, or null for the role default) and
+    // the result.
+    canRunJobsOverride: row.can_run_jobs,
+    canRunJobs: canRunJobs({ roles: row.roles, canRunJobsOverride: row.can_run_jobs }),
     lastLoginAt: row.last_login_at,
     createdAt: row.created_at,
     // How the user signs in: "local" (Talon password) and/or "entra" (Microsoft).
@@ -248,6 +253,16 @@ export async function updateUser(userId, input, actor) {
         await client.query("UPDATE users SET email = $2, updated_at = now() WHERE id = $1", [
           userId,
           cleanEmail(input.email),
+        ]);
+      }
+
+      if (input.canRunJobs !== undefined) {
+        if (![true, false, null].includes(input.canRunJobs)) {
+          throw new ManagementError("canRunJobs must be true, false or null (the role default)");
+        }
+        await client.query("UPDATE users SET can_run_jobs = $2, updated_at = now() WHERE id = $1", [
+          userId,
+          input.canRunJobs,
         ]);
       }
 
