@@ -35,8 +35,8 @@ export function ClassTables({ classes, onOpenStudentView, onAllocate, poolBalanc
             <tr>
               <th>Student</th>
               <th>Username</th>
-              <th>Allocated</th>
-              <th>Remaining</th>
+              <th className="cell-num">Allocated</th>
+              <th className={onAllocate ? undefined : "cell-num"}>Remaining</th>
               <th>Workspace</th>
             </tr>
           </thead>
@@ -45,8 +45,8 @@ export function ClassTables({ classes, onOpenStudentView, onAllocate, poolBalanc
               <tr key={student.username}>
                 <td>{student.fullName}</td>
                 <td className="mono-sm">{student.username}</td>
-                <td>{formatDollars(student.quota)}</td>
-                <td>
+                <td className="cell-num">{formatDollars(student.quota)}</td>
+                <td className={onAllocate ? undefined : "cell-num"}>
                   {onAllocate ? (
                     <BudgetAdjuster
                       who={student.fullName}

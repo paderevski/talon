@@ -33,6 +33,10 @@
   --accent-red-dim: rgba(239, 68, 68, 0.12);
   --accent-purple: #a78bfa;
   --accent-purple-dim: rgba(167, 139, 250, 0.12);
+  /* Talon cyan, from the logo's glow. */
+  --accent-talon: #3dd8e8;
+  --accent-talon-dim: rgba(61, 216, 232, 0.07);
+  --accent-talon-edge: rgba(61, 216, 232, 0.4);
 }
 
 * { box-sizing: border-box; }
@@ -138,63 +142,89 @@ body {
 .topbar-brand { font-weight: 800; font-size: var(--fs-md); }
 .topbar-left { display: flex; align-items: center; gap: 10px; }
 .topbar-right { display: flex; gap: 12px; align-items: center; }
-.server-pill, .user-pill {
-  border: 1px solid var(--border);
-  background: var(--bg-card);
-  border-radius: 20px;
-  padding: 6px 10px;
-  font-size: var(--fs-sm);
-}
-.user-menu-wrap {
-  position: relative;
-}
-.user-pill-button {
+/* Account menu: avatar, name and roles; the menu opens on hover or click. */
+.user-menu-wrap { position: relative; }
+.user-trigger {
   display: inline-flex;
   align-items: center;
-  color: var(--text-primary);
-  font: inherit;
-  cursor: pointer;
-}
-.user-menu-hint {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  border: 1px solid var(--border);
-  background: var(--bg-card);
+  gap: 10px;
+  padding: 4px 8px 4px 4px;
+  border: 1px solid transparent;
   border-radius: 8px;
-  color: var(--text-secondary);
-  font-size: var(--fs-sm);
-  white-space: nowrap;
-  padding: 6px 10px;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateY(-2px);
-  transition: opacity 120ms ease, transform 120ms ease;
-  z-index: 19;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
 }
-.user-menu-wrap:hover .user-menu-hint,
-.user-menu-wrap:focus-within .user-menu-hint {
-  opacity: 1;
-  transform: translateY(0);
+.user-menu-wrap:hover .user-trigger,
+.user-menu-wrap.menu-open .user-trigger,
+.user-trigger:focus-visible {
+  background: var(--bg-card);
+  border-color: var(--border);
 }
-.user-menu-wrap.menu-open .user-menu-hint {
-  opacity: 0;
+.user-avatar {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 50%;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent-blue-dim), var(--accent-purple));
 }
+.user-trigger-text { display: flex; flex-direction: column; line-height: 1.2; }
+.user-trigger-name { font-size: var(--fs-sm); font-weight: 600; }
+.user-trigger-role { font-size: var(--fs-xs); color: var(--text-muted); }
+.user-trigger-chevron { color: var(--text-muted); transition: transform 120ms ease; }
+.user-menu-wrap:hover .user-trigger-chevron,
+.user-menu-wrap.menu-open .user-trigger-chevron { transform: rotate(180deg); }
+
 .user-menu {
   position: absolute;
-  top: calc(100% + 8px);
+  top: calc(100% + 6px);
   right: 0;
-  min-width: 160px;
+  min-width: 220px;
   border: 1px solid var(--border);
   background: var(--bg-card);
   border-radius: 10px;
   padding: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   display: none;
   z-index: 20;
 }
-.user-menu.open {
-  display: block;
+/* Bridges the gap under the trigger so the hover menu stays open on the way down. */
+.user-menu::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -8px;
+  height: 8px;
 }
+.user-menu.open,
+.user-menu-wrap:hover .user-menu { display: block; }
+.user-menu-header {
+  padding: 8px 10px 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.user-menu-name { font-weight: 600; }
+.user-menu-username {
+  font-family: "JetBrains Mono", monospace;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+.user-menu-budget {
+  margin-top: 6px;
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+.user-menu-budget-value { font-family: "JetBrains Mono", monospace; color: var(--text-primary); }
+.user-menu-divider { height: 1px; margin: 4px 0; background: var(--border); }
 .user-menu-item {
   display: block;
   width: 100%;
@@ -209,25 +239,17 @@ body {
   padding: 8px 10px;
   cursor: pointer;
 }
-.user-menu-item:hover {
+.user-menu-item:hover,
+.user-menu-item:focus-visible {
   background: var(--bg-card-hover);
   color: var(--text-primary);
+  outline: none;
 }
 .user-menu-item-disabled,
 .user-menu-item-disabled:hover {
   color: var(--text-muted);
   background: transparent;
   cursor: not-allowed;
-}
-.user-avatar {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  display: inline-flex;
-  justify-content: center;
-  align-items: center;
-  margin-right: 8px;
-  background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
 }
 
 .layout { display: flex; padding-top: 52px; }
@@ -350,16 +372,49 @@ body {
 /* Sub-sections inside a view ("Student budgets by class", form headings). */
 h3.panel-title { font-size: var(--fs-md); }
 
+/* New Job header: budget left and this job's most. */
+.budget-summary { display: flex; gap: 10px; }
+.budget-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card);
+  line-height: 1.2;
+}
+.budget-stat-label {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-label);
+}
+.budget-stat-value {
+  font-family: "JetBrains Mono", monospace;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+/* Budget left: a faint Talon-cyan tint so it reads first; amber when short. */
+.budget-stat.budget-left {
+  border-color: var(--accent-talon-edge);
+  background: var(--accent-talon-dim);
+}
+.budget-stat.budget-left .budget-stat-value { color: var(--accent-talon); }
+.budget-stat.warn { border-color: var(--accent-amber); background: var(--accent-amber-dim); }
+.budget-stat.warn .budget-stat-value { color: var(--accent-amber); }
+
 .new-job-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.new-job-grid-submit {
-  grid-template-columns: 1fr 1.7fr 0.7fr 0.8fr 1fr;
-}
-.new-job-grid-submit .form-group-inline {
-  grid-column: auto;
-}
-.new-job-grid-submit .form-group-half {
-  grid-column: span 2;
-}
+/* New Job: one 12-column grid so every row shares edges. Job name, branch,
+   folder and entry script take 2 columns, the source 4, half-width fields 6;
+   the halfway line is the repository's right edge and the Arguments /
+   Environment split (.job-extras: 1fr 1fr with the same gap lands there too). */
+.new-job-grid-submit { grid-template-columns: repeat(12, minmax(0, 1fr)); }
+.new-job-grid-submit .form-group-inline { grid-column: span 2; }
+.new-job-grid-submit .form-group-wide { grid-column: span 4; }
+.new-job-grid-submit .form-group-half { grid-column: span 6; }
 .form-group { display: flex; flex-direction: column; gap: 6px; }
 .form-group.full { grid-column: 1 / -1; }
 .form-label {
@@ -376,6 +431,58 @@ h3.panel-title { font-size: var(--fs-md); }
   color: var(--text-primary);
   border-radius: 8px;
   padding: 10px;
+}
+/* Dropdowns open below the box as an in-page list (customizable select, recent
+   Chrome/Edge) instead of the macOS system menu that covers the screen. Other
+   browsers keep their native menu. */
+@supports (appearance: base-select) {
+  .form-select,
+  .form-select::picker(select) {
+    appearance: base-select;
+  }
+  .form-select {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    cursor: pointer;
+  }
+  .form-select::picker-icon {
+    color: var(--text-muted);
+    transition: rotate 120ms ease;
+  }
+  .form-select:open::picker-icon { rotate: 180deg; }
+  .form-select:open { border-color: var(--accent-blue); }
+  .form-select::picker(select) {
+    margin-top: 4px;
+    padding: 4px;
+    max-height: min(320px, 50vh);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  }
+  .form-select option {
+    padding: 7px 10px;
+    border-radius: 6px;
+    font-size: var(--fs-base);
+  }
+  .form-select option:hover,
+  .form-select option:focus-visible {
+    background: var(--bg-card-hover);
+    outline: none;
+  }
+  .form-select option:checked { color: var(--accent-blue-text); }
+  .form-select option::checkmark { color: var(--accent-blue-text); }
+  .form-select option:disabled { color: var(--text-muted); cursor: not-allowed; }
+  .form-select optgroup {
+    font-size: var(--fs-xs);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-label);
+  }
 }
 .form-textarea { min-height: 84px; }
 .form-hint { color: var(--text-muted); font-size: var(--fs-xs); }
@@ -656,8 +763,10 @@ td:last-child, th:last-child { border-right: none; }
 
 @media (max-width: 1100px) {
   .new-job-grid { grid-template-columns: 1fr; }
+  .new-job-grid-submit .form-group-inline,
+  .new-job-grid-submit .form-group-wide,
   .new-job-grid-submit .form-group-half {
-    grid-column: auto;
+    grid-column: 1 / -1;
   }
   .submit-actions-row {
     flex-wrap: nowrap;
@@ -678,10 +787,6 @@ td:last-child, th:last-child { border-right: none; }
 
   .topbar-brand {
     font-size: var(--fs-base);
-  }
-
-  .server-pill {
-    display: none;
   }
 
   .layout {
@@ -722,6 +827,9 @@ td:last-child, th:last-child { border-right: none; }
 }
 
 @media (max-width: 430px) {
+  /* Phones: just the avatar and chevron; the menu header names the user. */
+  .user-trigger-text { display: none; }
+
   #results .result-card:nth-child(n + 3) {
     display: none;
   }
@@ -799,6 +907,35 @@ td:last-child, th:last-child { border-right: none; }
 .role-chip.teacher { color: var(--accent-blue-text); background: var(--accent-blue-glow); }
 .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .row-disabled { opacity: 0.55; }
+.budget-cell .btn[aria-expanded="true"],
+.row-actions .btn[aria-expanded="true"] {
+  border-color: var(--accent-blue);
+  color: var(--text-primary);
+}
+/* A user being edited: the row is highlighted and its form opens right under it. */
+.row-editing > td {
+  background: var(--accent-blue-glow);
+  border-bottom-color: transparent;
+}
+.row-editing > td:first-child { box-shadow: inset 2px 0 0 var(--accent-blue); }
+.row-editor > td {
+  padding: 0 10px 14px;
+  background: var(--accent-blue-glow);
+  box-shadow: inset 2px 0 0 var(--accent-blue);
+}
+.inline-form.inline-form-row {
+  margin: 0;
+  background: var(--bg-secondary);
+  scroll-margin: 80px 0;
+  /* Fields on one line (username, name, email, roles, can run jobs), buttons below. */
+  grid-template-columns: minmax(120px, 1fr) minmax(150px, 1.3fr) minmax(170px, 1.5fr) auto minmax(170px, 1fr);
+}
+.inline-form-row .check-row { flex-wrap: nowrap; min-height: 42px; }
+.form-actions-note { margin-left: auto; }
+@media (max-width: 1100px) {
+  .inline-form.inline-form-row { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+  .inline-form-row .check-row { flex-wrap: wrap; }
+}
 .credentials-notice {
   display: flex;
   gap: 12px;
@@ -1073,6 +1210,8 @@ button.source-placeholder:disabled { color: var(--text-muted); cursor: not-allow
 
 /* Data tables: numbers right-aligned, actions hug the right edge. */
 .cell-num { text-align: right; font-variant-numeric: tabular-nums; }
+/* A sortable header's button follows the column's alignment. */
+th.cell-num .sort-btn { margin-left: auto; text-align: right; }
 .cell-actions { text-align: right; white-space: nowrap; width: 1%; }
 .cell-strong { font-weight: 600; }
 
@@ -1369,3 +1508,109 @@ button.source-placeholder:disabled { color: var(--text-muted); cursor: not-allow
 }
 .fb-tag-run { border-color: var(--accent-blue); color: var(--accent-blue-text); }
 .fb-size { margin-left: auto; flex: none; color: var(--text-muted); font-size: 11px; }
+
+/* Users table budget: the amount right-aligned (teachers: pool and own, labels
+   left of right-aligned figures), then Adjust close beside it with room after. */
+.budget-cell-figures {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  gap: 0 8px;
+  text-align: right;
+}
+.budget-cell-figures .form-hint { text-align: left; align-self: center; }
+th.budget-adjust-cell, td.budget-adjust-cell { width: 1%; padding-left: 0; padding-right: 32px; white-space: nowrap; }
+
+/* Admin budget panel (expanded row): facts on the left, the change on the right. */
+.budget-panel {
+  display: grid;
+  grid-template-columns: minmax(240px, 340px) minmax(360px, 1fr);
+  gap: 32px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-secondary);
+}
+.budget-panel-amount-label { display: flex; justify-content: space-between; gap: 8px; }
+.budget-panel-all {
+  border: none;
+  padding: 0;
+  background: none;
+  color: var(--accent-blue-text);
+  font: inherit;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+}
+.budget-panel-all:hover { text-decoration: underline; }
+.budget-panel-notice { grid-column: 1 / -1; margin: 0; }
+.budget-panel-facts { display: flex; flex-direction: column; gap: 12px; }
+.budget-panel-figure { display: flex; flex-direction: column; gap: 2px; }
+.budget-panel-amount {
+  font-family: "JetBrains Mono", monospace;
+  font-size: var(--fs-xl);
+  font-weight: 600;
+  color: var(--accent-talon);
+}
+.budget-panel-list {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 16px;
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+.budget-panel-list dt { color: var(--text-secondary); }
+.budget-panel-list dd { margin: 0; text-align: right; font-family: "JetBrains Mono", monospace; }
+.budget-panel-sources-title {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.budget-panel-dt-hint { display: block; font-size: var(--fs-xs); color: var(--text-muted); }
+.budget-panel-action { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
+.budget-panel-switches { display: flex; flex-wrap: wrap; gap: 12px; }
+.budget-panel-fields {
+  display: grid;
+  grid-template-columns: minmax(200px, 1.2fr) minmax(110px, 0.6fr) minmax(180px, 1.2fr);
+  gap: 12px;
+  width: 100%;
+}
+.budget-panel-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  min-height: 22px;
+  font-size: var(--fs-sm);
+  font-family: "JetBrains Mono", monospace;
+  color: var(--text-secondary);
+}
+.budget-panel-preview strong { color: var(--text-primary); font-weight: 600; }
+.budget-panel-preview .form-hint { font-family: "Plus Jakarta Sans", sans-serif; }
+.budget-panel-problem { color: var(--accent-amber); font-family: "Plus Jakarta Sans", sans-serif; }
+.budget-panel-action .notice-ok, .budget-panel-action .repo-error { margin: 0; width: 100%; }
+
+/* Segmented switch (a radio group drawn as joined buttons). */
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+}
+.segmented-option {
+  border: none;
+  border-radius: 6px;
+  padding: 6px 14px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+.segmented-option:hover { color: var(--text-primary); }
+.segmented-option.selected { background: var(--bg-card-hover); color: var(--text-primary); box-shadow: inset 0 0 0 1px var(--border); }
+
+@media (max-width: 1100px) {
+  .budget-panel { grid-template-columns: 1fr; }
+  .budget-panel-fields { grid-template-columns: 1fr; }
+}

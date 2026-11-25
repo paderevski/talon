@@ -8,6 +8,7 @@ import {
   updateAdminUser,
 } from "../api/client";
 import CredentialsNotice from "./CredentialsNotice";
+import { formatDollars } from "../utils/format";
 import UserList from "./UserList";
 
 const allRoles = ["student", "teacher", "admin"];
@@ -42,12 +43,13 @@ export default function AdminUsersPanel({ users, classes, authUser, onChanged, t
   const [deleteName, setDeleteName] = useState("");
   const formRef = useRef(null);
 
-  // The form opens above the lists; bring it into view from wherever the button was.
+  // Add opens above the list, Edit under the user's row; bring either into view
+  // ("nearest": an edit row right under the click usually needs no scroll).
   useEffect(() => {
     if (isFormOpen) {
-      formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      formRef.current?.scrollIntoView({ behavior: "smooth", block: editing ? "nearest" : "center" });
     }
-  }, [isFormOpen, editing]);
+  }, [isFormOpen, editing?.id]);
 
   function openAdd(role = "student") {
     setEditing(null);
@@ -64,7 +66,12 @@ export default function AdminUsersPanel({ users, classes, authUser, onChanged, t
     );
   }
 
+  // Edit on the row already open closes it.
   function openEdit(user) {
+    if (isFormOpen && editing?.id === user.id) {
+      closeForm();
+      return;
+    }
     setIsDeleting(false);
     setDeleteName("");
     setEditing(user);
@@ -152,33 +159,25 @@ export default function AdminUsersPanel({ users, classes, authUser, onChanged, t
     }
   }
 
-  const shared = {
-    classes,
-    authUser,
-    isBusy,
-    onAdd: openAdd,
-    onEdit: openEdit,
-    onResetPassword,
-    onToggleStatus,
-    onChanged,
-  };
+  // Unticking Teacher while the pool holds money would strand it (the server
+  // refuses too): say so and keep Save off until the pool is emptied.
+  const strandedPool =
+    editing && editing.roles.includes("teacher") && !form.roles.includes("teacher") && (editing.poolBalance ?? 0) > 0
+      ? editing.poolBalance
+      : 0;
 
-  return (
-    <>
-      <div className="panel-head panel-head-tabbed">
-        <h2 className="panel-title">Users</h2>
-      </div>
-
-      <div className="admin-section">
-      {credentials ? (
-        <CredentialsNotice {...credentials} onDismiss={() => setCredentials(null)} />
-      ) : null}
-      {message ? <div className="notice-ok">{message}</div> : null}
-      {error ? <div className="repo-error">{error}</div> : null}
-
-      {isFormOpen ? (
-        <form className="inline-form" ref={formRef} onSubmit={onSubmit}>
-          <h3 className="panel-title form-group full">{editing ? `Edit ${editing.username}` : "Add user"}</h3>
+  // One form for Add (shown above the list) and Edit (shown under the row).
+  const userForm = (
+    <form className={`inline-form${editing ? " inline-form-row" : ""}`} ref={formRef} onSubmit={onSubmit}>
+          {/* Editing: the highlighted row above names the user, so no heading. */}
+          {editing ? null : <h3 className="panel-title form-group full">Add user</h3>}
+          {editing && error ? <div className="repo-error form-group full">{error}</div> : null}
+          {strandedPool > 0 ? (
+            <div className="notice-warn form-group full" role="status">
+              {editing.fullName}&apos;s pool still has {formatDollars(strandedPool)}. Take it back to the School account
+              first (Budget, Adjust, Pool, Take back), then remove the teacher role.
+            </div>
+          ) : null}
           <div className="form-group">
             <label className="form-label" htmlFor="user-username">Username</label>
             <input
@@ -246,11 +245,10 @@ export default function AdminUsersPanel({ users, classes, authUser, onChanged, t
                 <option value="allowed">Allowed</option>
                 <option value="blocked">Blocked</option>
               </select>
-              <div className="form-hint">Separate from budget. Blocked users keep their past jobs and results.</div>
             </div>
           ) : null}
           <div className="form-actions full">
-            <button type="submit" className="btn btn-primary btn-sm" disabled={isBusy || form.roles.length === 0}>
+            <button type="submit" className="btn btn-primary btn-sm" disabled={isBusy || form.roles.length === 0 || strandedPool > 0}>
               {editing ? "Save changes" : "Create user"}
             </button>
             <button type="button" className="btn btn-secondary btn-sm" onClick={closeForm}>
@@ -323,12 +321,47 @@ export default function AdminUsersPanel({ users, classes, authUser, onChanged, t
                 </button>
               </>
             ) : null}
-            {editing ? null : (
+            {editing ? (
+              <span className="form-hint form-actions-note">
+                Can run jobs is separate from budget. Blocked users keep their past jobs and results.
+              </span>
+            ) : (
               <span className="form-hint">A random password is generated and shown once.</span>
             )}
           </div>
-        </form>
+    </form>
+  );
+
+  const shared = {
+    classes,
+    editingId: editing?.id ?? null,
+    authUser,
+    isBusy,
+    onAdd: openAdd,
+    onEdit: openEdit,
+    onResetPassword,
+    onToggleStatus,
+    onChanged,
+    editor: isFormOpen && editing ? userForm : null,
+    onCloseEditor: () => {
+      if (editing) closeForm();
+    },
+  };
+
+  return (
+    <>
+      <div className="panel-head panel-head-tabbed">
+        <h2 className="panel-title">Users</h2>
+      </div>
+
+      <div className="admin-section">
+      {credentials ? (
+        <CredentialsNotice {...credentials} onDismiss={() => setCredentials(null)} />
       ) : null}
+      {message ? <div className="notice-ok">{message}</div> : null}
+      {error && !editing ? <div className="repo-error">{error}</div> : null}
+
+      {isFormOpen && !editing ? userForm : null}
 
       </div>
 

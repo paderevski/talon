@@ -104,8 +104,8 @@ export default function AdminRosterPanel({ authUser, refreshKey = 0 }) {
                   <thead>
                     <tr>
                       <th>Student</th>
-                      <th>Allocated</th>
-                      <th>Remaining</th>
+                      <th className="cell-num">Allocated</th>
+                      <th className="cell-num">Remaining</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -115,8 +115,8 @@ export default function AdminRosterPanel({ authUser, refreshKey = 0 }) {
                           {student.fullName}
                           <div className="form-hint mono-sm">{student.username}</div>
                         </td>
-                        <td>{formatDollars(student.quota)}</td>
-                        <td>{formatDollars(student.tokensRemaining)}</td>
+                        <td className="cell-num">{formatDollars(student.quota)}</td>
+                        <td className="cell-num">{formatDollars(student.tokensRemaining)}</td>
                       </tr>
                     ))}
                   </tbody>

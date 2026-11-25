@@ -1,8 +1,6 @@
-import { useMemo, useState } from "react";
-import { adjustAdminBudget } from "../api/client";
-import BudgetAdjuster from "./BudgetAdjuster";
-import { schoolAddProps, useSchoolBalance } from "./schoolBalance";
-import { formatClassName } from "../utils/format";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import AdminBudgetPanel from "./AdminBudgetPanel";
+import { formatClassName, formatDollars } from "../utils/format";
 
 // "Ada Lovelace" sorts as "lovelace ada", so lists read alphabetically by last name.
 function nameKey(user) {
@@ -15,14 +13,26 @@ function mainBalance(user, kind) {
   return kind === "teacher" ? user.poolBalance ?? 0 : user.personalBalance;
 }
 
+// The Class column as shown ("Calculus · Block 5, ..."), names in order; "" when none.
+function classesKey(user) {
+  return user.classes
+    .map((classItem) => formatClassName(classItem.name, classItem.block))
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    .join(", ");
+}
+
 const sorters = {
   name: (a, b) => nameKey(a).localeCompare(nameKey(b)),
+  // By class name then block (Block 2 before Block 10); no class sorts first.
+  classes: (a, b) => classesKey(a).localeCompare(classesKey(b), undefined, { numeric: true }),
   username: (a, b) => a.username.toLowerCase().localeCompare(b.username.toLowerCase()),
   lastLogin: (a, b) => (a.lastLoginAt ? Date.parse(a.lastLoginAt) : 0) - (b.lastLoginAt ? Date.parse(b.lastLoginAt) : 0),
 };
 
 // One table of users (students, teachers or admins) with search, filters,
-// sortable headers and in-place budget editing.
+// sortable headers. editingId/editor: the user being edited and the edit
+// form, shown as an expanded row under that user; Adjust opens that user's
+// budget panel the same way (one expanded row at a time: onCloseEditor).
 export default function UserList({
   id,
   title,
@@ -36,13 +46,57 @@ export default function UserList({
   onResetPassword,
   onToggleStatus,
   onChanged,
+  editingId = null,
+  editor = null,
+  onCloseEditor,
 }) {
-  const schoolBalance = useSchoolBalance();
+  const [budgetUserId, setBudgetUserId] = useState(null);
+  // Why the budget panel opened, when Disable sent the admin there first.
+  const [budgetNotice, setBudgetNotice] = useState(null);
+  // Opening Edit closes the budget panel; opening the budget panel closes Edit.
+  useEffect(() => {
+    if (editingId) {
+      setBudgetUserId(null);
+    }
+  }, [editingId]);
+  function toggleBudget(user) {
+    setBudgetNotice(null);
+    if (budgetUserId === user.id) {
+      setBudgetUserId(null);
+      return;
+    }
+    onCloseEditor?.();
+    setBudgetUserId(user.id);
+  }
+
+  // Disabling with money left would strand it (the server refuses too): open
+  // the budget panel instead, on the account that still holds money.
+  function disableOrExplain(user) {
+    const own = user.personalBalance ?? 0;
+    const pool = user.roles.includes("teacher") ? user.poolBalance ?? 0 : 0;
+    if (user.status !== "active" || (own <= 0 && pool <= 0)) {
+      onToggleStatus(user);
+      return;
+    }
+    const parts = [
+      own > 0 ? `${formatDollars(own)} in their own budget` : "",
+      pool > 0 ? `${formatDollars(pool)} in their pool` : "",
+    ].filter(Boolean);
+    onCloseEditor?.();
+    setBudgetUserId(user.id);
+    setBudgetNotice({
+      account: own > 0 ? "personal" : "pool",
+      text: `${user.fullName} still has ${parts.join(" and ")}. Take it back first, then disable the account.`,
+    });
+  }
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [classId, setClassId] = useState("all");
   const [sort, setSort] = useState({ key: "name", dir: 1 });
-  const hasBudget = kind !== "admin";
+  // Everyone has a personal budget, admins too (funded from School like anyone's).
+  const hasBudget = true;
+  // Budget is two cells: the amount (right-aligned) and its Adjust button.
+  const columnCount = 3 + (kind !== "admin" ? 1 : 0) + (hasBudget ? 2 : 0);
 
   const rows = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -70,8 +124,8 @@ export default function UserList({
     setSort((current) => ({ key, dir: current.key === key ? -current.dir : 1 }));
   }
 
-  const header = (key, label) => (
-    <th aria-sort={sort.key === key ? (sort.dir === 1 ? "ascending" : "descending") : "none"}>
+  const header = (key, label, className) => (
+    <th className={className} aria-sort={sort.key === key ? (sort.dir === 1 ? "ascending" : "descending") : "none"}>
       <button type="button" className="sort-btn" onClick={() => sortBy(key)}>
         {label}
         {sort.key === key ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
@@ -84,18 +138,6 @@ export default function UserList({
   // Admin add/subtract in the row: a teacher's pool or anyone's own budget.
   // Add moves money from the School account, subtract moves it back there.
   // Errors are shown by the control; success reloads the lists.
-  const budgetControl = (user, target, balance) => (
-    <BudgetAdjuster
-      who={target === "pool" ? `${user.fullName}'s pool` : user.fullName}
-      balance={balance}
-      {...schoolAddProps(schoolBalance)}
-      subtractLimit={balance}
-      onAdjust={async (direction, amount) => {
-        await adjustAdminBudget({ userId: user.id, target, direction: direction === "add" ? "increase" : "decrease", amount });
-        onChanged();
-      }}
-    />
-  );
 
   return (
     <section className="panel admin-section" id={id}>
@@ -141,8 +183,10 @@ export default function UserList({
           <thead>
             <tr>
               {header("name", "Name")}
-              {kind !== "admin" ? <th>Classes</th> : null}
-              {hasBudget ? header("budget", "Budget") : null}
+              {/* Students usually have one class, teachers several. */}
+              {kind !== "admin" ? header("classes", kind === "student" ? "Class" : "Classes") : null}
+              {hasBudget ? header("budget", "Budget", "cell-num") : null}
+              {hasBudget ? <th className="budget-adjust-cell" aria-label="Adjust budget" /> : null}
               {header("lastLogin", "Last sign-in")}
               <th />
             </tr>
@@ -150,8 +194,12 @@ export default function UserList({
           <tbody>
             {rows.map((user) => {
               const isSelf = user.username.toLowerCase() === String(authUser?.username ?? "").toLowerCase();
+              const isEditing = editor && user.id === editingId;
+              const isBudgetOpen = !isEditing && user.id === budgetUserId;
+              const rowClass = [user.status === "disabled" ? "row-disabled" : "", isEditing || isBudgetOpen ? "row-editing" : ""].filter(Boolean).join(" ");
               return (
-                <tr key={user.id} className={user.status === "disabled" ? "row-disabled" : undefined}>
+                <Fragment key={user.id}>
+                <tr className={rowClass || undefined}>
                   <td>
                     {user.fullName}
                     <div className="form-hint mono-sm">{user.username}</div>
@@ -169,20 +217,32 @@ export default function UserList({
                     ) : null}
                   </td>
                   {kind !== "admin" ? (
-                    <td>{user.classes.map((classItem) => formatClassName(classItem.name, classItem.block)).join(", ") || "—"}</td>
+                    <td>{classesKey(user) || "—"}</td>
                   ) : null}
                   {hasBudget ? (
-                    <td>
+                    <td className="cell-num">
                       {kind === "teacher" ? (
-                        <>
-                          <div className="form-hint">Pool</div>
-                          {budgetControl(user, "pool", user.poolBalance ?? 0)}
-                          <div className="form-hint">Own budget</div>
-                          {budgetControl(user, "personal", user.personalBalance ?? 0)}
-                        </>
+                        <span className="budget-cell-figures">
+                          <span className="form-hint">Pool</span>
+                          <span>{formatDollars(user.poolBalance ?? 0)}</span>
+                          <span className="form-hint">Own</span>
+                          <span>{formatDollars(user.personalBalance ?? 0)}</span>
+                        </span>
                       ) : (
-                        budgetControl(user, "personal", user.personalBalance ?? 0)
+                        formatDollars(user.personalBalance ?? 0)
                       )}
+                    </td>
+                  ) : null}
+                  {hasBudget ? (
+                    <td className="budget-adjust-cell">
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        aria-expanded={isBudgetOpen}
+                        onClick={() => toggleBudget(user)}
+                      >
+                        Adjust
+                      </button>
                     </td>
                   ) : null}
                   <td className="mono-sm">
@@ -190,7 +250,12 @@ export default function UserList({
                   </td>
                   <td>
                     <div className="row-actions">
-                      <button type="button" className="btn btn-secondary btn-sm" onClick={() => onEdit(user)}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        aria-expanded={Boolean(isEditing)}
+                        onClick={() => onEdit(user)}
+                      >
                         Edit
                       </button>
                       <button type="button" className="btn btn-secondary btn-sm" disabled={isBusy} onClick={() => onResetPassword(user)}>
@@ -201,18 +266,39 @@ export default function UserList({
                         className="btn btn-secondary btn-sm"
                         disabled={isBusy || isSelf}
                         title={isSelf ? "You cannot disable your own account" : undefined}
-                        onClick={() => onToggleStatus(user)}
+                        onClick={() => disableOrExplain(user)}
                       >
                         {user.status === "active" ? "Disable" : "Enable"}
                       </button>
                     </div>
                   </td>
                 </tr>
+                {isEditing ? (
+                  <tr className="row-editor">
+                    <td colSpan={columnCount}>{editor}</td>
+                  </tr>
+                ) : null}
+                {isBudgetOpen ? (
+                  <tr className="row-editor">
+                    <td colSpan={columnCount}>
+                      <AdminBudgetPanel
+                        key={budgetNotice ? "disable" : "adjust"}
+                        user={user}
+                        initialAccount={budgetNotice?.account ?? (kind === "teacher" ? "pool" : "personal")}
+                        notice={budgetNotice?.text}
+                        onClose={() => {
+                          setBudgetUserId(null);
+                          setBudgetNotice(null);
+                        }} onChanged={onChanged} />
+                    </td>
+                  </tr>
+                ) : null}
+                </Fragment>
               );
             })}
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={5} className="form-hint">
+                <td colSpan={columnCount} className="form-hint">
                   {users.length === 0 ? `No ${title.toLowerCase()} yet.` : "Nothing matches these filters."}
                 </td>
               </tr>

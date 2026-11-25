@@ -176,7 +176,7 @@ export default function AdminImportPanel({ onChanged }) {
                   <th>User</th>
                   <th>Role</th>
                   <th>Class</th>
-                  <th>Budget</th>
+                  <th className="cell-num">Budget</th>
                   <th>Result</th>
                 </tr>
               </thead>
@@ -190,7 +190,7 @@ export default function AdminImportPanel({ onChanged }) {
                     </td>
                     <td>{row.roles.join(", ")}</td>
                     <td>{row.className || "—"}</td>
-                    <td>{row.budget > 0 ? formatDollars(row.budget) : "—"}</td>
+                    <td className="cell-num">{row.budget > 0 ? formatDollars(row.budget) : "—"}</td>
                     <td>
                       {row.action === "error" ? (
                         row.errors.map((message) => (

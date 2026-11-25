@@ -78,6 +78,9 @@ function formatNavCount(value) {
   return value.active > 0 ? `${value.active} / ${value.total}` : String(value.total);
 }
 
+const roleOrder = ["admin", "teacher", "student"];
+const roleLabel = (role) => role.charAt(0).toUpperCase() + role.slice(1);
+
 function hasRole(user, role) {
   return Boolean(user?.roles?.includes(role));
 }
@@ -180,10 +183,10 @@ function sessionRoles(user) {
   return roles.length ? roles : [normalizeUserRole(user.role)];
 }
 
-// Whose personal budget the header shows: anyone who runs jobs and pays for
+// Whose personal budget New Job and the account menu show: anyone who runs jobs and pays for
 // them. Admins are not limited by their balance yet, so it means nothing.
 // Everyone who runs jobs spends their own budget (admins too: no account
-// may go below zero), so the header shows it.
+// may go below zero), so it is shown.
 function showsPersonalBudget(user) {
   return Boolean(user?.canRunJobs);
 }
@@ -657,8 +660,9 @@ export default function App() {
   };
 
 
+  // Initials from the full name ("Ada Lovelace" -> AL), else the username.
   const avatar = useMemo(() => {
-    const value = authUser?.username ?? "";
+    const value = authUser?.fullName || authUser?.username || "";
     if (!value) {
       return "--";
     }
@@ -857,24 +861,34 @@ export default function App() {
           <div className="topbar-brand">Academies of Loudoun</div>
         </div>
         <div className="topbar-right">
-          {showsPersonalBudget(authUser) && budgetBalance !== null ? (
-            <div className="server-pill" title="Your remaining compute budget">
-              Budget {formatDollars(budgetBalance)}
-            </div>
-          ) : null}
           <div className={`user-menu-wrap${isUserMenuOpen ? " menu-open" : ""}`} ref={userMenuRef}>
+            {/* Opens on hover (CSS) and on click or keyboard (state, for touch and keys). */}
             <button
               type="button"
-              className="user-pill user-pill-button"
+              className="user-trigger"
               aria-haspopup="menu"
               aria-expanded={isUserMenuOpen}
               onClick={() => setIsUserMenuOpen((previous) => !previous)}
             >
-              <div className="user-avatar">{avatar}</div>
-              {authUser.fullName || authUser.username} · {authUser.roles.join(", ")}
+              <span className="user-avatar" aria-hidden="true">{avatar}</span>
+              <span className="user-trigger-text">
+                <span className="user-trigger-name">{authUser.fullName || authUser.username}</span>
+                <span className="user-trigger-role">{roleOrder.filter((role) => authUser.roles.includes(role)).map(roleLabel).join(" · ")}</span>
+              </span>
+              <svg className="user-trigger-chevron" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+                <path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             </button>
-            <div className="user-menu-hint">Click for account menu</div>
             <div className={`user-menu${isUserMenuOpen ? " open" : ""}`} role="menu">
+              <div className="user-menu-header">
+                <div className="user-menu-name">{authUser.fullName || authUser.username}</div>
+                <div className="user-menu-username">{authUser.username}</div>
+                {showsPersonalBudget(authUser) && budgetBalance !== null ? (
+                  <div className="user-menu-budget">
+                    Budget left <span className="user-menu-budget-value">{formatDollars(budgetBalance)}</span>
+                  </div>
+                ) : null}
+              </div>
               {authUser.localSignIn ? (
                 <button
                   type="button"
@@ -893,8 +907,9 @@ export default function App() {
                   Connections
                 </a>
               ) : null}
+              <div className="user-menu-divider" role="separator" />
               <button type="button" className="user-menu-item" role="menuitem" onClick={onLogout}>
-                Logout
+                Sign out
               </button>
             </div>
           </div>

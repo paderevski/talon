@@ -9,6 +9,7 @@ import {
   deleteUnusedUser,
   adjustBudget,
   budgetSummary,
+  userBudgetDetails,
   listClasses,
   listUsers,
   removeClassMember,
@@ -180,12 +181,21 @@ router.delete("/classes/:classId/members/:userId", handle(async (req, res) => {
 }));
 
 router.post("/budget/adjustments", handle(async (req, res) => {
-  const { userId, target, direction, amount, note } = req.body ?? {};
+  const { userId, target, direction, amount, note, fromTeacherId } = req.body ?? {};
   if (target !== "school" && !uuidPattern.test(String(userId ?? ""))) {
     return res.status(400).json({ message: "Choose a user" });
   }
-  await adjustBudget({ userId, target, direction, amount, note }, req.user.id);
+  if (fromTeacherId != null && !uuidPattern.test(String(fromTeacherId))) {
+    return res.status(400).json({ message: "Choose a teacher" });
+  }
+  await adjustBudget({ userId, target, direction, amount, note, fromTeacherId: fromTeacherId ? String(fromTeacherId).toLowerCase() : null }, req.user.id);
   return res.status(201).json({ ok: true });
+}));
+
+// One user's budget panel: balances, this school year, set-aside money, the
+// teachers whose pools can fund them, and the School balance.
+router.get("/users/:userId/budget", handle(async (req, res) => {
+  return res.json(await userBudgetDetails(req.params.userId));
 }));
 
 // Where the money is now, and the yearly budget and spending between

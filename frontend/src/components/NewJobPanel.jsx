@@ -435,6 +435,21 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
     <section className="panel" id="new-job">
       <div className="panel-head">
         <h2 className="panel-title">Submit New Job</h2>
+        {/* The user's budget, and what this job can take from it (EC2 only). */}
+        {budgetDollars !== null ? (
+          <div className="budget-summary">
+            <div className={`budget-stat budget-left${overBudget || Number(budgetDollars) <= 0 ? " warn" : ""}`}>
+              <span className="budget-stat-label">Budget left</span>
+              <span className="budget-stat-value">{formatDollars(budgetDollars)}</span>
+            </div>
+            {selectedMachine ? (
+              <div className="budget-stat">
+                <span className="budget-stat-label">This job, at most</span>
+                <span className="budget-stat-value">{formatDollars(estimateDollars)}</span>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
       <form className="new-job-grid new-job-grid-submit" onSubmit={handleSubmit}>
         <div className="form-group full">
@@ -459,7 +474,7 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
           <label className="form-label">Job Name</label>
           <input className="form-input" value={form.name} onChange={onJobNameChange} placeholder="e.g. bert-nlp-7" />
         </div>
-        <div className="form-group form-group-inline">
+        <div className="form-group form-group-wide">
           {source === "github" ? (
             <>
               <label className="form-label">Repository</label>
@@ -609,6 +624,18 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
                 })}
                 {localAllowed ? <option value="local">Web server (free, no isolation)</option> : null}
               </select>
+              {/* Level with the time limit's hint; the header shows the amount. */}
+              <span className="form-hint">
+                {selectedMachine
+                  ? "The most it can cost is set aside at the start; you pay per second for the time it runs and get the rest back. "
+                  : "Runs on the web server itself: free, but not isolated. "}
+                {ec2.maxJobsPerUser === 1 ? "One job at a time." : ""}
+                {overBudget && Number(budgetDollars) <= 0
+                  ? ` You have no budget left ($0.00). ${moreBudgetHint(roles)}`
+                  : overBudget
+                    ? ` Even the shortest time limit on this machine is more than your remaining budget (${formatDollars(budgetDollars)}): choose a smaller machine.`
+                    : ""}
+              </span>
             </div>
             <div className="form-group form-group-half">
               <label className="form-label">Time limit</label>
@@ -620,19 +647,6 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
                 ))}
               </select>
               <span className="form-hint">Includes installing requirements.txt. The job stops when it is reached.</span>
-            </div>
-            <div className="form-group full">
-              <span className="form-hint">
-                {selectedMachine
-                  ? `This job can cost up to ${formatDollars(estimateDollars)}. That is set aside when it starts; you are charged per second for the time it actually runs and the rest is returned. `
-                  : "Runs on the web server itself: free, but not isolated. "}
-                {ec2.maxJobsPerUser === 1 ? "One job at a time." : ""}
-                {overBudget && Number(budgetDollars) <= 0
-                  ? ` You have no budget left ($0.00). ${moreBudgetHint(roles)}`
-                  : overBudget
-                    ? ` Even the shortest time limit on this machine is more than your remaining budget (${formatDollars(budgetDollars)}): choose a smaller machine.`
-                    : ""}
-              </span>
             </div>
           </>
         ) : null}

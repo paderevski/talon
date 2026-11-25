@@ -256,6 +256,25 @@ export async function updateUser(userId, input, actor) {
         if (isSelf && input.status === "disabled") {
           throw new ManagementError("You cannot disable your own account");
         }
+        // Money left with a disabled account would sit unused: it goes back
+        // first (own budget and, for a teacher, the pool).
+        if (input.status === "disabled") {
+          const money = await client.query(
+            `SELECT kind, balance_cents FROM budget_accounts
+             WHERE owner_user_id = $1 AND balance_cents > 0
+             ORDER BY id FOR UPDATE`,
+            [userId],
+          );
+          if (money.rows.length > 0) {
+            const parts = money.rows.map(
+              (row) => `${formatCents(Number(row.balance_cents))} in ${row.kind === "teacher_pool" ? "their pool" : "their own budget"}`,
+            );
+            throw new ManagementError(
+              `This user still has ${parts.join(" and ")}. Take it back (Budget, Adjust, Take back) before disabling the account.`,
+              409,
+            );
+          }
+        }
         await client.query("UPDATE users SET status = $2, updated_at = now() WHERE id = $1", [
           userId,
           input.status,
@@ -314,6 +333,21 @@ export async function updateUser(userId, input, actor) {
               `Remove this user from their ${role} classes before removing the ${role} role`,
               409,
             );
+          }
+          // A pool belongs to the teacher role: money left in it would be
+          // stranded (pools show only for teachers), so it must go back first.
+          if (role === "teacher") {
+            const pool = await client.query(
+              "SELECT balance_cents FROM budget_accounts WHERE owner_user_id = $1 AND kind = 'teacher_pool' FOR UPDATE",
+              [userId],
+            );
+            const poolCents = Number(pool.rows[0]?.balance_cents ?? 0);
+            if (poolCents > 0) {
+              throw new ManagementError(
+                `This teacher's pool still has ${formatCents(poolCents)}. Take it back to the School account (Budget, Adjust, Pool) before removing the teacher role.`,
+                409,
+              );
+            }
           }
         }
         await setRoles(client, userId, roles, actor.id);
@@ -743,7 +777,9 @@ export async function removeClassMember(classId, userId) {
 // some (never below $0). target "pool" (a teacher's pool) or "personal"
 // (anyone's own budget, the admin's included): "increase" moves money from
 // School to it, "decrease" moves it back to School (at most its balance).
-export async function adjustBudget({ userId, target, direction, amount, note }, actorId) {
+// fromTeacherId (personal only): use that teacher's pool instead of School,
+// as the teacher would; the teacher must teach the user in an active class.
+export async function adjustBudget({ userId, target, direction, amount, note, fromTeacherId = null }, actorId) {
   if (!["school", "pool", "personal"].includes(target)) {
     throw new ManagementError("Target must be school, pool or personal");
   }
@@ -788,6 +824,39 @@ export async function adjustBudget({ userId, target, direction, amount, note }, 
       userId,
       target === "pool" ? "teacher_pool" : "personal",
     );
+    if (fromTeacherId) {
+      if (target !== "personal") {
+        throw new ManagementError("A teacher's pool can only fund a personal budget");
+      }
+      const teacher = await client.query(
+        `SELECT t.display_name FROM classes c
+         JOIN class_members m ON m.class_id = c.id AND m.user_id = $1
+         JOIN users t ON t.id = c.teacher_id
+         WHERE c.teacher_id = $2 AND c.archived_at IS NULL
+         LIMIT 1`,
+        [userId, fromTeacherId],
+      );
+      if (teacher.rows.length === 0) {
+        throw new ManagementError("That teacher does not teach this student in an active class");
+      }
+      const name = teacher.rows[0].display_name;
+      const poolAccountId = await ensureAccount(client, fromTeacherId, "teacher_pool");
+      if (direction === "increase") {
+        await transferOr409(
+          client,
+          { fromAccountId: poolAccountId, toAccountId: accountId, amountCents, note: cleanText(note, 200) || `From ${name}'s pool (by an admin)`, createdBy: actorId },
+          `${name}'s pool`,
+        );
+      } else {
+        await transferOr409(
+          client,
+          { fromAccountId: accountId, toAccountId: poolAccountId, amountCents, note: cleanText(note, 200) || `Returned to ${name}'s pool (by an admin)`, createdBy: actorId },
+          "That budget",
+          " (spent money and running jobs' reservations can't be taken back)",
+        );
+      }
+      return;
+    }
     if (direction === "increase") {
       await transferOr409(
         client,
@@ -803,6 +872,79 @@ export async function adjustBudget({ userId, target, direction, amount, note }, 
       );
     }
   });
+}
+
+// One user's money for the admin's budget panel: their personal budget (and
+// pool, for teachers) now and this school year, money set aside for their
+// running jobs, the teachers who teach them (whose pools can fund them) and
+// the School account's balance.
+export async function userBudgetDetails(userId, { pool = getPool() } = {}) {
+  const user = await pool.query(
+    "SELECT ARRAY(SELECT r.role::text FROM user_roles r WHERE r.user_id = u.id) AS roles FROM users u WHERE u.id = $1",
+    [userId],
+  );
+  if (user.rows.length === 0) {
+    throw new ManagementError("User not found", 404);
+  }
+  const year = schoolYearContaining();
+  // Received / moved out are transfers (School, pools); spent is job charges
+  // minus refunds. A running job's reservation is charged when it starts.
+  const accountStats = async (kind) => {
+    const result = await pool.query(
+      `SELECT a.balance_cents,
+              COALESCE(SUM(l.amount_cents) FILTER (WHERE l.kind = 'transfer' AND l.amount_cents > 0), 0) AS in_cents,
+              COALESCE(-SUM(l.amount_cents) FILTER (WHERE l.kind = 'transfer' AND l.amount_cents < 0), 0) AS out_cents,
+              COALESCE(-SUM(l.amount_cents) FILTER (WHERE l.kind IN ('charge', 'refund')), 0) AS spent_cents
+       FROM budget_accounts a
+       LEFT JOIN budget_ledger l ON l.account_id = a.id
+         AND l.created_at >= $3::date AND l.created_at < $4::date + 1
+       WHERE a.owner_user_id = $1 AND a.kind = $2
+       GROUP BY a.id`,
+      [userId, kind, year.from, year.to],
+    );
+    const row = result.rows[0];
+    return {
+      balance: centsToDollars(Number(row?.balance_cents ?? 0)),
+      receivedThisYear: centsToDollars(Number(row?.in_cents ?? 0)),
+      movedOutThisYear: centsToDollars(Number(row?.out_cents ?? 0)),
+      spentThisYear: centsToDollars(Number(row?.spent_cents ?? 0)),
+    };
+  };
+  const [personal, teacherPool, reserved, teachers, school] = await Promise.all([
+    accountStats("personal"),
+    user.rows[0].roles.includes("teacher") ? accountStats("teacher_pool") : null,
+    pool.query(
+      `SELECT COALESCE(SUM(reserved_cents), 0) AS cents FROM jobs
+       WHERE owner_user_id = $1 AND reserved_cents > 0 AND result_sync_key IS NULL AND status IN ('queued', 'running')`,
+      [userId],
+    ),
+    pool.query(
+      `SELECT t.id, t.username, t.display_name, COALESCE(p.balance_cents, 0) AS pool_cents,
+              json_agg(json_build_object('name', c.name, 'block', c.block) ORDER BY lower(c.name), lower(c.block)) AS classes
+       FROM class_members m
+       JOIN classes c ON c.id = m.class_id AND c.archived_at IS NULL
+       JOIN users t ON t.id = c.teacher_id
+       LEFT JOIN budget_accounts p ON p.owner_user_id = t.id AND p.kind = 'teacher_pool'
+       WHERE m.user_id = $1
+       GROUP BY t.id, t.username, t.display_name, p.balance_cents
+       ORDER BY lower(t.display_name)`,
+      [userId],
+    ),
+    pool.query("SELECT balance_cents FROM budget_accounts WHERE kind = 'school'"),
+  ]);
+  return {
+    year,
+    personal: { ...personal, setAsideForRunningJobs: centsToDollars(Number(reserved.rows[0].cents)) },
+    pool: teacherPool && { balance: teacherPool.balance, receivedThisYear: teacherPool.receivedThisYear, handedOutThisYear: teacherPool.movedOutThisYear },
+    teachers: teachers.rows.map((row) => ({
+      id: row.id,
+      username: row.username,
+      fullName: row.display_name,
+      poolBalance: centsToDollars(Number(row.pool_cents)),
+      classes: row.classes,
+    })),
+    school: centsToDollars(Number(school.rows[0]?.balance_cents ?? 0)),
+  };
 }
 
 // The school year (July 1 to June 30) that contains `date`.
