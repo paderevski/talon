@@ -55,10 +55,16 @@ export async function run({ baseUrl }) {
   assert(!(await exists(plain)), "plain user gone");
 
   // ---- Unused account with only a starting grant: deleted, ledger stays consistent
+  // (from the School account; deleting gives it back to School).
+  const schoolCents = () =>
+    withTestDb((pool) => pool.query("SELECT balance_cents::int AS c FROM budget_accounts WHERE kind = 'school'")).then((r) => r.rows[0].c);
+  const schoolBefore = await schoolCents();
   const granted = await make("del_granted", ["student"]);
   assert((await send(admin, baseUrl, "POST", "/api/admin/budget/adjustments", { userId: granted.id, target: "personal", direction: "increase", amount: 10 })).status === 201, "grant only");
+  assert((await schoolCents()) === schoolBefore - 1000, "the starting budget comes from School");
   assert((await del(granted)).status === 200, "granted delete");
   assert(!(await exists(granted)), "granted user gone");
+  assert((await schoolCents()) === schoolBefore, "deleting gives the starting budget back to School");
   assert(await withTestDb(ledgerIsConsistent), "balances must equal the ledger after deleting a granted user");
 
   // ---- A teacher's allocation is never rewritten: refused
@@ -104,14 +110,16 @@ export async function run({ baseUrl }) {
   const charged = await make("del_charged", ["student"]);
   await withTestDb(async (pool) => {
     const acct = await pool.query("SELECT id FROM budget_accounts WHERE owner_user_id = $1 AND kind = 'personal'", [charged.id]);
+    // A starting grant, then a charge that spends it (balance back to 0;
+    // no account may go below zero).
+    await pool.query("INSERT INTO budget_ledger (account_id, amount_cents, kind, note) VALUES ($1, 25, 'grant', 'x')", [acct.rows[0].id]);
     await pool.query("INSERT INTO budget_ledger (account_id, amount_cents, kind, note) VALUES ($1, -25, 'charge', 'x')", [acct.rows[0].id]);
-    await pool.query("UPDATE budget_accounts SET balance_cents = -25 WHERE id = $1", [acct.rows[0].id]);
   });
   await refused(charged, "charge", /budget activity.*Disable/i);
   const kept = await withTestDb((pool) =>
     pool.query("SELECT COUNT(*)::int AS n FROM budget_ledger l JOIN budget_accounts a ON a.id = l.account_id WHERE a.owner_user_id = $1", [charged.id]),
   );
-  assert(kept.rows[0].n === 1, "a refused delete must not touch the ledger");
+  assert(kept.rows[0].n === 2, "a refused delete must not touch the ledger");
 
   const connected = await make("del_connected", ["student"]);
   await withTestDb((pool) =>

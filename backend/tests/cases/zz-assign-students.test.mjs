@@ -85,9 +85,10 @@ export async function run({ baseUrl }) {
   }
   const grants = await withTestDb((pool) => pool.query(
     `SELECT l.note FROM budget_ledger l JOIN budget_accounts a ON a.id = l.account_id
-     WHERE a.owner_user_id = $1 AND l.kind = 'grant'`,
+     WHERE a.owner_user_id = $1 AND l.kind = 'transfer'`,
     [one.id],
   ));
+  // From the School account (a transfer), once.
   assert(grants.rows.length === 1 && /Starting budget \(Assign 101/.test(grants.rows[0].note), `grant rows ${JSON.stringify(grants.rows)}`);
 
   // No budget: just added. Archived class: refused.

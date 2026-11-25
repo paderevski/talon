@@ -166,8 +166,10 @@ function sessionRoles(user) {
 
 // Whose personal budget the header shows: anyone who runs jobs and pays for
 // them. Admins are not limited by their balance yet, so it means nothing.
+// Everyone who runs jobs spends their own budget (admins too: no account
+// may go below zero), so the header shows it.
 function showsPersonalBudget(user) {
-  return Boolean(user?.canRunJobs) && !hasRole(user, "admin");
+  return Boolean(user?.canRunJobs);
 }
 
 // ?signin=<code> is set by the server when Microsoft sign-in did not work
@@ -889,7 +891,7 @@ export default function App() {
           {isAdmin ? <AdminConsole authUser={authUser} view={activeView} sub={route.sub} /> : null}
 
           {isTeacher && activeView === "students" ? (
-            <TeacherStudentsPanel authUser={authUser} onOpenStudentView={openStudentView} />
+            <TeacherStudentsPanel authUser={authUser} onOpenStudentView={openStudentView} onBudgetChanged={() => void refreshBudget()} />
           ) : null}
 
           {isTeacher && activeView === "student" && hasTeacherStudentView ? (
@@ -946,6 +948,7 @@ export default function App() {
                 driveLogin={driveConnection?.account?.login || ""}
                 compute={computeOptions}
                 budgetDollars={showsPersonalBudget(authUser) ? budgetBalance : null}
+                roles={authUser?.roles || []}
               />
             </>
           ) : null}

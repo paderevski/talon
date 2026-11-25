@@ -7,6 +7,7 @@ import {
   createUser,
   deleteUnusedUser,
   adjustBudget,
+  budgetSummary,
   listClasses,
   listUsers,
   removeClassMember,
@@ -170,11 +171,20 @@ router.delete("/classes/:classId/members/:userId", handle(async (req, res) => {
 
 router.post("/budget/adjustments", handle(async (req, res) => {
   const { userId, target, direction, amount, note } = req.body ?? {};
-  if (!uuidPattern.test(String(userId ?? ""))) {
+  if (target !== "school" && !uuidPattern.test(String(userId ?? ""))) {
     return res.status(400).json({ message: "Choose a user" });
   }
   await adjustBudget({ userId, target, direction, amount, note }, req.user.id);
   return res.status(201).json({ ok: true });
+}));
+
+// Where the money is now, and the yearly budget and spending between
+// ?from and ?to (YYYY-MM-DD; default the current school year) plus the
+// School account's balance for the budget controls.
+router.get("/budget/summary", handle(async (req, res) => {
+  const pick = (value) => (typeof value === "string" && value ? value : undefined);
+  const summary = await budgetSummary({ from: pick(req.query.from), to: pick(req.query.to) });
+  return res.json({ ok: true, summary });
 }));
 
 export default router;

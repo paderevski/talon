@@ -1,6 +1,6 @@
 import { withTransaction } from "./pool.js";
 import { createPasswordHash } from "../utils/passwords.js";
-import { ensureAccount, grant, transfer, charge } from "../budget/ledger.js";
+import { ensureAccount, ensureSchoolAccount, grant, transfer, charge } from "../budget/ledger.js";
 import { adminUser, teacherSeeds } from "../data/demoUsers.js";
 import { assertNoActiveEc2Jobs, truncateAllData } from "./wipe.js";
 
@@ -21,6 +21,10 @@ const legacyTeacher = {
   ],
 };
 
+// School budget: enough for every demo pool and the admin, with plenty left
+// for tests and local experiments.
+const demoSchoolBudgetCents = 5_000_00;
+const demoAdminBudgetCents = 50_00;
 const teacherPoolCents = 100_00; // $100 per teacher pool
 
 function allDemoUsernames(teachers) {
@@ -173,7 +177,24 @@ export async function seedDemoUsers(pool, { replaceAll = false, allowRunningJobs
       await truncateAllData(client);
 
       const adminId = await insertUser(client, { ...adminUser, roles: ["admin"] });
-      await ensureAccount(client, adminId, "personal");
+      const adminAccountId = await ensureAccount(client, adminId, "personal");
+
+      // The yearly budget goes into the School account; pools and the
+      // admin's own budget are funded from it.
+      const schoolAccountId = await ensureSchoolAccount(client);
+      await grant(client, {
+        accountId: schoolAccountId,
+        amountCents: demoSchoolBudgetCents,
+        note: "Demo school budget",
+        createdBy: adminId,
+      });
+      await transfer(client, {
+        fromAccountId: schoolAccountId,
+        toAccountId: adminAccountId,
+        amountCents: demoAdminBudgetCents,
+        note: "Demo admin budget",
+        createdBy: adminId,
+      });
 
       for (const teacherSeed of teachers) {
         const teacherId = await insertUser(client, {
@@ -182,8 +203,9 @@ export async function seedDemoUsers(pool, { replaceAll = false, allowRunningJobs
         });
         await ensureAccount(client, teacherId, "personal");
         const poolAccountId = await ensureAccount(client, teacherId, "teacher_pool");
-        await grant(client, {
-          accountId: poolAccountId,
+        await transfer(client, {
+          fromAccountId: schoolAccountId,
+          toAccountId: poolAccountId,
           amountCents: teacherPoolCents,
           note: "Demo pool funding",
           createdBy: adminId,

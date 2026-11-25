@@ -6,6 +6,7 @@ import {
   centsToDollars,
   dollarsToCents,
   ensureAccount,
+  ensureSchoolAccount,
   grant,
   transfer,
 } from "../budget/ledger.js";
@@ -74,6 +75,32 @@ export function toCents(dollars) {
 }
 
 const formatCents = (cents) => `$${(cents / 100).toFixed(2)}`;
+
+async function balanceCents(client, accountId) {
+  const result = await client.query("SELECT balance_cents FROM budget_accounts WHERE id = $1", [accountId]);
+  return Number(result.rows[0].balance_cents);
+}
+
+// Moves money in the transaction `client`, turning "not enough" into a 409
+// that says how much the source has (`sourceLabel`: "The School account").
+async function transferOr409(client, { fromAccountId, toAccountId, amountCents, note, createdBy }, sourceLabel, extra = "") {
+  try {
+    return await transfer(client, { fromAccountId, toAccountId, amountCents, note, createdBy });
+  } catch (error) {
+    if (error instanceof BudgetError && error.code === "insufficient_funds") {
+      const left = formatCents(await balanceCents(client, fromAccountId));
+      throw new ManagementError(`${sourceLabel} has only ${left} left${extra}`, 409);
+    }
+    throw error;
+  }
+}
+
+// Funds an account from the School account (everything below School is
+// funded this way; only School receives grants).
+export async function fundFromSchool(client, { toAccountId, amountCents, note, createdBy }) {
+  const schoolAccountId = await ensureSchoolAccount(client);
+  return transferOr409(client, { fromAccountId: schoolAccountId, toAccountId, amountCents, note, createdBy }, "The School account");
+}
 
 function uniqueViolation(error, message) {
   if (error?.code === "23505") {
@@ -348,8 +375,25 @@ export async function deleteUnusedUser(userId, actor) {
        FROM budget_ledger WHERE account_id = ANY($1::bigint[]) ORDER BY id`,
       [accountIds],
     );
-    const usedMessage = `${username} has budget activity other than a starting grant (a teacher's allocation, charges, refunds or adjustments). ${hint}`;
-    if (entries.rows.some((e) => e.job_id !== null || Number(e.amount_cents) <= 0 || e.kind !== "grant")) {
+    const usedMessage = `${username} has budget activity other than a starting budget (a teacher's allocation, charges, refunds or adjustments). ${hint}`;
+    // A starting budget is money in from the School account (or, before the
+    // School account, a grant). Its School half is removed with the user's
+    // half below, so the money goes back to School as if never given.
+    const fromSchool = await client.query(
+      `SELECT s.id, s.account_id, s.amount_cents, s.transfer_id
+       FROM budget_ledger s JOIN budget_accounts a ON a.id = s.account_id AND a.kind = 'school'
+       WHERE s.transfer_id = ANY($1::uuid[]) AND s.amount_cents < 0`,
+      [entries.rows.filter((e) => e.kind === "transfer").map((e) => e.transfer_id)],
+    );
+    const schoolHalf = new Map(fromSchool.rows.map((row) => [row.transfer_id, row]));
+    if (
+      entries.rows.some(
+        (e) =>
+          e.job_id !== null ||
+          Number(e.amount_cents) <= 0 ||
+          !(e.kind === "grant" || (e.kind === "transfer" && -Number(schoolHalf.get(e.transfer_id)?.amount_cents) === Number(e.amount_cents))),
+      )
+    ) {
       throw new ManagementError(usedMessage, 409);
     }
     const madeEntries = await client.query(
@@ -358,6 +402,12 @@ export async function deleteUnusedUser(userId, actor) {
     );
     if (madeEntries.rows.length > 0) {
       throw new ManagementError(`${username} has made budget changes for other accounts, which would lose their record. ${hint}`, 409);
+    }
+
+    for (const half of fromSchool.rows) {
+      await client.query("SELECT 1 FROM budget_accounts WHERE id = $1 FOR UPDATE", [half.account_id]);
+      await client.query("DELETE FROM budget_ledger WHERE id = $1", [half.id]);
+      await client.query("UPDATE budget_accounts SET balance_cents = balance_cents - $2 WHERE id = $1", [half.account_id, half.amount_cents]);
     }
 
     await revokeSessions(client, userId);
@@ -667,7 +717,7 @@ export async function assignStudentsToClass({ classId, userIds, budget }, actorI
       const note = `Starting budget (${block ? `${name}, block ${block}` : name})`;
       for (const { user_id: userId } of inserted.rows) {
         const accountId = await ensureAccount(client, userId, "personal");
-        await grant(client, { accountId, amountCents: grantCents, note, createdBy: actorId });
+        await fundFromSchool(client, { toAccountId: accountId, amountCents: grantCents, note, createdBy: actorId });
       }
     }
     return {
@@ -688,11 +738,14 @@ export async function removeClassMember(classId, userId) {
 
 // ---- Budgets -----------------------------------------------------------
 
-// Admin changes a balance: to a teacher's pool, or anyone's personal budget.
-// "increase" creates money (a grant); "decrease" removes it (never below $0).
+// Admin changes a balance. target "school": "increase" adds to the yearly
+// budget (a grant, the only way money enters Talon), "decrease" removes
+// some (never below $0). target "pool" (a teacher's pool) or "personal"
+// (anyone's own budget, the admin's included): "increase" moves money from
+// School to it, "decrease" moves it back to School (at most its balance).
 export async function adjustBudget({ userId, target, direction, amount, note }, actorId) {
-  if (!["pool", "personal"].includes(target)) {
-    throw new ManagementError("Target must be pool or personal");
+  if (!["school", "pool", "personal"].includes(target)) {
+    throw new ManagementError("Target must be school, pool or personal");
   }
   if (!["increase", "decrease"].includes(direction)) {
     throw new ManagementError("Direction must be increase or decrease");
@@ -700,6 +753,29 @@ export async function adjustBudget({ userId, target, direction, amount, note }, 
   const amountCents = toCents(amount);
 
   await withTransaction(async (client) => {
+    const schoolAccountId = await ensureSchoolAccount(client);
+
+    if (target === "school") {
+      const entry = {
+        accountId: schoolAccountId,
+        note: cleanText(note, 200) || (direction === "increase" ? "School budget" : "School budget correction"),
+        createdBy: actorId,
+      };
+      if (direction === "increase") {
+        await grant(client, { ...entry, amountCents });
+        return;
+      }
+      try {
+        await adjust(client, { ...entry, amountCents: -amountCents });
+      } catch (error) {
+        if (error instanceof BudgetError && error.code === "insufficient_funds") {
+          throw new ManagementError(`The School account has only ${formatCents(await balanceCents(client, schoolAccountId))} left`, 409);
+        }
+        throw error;
+      }
+      return;
+    }
+
     const user = await client.query("SELECT 1 FROM users WHERE id = $1", [userId]);
     if (user.rows.length === 0) {
       throw new ManagementError("User not found", 404);
@@ -712,14 +788,81 @@ export async function adjustBudget({ userId, target, direction, amount, note }, 
       userId,
       target === "pool" ? "teacher_pool" : "personal",
     );
-    const fallbackNote = direction === "increase" ? "Admin grant" : "Admin adjustment";
-    const entry = { accountId, note: cleanText(note, 200) || fallbackNote, createdBy: actorId };
     if (direction === "increase") {
-      await grant(client, { ...entry, amountCents });
+      await transferOr409(
+        client,
+        { fromAccountId: schoolAccountId, toAccountId: accountId, amountCents, note: cleanText(note, 200) || "From the School account", createdBy: actorId },
+        "The School account",
+      );
     } else {
-      await adjust(client, { ...entry, amountCents: -amountCents });
+      await transferOr409(
+        client,
+        { fromAccountId: accountId, toAccountId: schoolAccountId, amountCents, note: cleanText(note, 200) || "Returned to the School account", createdBy: actorId },
+        target === "pool" ? "The pool" : "That budget",
+        target === "pool" ? "" : " (spent money and running jobs' reservations can't be taken back)",
+      );
     }
   });
+}
+
+// The school year (July 1 to June 30) that contains `date`.
+export function schoolYearContaining(date = new Date()) {
+  const year = date.getUTCMonth() >= 6 ? date.getUTCFullYear() : date.getUTCFullYear() - 1;
+  return { from: `${year}-07-01`, to: `${year + 1}-06-30` };
+}
+
+const isoDate = /^\d{4}-\d{2}-\d{2}$/;
+
+// Money summary for the admin Overview: where the money is now, and what
+// came into School and was spent between `from` and `to` (dates, inclusive,
+// UTC; default the current school year). Spent is job compute (charges
+// minus unused reservations returned), not the AWS bill; a running job's
+// reservation counts as spent until it settles.
+export async function budgetSummary({ from, to } = {}, { pool = getPool() } = {}) {
+  const range = schoolYearContaining();
+  const start = from || range.from;
+  const end = to || range.to;
+  if (!isoDate.test(start) || !isoDate.test(end) || Number.isNaN(Date.parse(start)) || Number.isNaN(Date.parse(end))) {
+    throw new ManagementError("Dates must look like 2026-07-01");
+  }
+  if (start > end) {
+    throw new ManagementError("The start date must not be after the end date");
+  }
+  const result = await pool.query(
+    `
+      WITH period AS (
+        SELECT l.kind, l.amount_cents, l.job_id, a.kind AS account_kind
+        FROM budget_ledger l
+        JOIN budget_accounts a ON a.id = l.account_id
+        WHERE l.created_at >= $1::date AND l.created_at < $2::date + 1
+      )
+      SELECT
+        COALESCE((SELECT balance_cents FROM budget_accounts WHERE kind = 'school'), 0) AS school_cents,
+        COALESCE((SELECT SUM(balance_cents) FROM budget_accounts WHERE kind = 'teacher_pool'), 0) AS pools_cents,
+        COALESCE((SELECT SUM(balance_cents) FROM budget_accounts WHERE kind = 'personal'), 0) AS personal_cents,
+        COALESCE((SELECT SUM(reserved_cents) FROM jobs
+                  WHERE reserved_cents > 0 AND result_sync_key IS NULL AND status IN ('queued', 'running')), 0) AS reserved_cents,
+        COALESCE((SELECT SUM(amount_cents) FROM period WHERE account_kind = 'school' AND kind IN ('grant', 'adjustment')), 0) AS budget_cents,
+        COALESCE((SELECT -SUM(amount_cents) FROM period WHERE kind IN ('charge', 'refund')), 0) AS spent_cents,
+        (SELECT count(DISTINCT job_id) FROM period WHERE kind = 'charge') AS job_count
+    `,
+    [start, end],
+  );
+  const row = result.rows[0];
+  const dollars = (key) => centsToDollars(Number(row[key]));
+  return {
+    from: start,
+    to: end,
+    // Now
+    school: dollars("school_cents"),
+    teacherPools: dollars("pools_cents"),
+    personal: dollars("personal_cents"),
+    reservedForRunningJobs: dollars("reserved_cents"),
+    // In the period
+    budget: dollars("budget_cents"),
+    spent: dollars("spent_cents"),
+    jobs: Number(row.job_count),
+  };
 }
 
 // Teacher moves money between their pool and a student in one of their
@@ -783,6 +926,35 @@ export async function allocateToStudent({ teacher, studentUsername, amount, note
         throw new ManagementError("Your budget pool does not have that much left", 409);
       }
       throw error;
+    }
+  });
+}
+
+// Teacher moves money between their own pool and their own personal budget
+// (what their jobs spend): "to-me" (pool -> personal) or "to-pool".
+export async function moveTeacherOwnBudget({ teacher, amount, direction = "to-me", note }) {
+  if (!["to-me", "to-pool"].includes(direction)) {
+    throw new ManagementError("Direction must be to-me or to-pool");
+  }
+  const amountCents = toCents(amount);
+
+  await withTransaction(async (client) => {
+    await assertUserHasRole(client, teacher.id, "teacher");
+    const poolAccountId = await ensureAccount(client, teacher.id, "teacher_pool");
+    const personalAccountId = await ensureAccount(client, teacher.id, "personal");
+    if (direction === "to-me") {
+      await transferOr409(
+        client,
+        { fromAccountId: poolAccountId, toAccountId: personalAccountId, amountCents, note: cleanText(note, 200) || "From my pool", createdBy: teacher.id },
+        "Your pool",
+      );
+    } else {
+      await transferOr409(
+        client,
+        { fromAccountId: personalAccountId, toAccountId: poolAccountId, amountCents, note: cleanText(note, 200) || "Back to my pool", createdBy: teacher.id },
+        "Your own budget",
+        " (spent money and running jobs' reservations can't be moved)",
+      );
     }
   });
 }

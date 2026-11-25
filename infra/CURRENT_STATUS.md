@@ -23,15 +23,29 @@ nullable column, no data changed).
   run jobs, teachers cannot); an admin sets Allowed or Blocked in the user
   edit form, separately from budget. A blocked student keeps their past
   jobs and results but has no New Job. An allowed teacher starts with $0
-  of their own: fund them with Own budget -> Add on the Teachers tab until
-  the budget work below lands.
+  of their own: fund them with Own budget -> Add on the Teachers tab (after
+  the money work below: they move it from their pool themselves).
 
-Next (agreed, not started): **money model**. One School account holding
-the yearly budget, from which teacher pools and admins draw (teachers and
-admins move money to themselves); no account may go below zero, admins
-included (today admins skip the balance check); a yearly spend summary on
-Overview. First step: a read-only check of admin balances on RDS (a
-negative one needs a top-up before the no-negative rule).
+In progress (branch `school-account`, not merged or deployed): **money
+model**, migration 017. One School account (`budget_accounts.kind =
+'school'`, no owner) is the only account that receives grants: Overview ->
+Money adds the yearly budget there (Subtract only corrects a mistake).
+Admin Add/Subtract on pools and own budgets (the admin's own included)
+now moves money from and back to School; class starting budgets and the
+roster import draw from School too (not enough there: 409, import fails
+whole). Teachers move money between their pool and their own budget
+(Teaching -> Students, "My own budget"; `POST /api/teacher/own-budget`).
+No account may go below zero, admins included (`CHECK balance_cents >= 0`;
+admins no longer skip the balance check; the local runner caps its
+after-the-fact charge). The migration first tops any negative balance up
+to $0 with a ledger entry "Opening top-up ..." (a read-only look at RDS
+before deploying shows which accounts). Overview -> Money: School, pools,
+own budgets, running-job reservations now; budget and spend per school
+year (July 1 to June 30; `GET /api/admin/budget/summary`). Spend is job
+compute in Talon, not the AWS bill. Deleting a never-used user gives a
+starting budget back to School. After deploy: add the 2026-27 budget to
+School before funding anyone (School starts at $0; earlier pool grants are
+not counted as this year's budget).
 
 Open items from 2026-11-24 (Entra unexpected user, WAF blocking, GuardDuty
 and the rest) are unchanged: see the list below.

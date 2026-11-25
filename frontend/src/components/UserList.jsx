@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { adjustAdminBudget } from "../api/client";
 import BudgetAdjuster from "./BudgetAdjuster";
+import { schoolAddProps, useSchoolBalance } from "./schoolBalance";
 import { formatClassName } from "../utils/format";
 
 // "Ada Lovelace" sorts as "lovelace ada", so lists read alphabetically by last name.
@@ -36,6 +37,7 @@ export default function UserList({
   onToggleStatus,
   onChanged,
 }) {
+  const schoolBalance = useSchoolBalance();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [classId, setClassId] = useState("all");
@@ -80,11 +82,13 @@ export default function UserList({
   const isFiltered = search || status !== "all" || classId !== "all";
 
   // Admin add/subtract in the row: a teacher's pool or anyone's own budget.
+  // Add moves money from the School account, subtract moves it back there.
   // Errors are shown by the control; success reloads the lists.
   const budgetControl = (user, target, balance) => (
     <BudgetAdjuster
       who={target === "pool" ? `${user.fullName}'s pool` : user.fullName}
       balance={balance}
+      {...schoolAddProps(schoolBalance)}
       subtractLimit={balance}
       onAdjust={async (direction, amount) => {
         await adjustAdminBudget({ userId: user.id, target, direction: direction === "add" ? "increase" : "decrease", amount });

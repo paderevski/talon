@@ -23,6 +23,7 @@ import { normalizeFolder } from "talon-shared/repo";
 import { parseScriptArgs } from "../utils/scriptArgs.js";
 import { attachAccessScope, canModify, canRunJobs, hasRole, narrowScopeToOwner, scopeAllows } from "../auth/access.js";
 import { log } from "../utils/log.js";
+import { moreBudgetHint } from "talon-shared/budget";
 
 const router = Router();
 router.use(attachAccessScope);
@@ -299,7 +300,9 @@ router.post("/", async (req, res) => {
         ...(error?.detail ? { detail: error.detail } : {}),
       });
       return res.status(status).json({
-        message: status === 402 ? "Not enough budget left for this job." : error?.message || "Unable to start the job",
+        message: status === 402
+          ? `Not enough budget left for this job. ${moreBudgetHint(req.user.roles)}`
+          : error?.message || "Unable to start the job",
       });
     }
   }
@@ -311,10 +314,11 @@ router.post("/", async (req, res) => {
   // Always the signed-in user; any owner in the body is ignored.
   const hourlyRateCents = jobRateCentsPerHour();
 
-  // Once jobs cost money, a user with no budget left cannot start one.
-  if (hourlyRateCents > 0 && !hasRole(req.user, "admin")) {
+  // Once jobs cost money, a user with no budget left cannot start one
+  // (admins too: no account may go below zero).
+  if (hourlyRateCents > 0) {
     if ((await jobsRepository.personalBalanceCents(req.user.id)) <= 0) {
-      return res.status(402).json({ message: "No budget remaining. Ask your teacher for more." });
+      return res.status(402).json({ message: `No budget remaining. ${moreBudgetHint(req.user.roles)}` });
     }
   }
 

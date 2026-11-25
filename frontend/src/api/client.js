@@ -433,9 +433,23 @@ export const removeAdminClassMember = (classId, userId) =>
 export const assignAdminStudents = (classId, userIds, budget) =>
   requestJson("POST", `/api/admin/classes/${encodeURIComponent(classId)}/students`, { userIds, budget });
 
-// direction: "increase" | "decrease"; target: "personal" | "pool"; amount in dollars.
+// direction: "increase" | "decrease"; amount in dollars. target "school"
+// (no userId): add to the yearly budget or correct it. target "personal" |
+// "pool": from the School account, or back to it.
 export const adjustAdminBudget = (adjustment) =>
   requestJson("POST", "/api/admin/budget/adjustments", adjustment);
+// Money now and the budget and spending between from and to (YYYY-MM-DD;
+// both omitted: the current school year).
+export const fetchBudgetSummary = ({ from = "", to = "" } = {}) => {
+  const query = new URLSearchParams();
+  if (from) query.set("from", from);
+  if (to) query.set("to", to);
+  const text = query.toString();
+  return requestJson("GET", `/api/admin/budget/summary${text ? `?${text}` : ""}`);
+};
+// Teacher: direction "to-me" (pool -> own budget) or "to-pool".
+export const moveOwnBudget = (amount, direction = "to-me") =>
+  requestJson("POST", "/api/teacher/own-budget", { amount, direction });
 // direction "give" (pool -> student) or "take" (student -> pool).
 export const allocateStudentBudget = (studentUsername, amount, direction = "give") =>
   requestJson("POST", "/api/teacher/allocations", { studentUsername, amount, direction });
