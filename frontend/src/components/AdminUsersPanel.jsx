@@ -11,7 +11,16 @@ import CredentialsNotice from "./CredentialsNotice";
 import UserList from "./UserList";
 
 const allRoles = ["student", "teacher", "admin"];
-const emptyForm = { username: "", fullName: "", email: "", roles: ["student"] };
+const emptyForm = { username: "", fullName: "", email: "", roles: ["student"], canRunJobs: null };
+
+// The admin's job-running setting: null follows the role (students and
+// admins can run jobs, teachers cannot); true or false overrides it.
+const canRunJobsChoices = [
+  { value: "default", setting: null },
+  { value: "allowed", setting: true },
+  { value: "blocked", setting: false },
+];
+const roleDefaultRunsJobs = (roles) => roles.includes("student") || roles.includes("admin");
 
 // Tabs on the Users view, addressed as #users/<id>.
 const userTabs = [
@@ -64,6 +73,7 @@ export default function AdminUsersPanel({ users, classes, authUser, onChanged, t
       fullName: user.fullName,
       email: user.email || "",
       roles: user.roles,
+      canRunJobs: user.canRunJobsOverride ?? null,
     });
     setIsFormOpen(true);
     setError("");
@@ -109,7 +119,13 @@ export default function AdminUsersPanel({ users, classes, authUser, onChanged, t
     event.preventDefault();
     if (editing) {
       const saved = await run(
-        () => updateAdminUser(editing.id, { fullName: form.fullName, email: form.email, roles: form.roles }),
+        () =>
+          updateAdminUser(editing.id, {
+            fullName: form.fullName,
+            email: form.email,
+            roles: form.roles,
+            canRunJobs: form.canRunJobs,
+          }),
         `Saved ${editing.username}`,
       );
       if (saved) {
@@ -210,6 +226,29 @@ export default function AdminUsersPanel({ users, classes, authUser, onChanged, t
               ))}
             </div>
           </div>
+          {editing ? (
+            <div className="form-group">
+              <label className="form-label" htmlFor="user-can-run-jobs">Can run jobs</label>
+              <select
+                id="user-can-run-jobs"
+                className="form-select"
+                value={canRunJobsChoices.find((choice) => choice.setting === form.canRunJobs).value}
+                onChange={(event) =>
+                  setForm({
+                    ...form,
+                    canRunJobs: canRunJobsChoices.find((choice) => choice.value === event.target.value).setting,
+                  })
+                }
+              >
+                <option value="default">
+                  Role default ({roleDefaultRunsJobs(form.roles) ? "yes" : "no"})
+                </option>
+                <option value="allowed">Allowed</option>
+                <option value="blocked">Blocked</option>
+              </select>
+              <div className="form-hint">Separate from budget. Blocked users keep their past jobs and results.</div>
+            </div>
+          ) : null}
           <div className="form-actions full">
             <button type="submit" className="btn btn-primary btn-sm" disabled={isBusy || form.roles.length === 0}>
               {editing ? "Save changes" : "Create user"}

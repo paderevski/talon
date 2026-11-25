@@ -1,6 +1,6 @@
 import { getUsersRepository } from "../repositories/usersRepository.js";
 import { sessionMaxMs } from "./session.js";
-import { canRunJobs } from "./access.js";
+import { canRunJobs } from "./jobPermission.js";
 
 const usersRepository = await getUsersRepository();
 

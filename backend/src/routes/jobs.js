@@ -230,7 +230,7 @@ async function codeSourceOr4xx(req, res, payload, runner) {
 
 router.post("/", async (req, res) => {
   if (!canRunJobs(req.user)) {
-    return res.status(403).json({ message: "Your account can't run jobs. Ask an admin if you need to." });
+    return res.status(403).json({ message: "Job running is turned off for your account. Ask your teacher or an admin." });
   }
   const payload = req.body ?? {};
   const folder = normalizeFolder(payload.folder);

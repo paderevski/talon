@@ -10,7 +10,7 @@ function primaryRole(roles) {
 }
 
 const userSelect = `
-  SELECT u.id, u.username, u.display_name, u.email, u.status,
+  SELECT u.id, u.username, u.display_name, u.email, u.status, u.can_run_jobs,
          u.storage_quota_bytes, u.storage_used_bytes,
          ARRAY(SELECT r.role::text FROM user_roles r WHERE r.user_id = u.id ORDER BY r.role) AS roles,
          EXISTS (SELECT 1 FROM user_identities i WHERE i.user_id = u.id AND i.provider = 'local') AS local_sign_in,
@@ -39,6 +39,8 @@ function mapUserRow(row) {
     localSignIn: row.local_sign_in !== false,
     // A student in at least one active class (false: nobody has set them up yet).
     inClass: row.in_class === true,
+    // The admin's job-running setting: true, false, or null for the role default.
+    canRunJobsOverride: row.can_run_jobs ?? null,
   };
 }
 

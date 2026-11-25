@@ -14,7 +14,8 @@ import { isPageHidden } from "./utils/polling";
 // Each nav item is its own view, addressed by the URL hash (#jobs, #users/teachers).
 // Views are grouped by what the user is doing: Admin and Teaching come from
 // their roles, My work from whether they may run jobs (canRunJobs, decided by
-// the server). A user with one section sees no section headings. The first
+// the server). A student whose job running is turned off keeps My work to see
+// their past jobs, without New Job. A user with one section sees no section headings. The first
 // view of the first section is where the user lands after sign-in.
 function getNavSections(user, teacherStudent) {
   if (!user) {
@@ -46,13 +47,13 @@ function getNavSections(user, teacherStudent) {
     sections.push({ id: "teaching", label: "Teaching", views });
   }
 
-  if (user.canRunJobs) {
+  if (user.canRunJobs || hasRole(user, "student")) {
     sections.push({
       id: "work",
       label: "My work",
       views: [
         { id: "jobs", label: "Jobs", showCount: true },
-        { id: "new-job", label: "New Job" },
+        ...(user.canRunJobs ? [{ id: "new-job", label: "New Job" }] : []),
         { id: "connections", label: "Connections" },
       ],
     });
@@ -831,7 +832,7 @@ export default function App() {
                   Change password
                 </button>
               ) : null}
-              {authUser.canRunJobs ? (
+              {views.some((view) => view.id === "connections") ? (
                 <a className="user-menu-item" href="#connections" role="menuitem" onClick={() => setIsUserMenuOpen(false)}>
                   Connections
                 </a>
@@ -878,6 +879,11 @@ export default function App() {
             <div className="notice-warn" role="status">
               You're signed in, but you're not in a class yet, so you can't run jobs. Your teacher or an admin will
               add you; check back after your next class.
+            </div>
+          ) : hasRole(authUser, "student") && !authUser.canRunJobs ? (
+            <div className="notice-warn" role="status">
+              Job running is turned off for your account. You can still see your past jobs and results. Ask your
+              teacher or an admin if you need it back.
             </div>
           ) : null}
           {isAdmin ? <AdminConsole authUser={authUser} view={activeView} sub={route.sub} /> : null}

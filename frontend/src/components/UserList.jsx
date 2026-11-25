@@ -159,6 +159,10 @@ export default function UserList({
                       </div>
                     ) : null}
                     {user.status === "disabled" ? <div className="form-hint">Disabled</div> : null}
+                    {user.canRunJobsOverride === false ? <div className="form-hint">Job running off</div> : null}
+                    {user.canRunJobsOverride === true && !user.roles.includes("student") && !user.roles.includes("admin") ? (
+                      <div className="form-hint">Can run jobs</div>
+                    ) : null}
                   </td>
                   {kind !== "admin" ? (
                     <td>{user.classes.map((classItem) => formatClassName(classItem.name, classItem.block)).join(", ") || "—"}</td>
