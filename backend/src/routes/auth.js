@@ -85,6 +85,7 @@ router.post("/login", async (req, res) => {
     // New session id on login (prevents session fixation).
     await regenerateSession(req);
     req.session.userId = matched.id;
+    req.session.signedInAt = Date.now();
     await saveSession(req);
     await usersRepository.recordLogin?.(matched.id);
     log.info("login", { event: "auth.login", ...loginFields(req, matched.username), userId: matched.id });
@@ -132,6 +133,7 @@ router.get("/entra/callback", async (req, res) => {
     // New session id on login (prevents session fixation).
     await regenerateSession(req);
     req.session.userId = userId;
+    req.session.signedInAt = Date.now();
     await saveSession(req);
     const user = await usersRepository.findById(userId);
     log.info("login", { event: "auth.login", ...fields, provider: "entra", outcome, username: user?.username, userId });
