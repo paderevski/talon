@@ -1,14 +1,44 @@
 # Talon infra - current status
 
-_Last updated: 2026-11-24 (Entra sign-in live, site opened to the internet, logging for investigations, admin "Not in a class" view; see "Latest (2026-11-24)" below). Before that, 2026-11-07 (Connections, Google Drive, Drive jobs and background EC2 launches: Next up items -5 to -2). Before that, 2026-11-05 (status doc refreshed for architecture doc v8; CI and protected `main`; zone resilience and DB failover fixes; web tier phase 3 merged to `main`: two web servers in an Auto Scaling group behind an internal ALB, failover, deploy and reconciler checks pass; changed files skip hidden paths). Earlier the same day: phases 1 and 2 (Talon VPC, RDS with IAM sign-in and split roles, web server from a launch template), per-launch S3 job folders, old box and its code removed. Before that, 2026-11-04 (GPU jobs, build step 4, merged to `main`: one GPU launch template on the PyTorch DLAMI for g4dn.xlarge, g4dn.2xlarge, g6.xlarge and g6e.2xlarge, admin-only; verified on the box with g4dn; the box runs the same code from branch `gpu-jobs`). Before that, 2026-11-03 (GitHub App sign-in, code-source choice, job folders, admin GitHub unlink and script arguments). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
+_Last updated: 2026-11-25 (nav grouped by role and a per-user job-running setting, deployed; see "Latest (2026-11-25)" below). Before that, 2026-11-24 (Entra sign-in live, site opened to the internet, logging for investigations, admin "Not in a class" view; see "Latest (2026-11-24)" below). Before that, 2026-11-07 (Connections, Google Drive, Drive jobs and background EC2 launches: Next up items -5 to -2). Before that, 2026-11-05 (status doc refreshed for architecture doc v8; CI and protected `main`; zone resilience and DB failover fixes; web tier phase 3 merged to `main`: two web servers in an Auto Scaling group behind an internal ALB, failover, deploy and reconciler checks pass; changed files skip hidden paths). Earlier the same day: phases 1 and 2 (Talon VPC, RDS with IAM sign-in and split roles, web server from a launch template), per-launch S3 job folders, old box and its code removed. Before that, 2026-11-04 (GPU jobs, build step 4, merged to `main`: one GPU launch template on the PyTorch DLAMI for g4dn.xlarge, g4dn.2xlarge, g6.xlarge and g6e.2xlarge, admin-only; verified on the box with g4dn; the box runs the same code from branch `gpu-jobs`). Before that, 2026-11-03 (GitHub App sign-in, code-source choice, job folders, admin GitHub unlink and script arguments). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
 Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 (gitignored). Architecture doc: `docs/talon-architecture-summary-v8.docx`
 (local, gitignored; 2026-11-05, describes the system as built, with where
 it differs from v7 and a short what-comes-next; v7 kept for history).
 
+## Latest (2026-11-25)
+
+Servers run `main` at `2430423` (PRs #60 and #61), deployed and checked
+on the live site 2026-11-25. Migration 016 applied on RDS (additive: one
+nullable column, no data changed).
+
+- **Nav grouped by role** (#60): Admin, Teaching and My work sections,
+  built from all of a user's roles (an admin who teaches sees both).
+  Headings only for users with more than one section. Admin -> All jobs
+  lists everyone's jobs (Owner column); My work -> Jobs lists only your
+  own. The session user carries `canRunJobs`, and `POST /api/jobs` refuses
+  users without it (403).
+- **Per-user job-running setting** (#61, migration 016,
+  `users.can_run_jobs`): NULL follows the role (students and admins can
+  run jobs, teachers cannot); an admin sets Allowed or Blocked in the user
+  edit form, separately from budget. A blocked student keeps their past
+  jobs and results but has no New Job. An allowed teacher starts with $0
+  of their own: fund them with Own budget -> Add on the Teachers tab until
+  the budget work below lands.
+
+Next (agreed, not started): **money model**. One School account holding
+the yearly budget, from which teacher pools and admins draw (teachers and
+admins move money to themselves); no account may go below zero, admins
+included (today admins skip the balance check); a yearly spend summary on
+Overview. First step: a read-only check of admin balances on RDS (a
+negative one needs a top-up before the no-negative rule).
+
+Open items from 2026-11-24 (Entra unexpected user, WAF blocking, GuardDuty
+and the rest) are unchanged: see the list below.
+
 ## Latest (2026-11-24)
 
-Servers run `main` at `d6888e4` (PRs #45 to #57). Done that day:
+Servers ran `main` at `d6888e4` (PRs #45 to #57). Done that day:
 
 - **Entra sign-in live** (#52, hardened in #53): admin consent granted by
   IT; the ID token carries `email` with `xms_edov` true. Staff are linked
