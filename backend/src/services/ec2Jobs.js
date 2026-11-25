@@ -166,7 +166,6 @@ export async function reserveEc2Job({ jobsRepository, user, isAdmin, payload, so
     hourlyRateCents,
     maxRuntimeSeconds,
     reserveCents: reservationCentsFor(hourlyRateCents, maxRuntimeSeconds, instanceType),
-    enforceBalance: !isAdmin,
     maxUnfinishedPerUser: isAdmin ? null : limits.perUser,
     maxUnfinishedTotal: limits.total,
     ...(gpu ? { groupLimit: { computeTypes: gpuInstanceTypes(), max: limits.gpuTotal, label: "GPU jobs" } } : {}),

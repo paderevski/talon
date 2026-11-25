@@ -292,6 +292,8 @@ export function createUsersPostgresRepository({ pool = getPool() } = {}) {
         fullName: teacher.fullName,
         className: classesResult.rows[0]?.name ?? "",
         poolBalance: centsToDollars(poolResult.rows[0]?.balance_cents ?? 0),
+        // The teacher's own budget (what their jobs spend), funded from the pool.
+        ownBalance: await getPersonalBalanceDollars(teacher.id),
       },
       classes,
       students: [...distinctStudents.values()],

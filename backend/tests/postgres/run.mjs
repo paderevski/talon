@@ -25,7 +25,7 @@ import { createGithubAccountsStore, GithubAccountInUseError } from "../../src/ut
 import { createAppJwt, createGithubApp, normalizeSlug } from "../../src/services/githubApp.js";
 import { describeCloneError, gitAuthEnv } from "../../src/execution/gitAuth.js";
 import { createVerify, generateKeyPairSync } from "node:crypto";
-import { BudgetError, ensureAccount, grant, transfer } from "../../src/budget/ledger.js";
+import { BudgetError, adjust, charge, ensureAccount, ensureSchoolAccount, grant, transfer } from "../../src/budget/ledger.js";
 import { bootAllowanceSeconds, hourlyRateCentsFor, imageFor, isAllowedRuntime, listInstanceOptions, reservationCentsFor } from "../../src/execution/ec2Rates.js";
 import { parseTalonLine } from "../../../frontend/src/utils/jobProgress.js";
 import createEc2ExecutionAdapter, { assertEntryScript, buildRunScript } from "../../src/execution/adapters/ec2ExecutionAdapter.js";
@@ -449,13 +449,65 @@ const tests = [
     );
   }],
 
-  ["budget: grant rejects non-integer or non-positive cents", async () => {
+  ["budget: only the School account receives grants or adjustments; there is one School account", async () => {
     const adminId = await scalar("SELECT id FROM users WHERE username = 'admin'");
-    for (const amountCents of [0, -5, 1.5]) {
+    for (const op of [grant, adjust]) {
       let code = null;
       try {
         await withTransaction(async (client) => {
           const account = await ensureAccount(client, adminId, "personal");
+          await op(client, { accountId: account, amountCents: op === grant ? 100 : -100 });
+        }, { pool });
+      } catch (error) {
+        code = error.code;
+      }
+      assert(code === "not_school", `${op.name} into a personal account: got ${code}`);
+    }
+    const first = await withTransaction((client) => ensureSchoolAccount(client), { pool });
+    const second = await withTransaction((client) => ensureSchoolAccount(client), { pool });
+    assert(first === second, "ensureSchoolAccount returns the same account");
+    assert((await scalar("SELECT count(*)::int FROM budget_accounts WHERE kind = 'school'")) === 1, "one School account");
+    let rejected = null;
+    try {
+      await pool.query("INSERT INTO budget_accounts (owner_user_id, kind) VALUES ($1, 'school')", [adminId]);
+    } catch (error) {
+      rejected = error.constraint;
+    }
+    assert(rejected === "budget_accounts_school_has_no_owner", `a School account with an owner: ${rejected}`);
+  }],
+
+  ["budget: no account may go below zero (charge, transfer and the database itself)", async () => {
+    const userId = await scalar("SELECT id FROM users WHERE username = 'student_a1'");
+    const accountId = await withTransaction((client) => ensureAccount(client, userId, "personal"), { pool });
+    const balance = Number(await scalar("SELECT balance_cents FROM budget_accounts WHERE id = $1", [accountId]));
+    const schoolId = await withTransaction((client) => ensureSchoolAccount(client), { pool });
+    for (const [label, fn] of [
+      ["charge", (client) => charge(client, { accountId, amountCents: balance + 1, jobId: null, note: "too much" })],
+      ["transfer", (client) => transfer(client, { fromAccountId: accountId, toAccountId: schoolId, amountCents: balance + 1 })],
+    ]) {
+      let code = null;
+      try {
+        await withTransaction(fn, { pool });
+      } catch (error) {
+        code = error.code;
+      }
+      assert(code === "insufficient_funds", `${label} past the balance: got ${code}`);
+    }
+    let constraint = null;
+    try {
+      await pool.query("UPDATE budget_accounts SET balance_cents = -1 WHERE id = $1", [accountId]);
+    } catch (error) {
+      constraint = error.constraint;
+    }
+    assert(constraint === "budget_accounts_not_negative", `negative balance in the database: ${constraint}`);
+  }],
+
+  ["budget: grant rejects non-integer or non-positive cents", async () => {
+    for (const amountCents of [0, -5, 1.5]) {
+      let code = null;
+      try {
+        await withTransaction(async (client) => {
+          const account = await ensureSchoolAccount(client);
           await grant(client, { accountId: account, amountCents });
         }, { pool });
       } catch (error) {
@@ -827,9 +879,17 @@ const tests = [
     assert(code === "insufficient_funds", `Expected insufficient_funds, got ${code}`);
     assert((await scalar("SELECT count(*) FROM jobs")) === before, "a refused launch must not leave a job");
 
+    // Admins too: no account may go below zero.
     const admin = await scalar("SELECT id FROM users WHERE username = 'admin'");
-    const adminJob = await jobs.createWithReservation({ ownerUserId: admin, name: "admin-run", repo: "x/y", executionProvider: "ec2", hourlyRateCents: 360, maxRuntimeSeconds: 1800, reserveCents: 5, enforceBalance: false });
-    assert(adminJob.reservedCents === 5, "admin launch should be allowed without balance");
+    let adminCode = null;
+    try {
+      await jobs.createWithReservation({ ownerUserId: admin, name: "admin-too-big", repo: "x/y", executionProvider: "ec2", hourlyRateCents: 360, maxRuntimeSeconds: 1800, reserveCents: 100000000 });
+    } catch (error) {
+      adminCode = error instanceof BudgetError ? error.code : error.message;
+    }
+    assert(adminCode === "insufficient_funds", `Expected insufficient_funds for an admin, got ${adminCode}`);
+    const adminJob = await jobs.createWithReservation({ ownerUserId: admin, name: "admin-run", repo: "x/y", executionProvider: "ec2", hourlyRateCents: 360, maxRuntimeSeconds: 1800, reserveCents: 5 });
+    assert(adminJob.reservedCents === 5, "an admin launch within the admin's budget is allowed");
   }],
 
   ["ec2 jobs: a failed launch fails the job and refunds everything", async () => {
@@ -919,7 +979,7 @@ const tests = [
     const owner = await scalar("SELECT id FROM users WHERE username = 'admin'");
     const mk = async (name, extra = {}) => jobs.createWithReservation({
       ownerUserId: owner, name, repo: "x/y", executionProvider: "ec2", hourlyRateCents: 360,
-      maxRuntimeSeconds: 100, reserveCents: 5, enforceBalance: false, ...extra,
+      maxRuntimeSeconds: 100, reserveCents: 5, ...extra,
     });
     const live = await mk("rec-live");
     const finished = await mk("rec-finished");
@@ -1091,7 +1151,7 @@ const tests = [
     const owner = await scalar("SELECT id FROM users WHERE username = 'admin'");
     const job = await jobs.createWithReservation({
       ownerUserId: owner, name: "finalize-race", repo: "x/y", executionProvider: "ec2", hourlyRateCents: 360,
-      maxRuntimeSeconds: 100, reserveCents: 5, enforceBalance: false,
+      maxRuntimeSeconds: 100, reserveCents: 5,
     });
     const args = { syncKey: "race-1", status: "completed", durationSeconds: 10, finalizedAt: new Date().toISOString() };
     const results = await Promise.all([jobs.finalize(job.id, args), jobs.finalize(job.id, args)]);
@@ -1111,7 +1171,7 @@ const tests = [
     const mk = async (name) => {
       const job = await jobs.createWithReservation({
         ownerUserId: owner, name, repo: "x/y", executionProvider: "ec2", hourlyRateCents: 360,
-        maxRuntimeSeconds: 100, reserveCents: 5, enforceBalance: false,
+        maxRuntimeSeconds: 100, reserveCents: 5,
       });
       return jobs.setExecutionRef(job.id, { provider: "ec2", executionId: job.id, jobId: job.id, instanceId: `i-${job.id}` });
     };
@@ -1956,7 +2016,7 @@ const tests = [
   ["ec2 reconciler: a launch with no progress for 10 minutes fails and is refunded; a recent one is left alone", async () => {
     const jobs = createJobsPostgresRepository({ pool });
     const owner = await scalar("SELECT id FROM users WHERE username = 'admin'");
-    const mk = (name) => jobs.createWithReservation({ ownerUserId: owner, name, repo: "x/y", executionProvider: "ec2", hourlyRateCents: 360, maxRuntimeSeconds: 100, reserveCents: 5, enforceBalance: false });
+    const mk = (name) => jobs.createWithReservation({ ownerUserId: owner, name, repo: "x/y", executionProvider: "ec2", hourlyRateCents: 360, maxRuntimeSeconds: 100, reserveCents: 5 });
     const stale = await mk("prep-stale");
     const fresh = await mk("prep-fresh");
     await pool.query("UPDATE jobs SET launch_progress_at = now() - interval '11 minutes', launch_progress = 'Copied 3 of 9 files' WHERE id = $1", [stale.id]);

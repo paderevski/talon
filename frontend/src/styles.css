@@ -1028,13 +1028,27 @@ button.source-placeholder:disabled { color: var(--text-muted); cursor: not-allow
 }
 
 /* Overview counts read as headline figures. */
-.stat-card-link .result-job-name { font-size: var(--fs-sm); font-weight: 600; color: var(--text-secondary); }
-.stat-card-link .result-meta-value {
+.stat-row .stat-card { padding: 10px 14px; }
+.stat-card-link .result-job-name, .stat-card .result-job-name { font-size: var(--fs-sm); font-weight: 600; color: var(--text-secondary); }
+.stat-card-link .result-meta-value, .stat-card .result-meta-value {
   font-family: inherit;
   font-size: var(--fs-xl);
   font-weight: 700;
   line-height: 1.2;
   color: var(--text-primary);
+}
+
+/* Overview money: the School account's add/subtract next to its explanation. */
+.money-year-select { width: auto; }
+.money-school {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: start;
+  margin: 14px 0 6px;
+}
+@media (max-width: 700px) {
+  .money-school { grid-template-columns: 1fr; }
 }
 
 /* Data tables: numbers right-aligned, actions hug the right edge. */

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { allocateStudentBudget, fetchTeacherRoster } from "../api/client";
+import { allocateStudentBudget, fetchTeacherRoster, moveOwnBudget } from "../api/client";
 import { formatClassName, formatDollars } from "../utils/format";
 import BudgetAdjuster from "./BudgetAdjuster";
 
@@ -9,6 +9,7 @@ const emptyRoster = {
     fullName: "",
     className: "",
     poolBalance: 0,
+    ownBalance: 0,
   },
   classes: [],
   students: [],
@@ -76,7 +77,8 @@ export function ClassTables({ classes, onOpenStudentView, onAllocate, poolBalanc
   ));
 }
 
-export default function TeacherStudentsPanel({ authUser, onOpenStudentView }) {
+// onBudgetChanged: the teacher's own budget changed (the header shows it).
+export default function TeacherStudentsPanel({ authUser, onOpenStudentView, onBudgetChanged }) {
   const [roster, setRoster] = useState(emptyRoster);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
@@ -96,6 +98,24 @@ export default function TeacherStudentsPanel({ authUser, onOpenStudentView }) {
     );
     setVersion((current) => current + 1);
   }, []);
+
+  // Pool -> the teacher's own budget (Add) or back (Subtract).
+  const onMoveOwn = useCallback(async (direction, amount) => {
+    setActionMessage("");
+    setActionError("");
+    await moveOwnBudget(amount, direction === "add" ? "to-me" : "to-pool");
+    setActionMessage(
+      direction === "add"
+        ? `Moved ${formatDollars(amount)} from your pool to your own budget`
+        : `Returned ${formatDollars(amount)} from your own budget to your pool`,
+    );
+    setVersion((current) => current + 1);
+    onBudgetChanged?.();
+  }, [onBudgetChanged]);
+
+  // Teachers run jobs only when an admin allows it; a leftover own balance
+  // is still shown so it can be returned to the pool.
+  const showOwn = Boolean(authUser?.canRunJobs) || roster.teacher.ownBalance > 0;
 
   useEffect(() => {
     if (!authUser?.username) {
@@ -161,6 +181,19 @@ export default function TeacherStudentsPanel({ authUser, onOpenStudentView }) {
             <div className="result-meta-value mono-sm">{formatDollars(roster.teacher.poolBalance)}</div>
             <div className="form-hint">Add moves money from here to a student; Subtract returns it here</div>
           </div>
+          {showOwn ? (
+            <div className="result-card">
+              <div className="result-job-name">My own budget</div>
+              <BudgetAdjuster
+                who="your own budget"
+                balance={roster.teacher.ownBalance}
+                addLimit={roster.teacher.poolBalance}
+                subtractLimit={roster.teacher.ownBalance}
+                onAdjust={onMoveOwn}
+              />
+              <div className="form-hint">What your own jobs spend. Add moves money here from your pool; Subtract returns it</div>
+            </div>
+          ) : null}
         </div>
       ) : null}
 

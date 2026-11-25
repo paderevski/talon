@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.js",
     "./repo": "./src/repo.js",
-    "./status": "./src/status.js"
+    "./status": "./src/status.js",
+    "./budget": "./src/budget.js"
   }
 }

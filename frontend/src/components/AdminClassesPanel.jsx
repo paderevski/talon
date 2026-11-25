@@ -8,6 +8,7 @@ import {
 } from "../api/client";
 import { formatBlock, formatDollars } from "../utils/format";
 import BudgetAdjuster from "./BudgetAdjuster";
+import { schoolAddProps, useSchoolBalance } from "./schoolBalance";
 
 function MemberAdder({ label, role, candidates, onAdd, disabled }) {
   const [userId, setUserId] = useState("");
@@ -45,6 +46,7 @@ function MemberAdder({ label, role, candidates, onAdd, disabled }) {
 // Everything you can change about one class: members, name/term, archive.
 // Kept separate from the table so the drill-down style can change freely.
 function ClassMembers({ classItem, users, run, isBusy, adjustBudget }) {
+  const schoolBalance = useSchoolBalance();
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState(classItem.name);
   const [term, setTerm] = useState(classItem.term || "");
@@ -147,6 +149,7 @@ function ClassMembers({ classItem, users, run, isBusy, adjustBudget }) {
                   <BudgetAdjuster
                     who={student.fullName}
                     balance={student.balance}
+                    {...schoolAddProps(schoolBalance)}
                     subtractLimit={student.balance}
                     onAdjust={(direction, amount) => adjustBudget(student, "personal", direction, amount)}
                   />
@@ -192,6 +195,7 @@ function toRows(classes) {
 }
 
 export default function AdminClassesPanel({ classes, users, onChanged }) {
+  const schoolBalance = useSchoolBalance();
   const [form, setForm] = useState({ name: "", block: "", term: "", teacherId: "" });
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [message, setMessage] = useState("");
@@ -233,8 +237,9 @@ export default function AdminClassesPanel({ classes, users, onChanged }) {
     }
   }
 
-  // Admin add/subtract on a teacher's pool or a student's own budget. Errors
-  // are shown by the row's control (BudgetAdjuster), so they are rethrown.
+  // Admin add/subtract on a teacher's pool or a student's own budget (from
+  // and back to the School account). Errors are shown by the row's control
+  // (BudgetAdjuster), so they are rethrown.
   async function adjustBudget(user, target, direction, amount) {
     setMessage("");
     setError("");
@@ -452,6 +457,7 @@ export default function AdminClassesPanel({ classes, users, onChanged }) {
                         <BudgetAdjuster
                           who={`${row.teacher.fullName}'s pool`}
                           balance={poolByTeacherId.get(row.teacher.id) ?? 0}
+                          {...schoolAddProps(schoolBalance)}
                           subtractLimit={poolByTeacherId.get(row.teacher.id) ?? 0}
                           onAdjust={(direction, amount) => adjustBudget(row.teacher, "pool", direction, amount)}
                         />

@@ -186,9 +186,8 @@ export function createJobsPostgresRepository({ pool } = {}) {
   // code is prepared and the instance starts, see services/ec2Jobs.js): the
   // reserved amount is charged to the owner's personal budget now and the
   // unused part is refunded when the job is finalized. Throws a BudgetError
-  // (code "insufficient_funds") when the balance does not cover it, unless
-  // `enforceBalance` is false (admins), in which case the balance may go
-  // negative.
+  // (code "insufficient_funds") when the balance does not cover it, for
+  // everyone (admins too: no account may go below zero).
   async function createWithReservation({
     ownerUserId,
     name,
@@ -203,7 +202,6 @@ export function createJobsPostgresRepository({ pool } = {}) {
     hourlyRateCents,
     maxRuntimeSeconds,
     reserveCents,
-    enforceBalance = true,
     maxUnfinishedPerUser = null, // null: no limit
     maxUnfinishedTotal = null,
     groupLimit = null, // { computeTypes, max, label }: e.g. GPU jobs at once, everyone together
@@ -248,14 +246,12 @@ export function createJobsPostgresRepository({ pool } = {}) {
 
         const accountId = await ensureAccount(client, ownerUserId, "personal");
 
-        if (enforceBalance) {
-          const balance = await client.query(
-            "SELECT balance_cents FROM budget_accounts WHERE id = $1 FOR UPDATE",
-            [accountId],
-          );
-          if (Number(balance.rows[0].balance_cents) < reserveCents) {
-            throw new BudgetError("Not enough budget left for this job", "insufficient_funds");
-          }
+        const balance = await client.query(
+          "SELECT balance_cents FROM budget_accounts WHERE id = $1 FOR UPDATE",
+          [accountId],
+        );
+        if (Number(balance.rows[0].balance_cents) < reserveCents) {
+          throw new BudgetError("Not enough budget left for this job", "insufficient_funds");
         }
 
         const code = codeSourceFrom({ source, repo, branch });
@@ -389,10 +385,18 @@ export function createJobsPostgresRepository({ pool } = {}) {
             }
           }
         } else if (costCents === 0) {
+          // Local runner (no reservation): charged after the run, at most
+          // what is left, since no account may go below zero. The job keeps
+          // its full cost; the note says when the charge was cut.
           costCents = computeCostCents(durationSeconds ?? job.duration_seconds, job.hourly_rate_cents);
           if (costCents > 0) {
             const accountId = await ensureAccount(client, job.owner_user_id, "personal");
-            await charge(client, { accountId, amountCents: costCents, jobId, note: `Job ${jobId}` });
+            const left = await client.query("SELECT balance_cents FROM budget_accounts WHERE id = $1 FOR UPDATE", [accountId]);
+            const chargeCents = Math.min(costCents, Number(left.rows[0].balance_cents));
+            if (chargeCents > 0) {
+              const note = chargeCents < costCents ? `Job ${jobId} (capped at the remaining budget)` : `Job ${jobId}`;
+              await charge(client, { accountId, amountCents: chargeCents, jobId, note });
+            }
           }
         }
 

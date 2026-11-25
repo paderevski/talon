@@ -4,6 +4,7 @@ import FileBrowser from "./FileBrowser";
 import { normalizeDrivePath, normalizeFolder, normalizeRepoInput, parseGithubUrl } from "../utils/repo";
 import { formatDollars } from "../utils/format";
 import { formatRuntime, machineLabel, planJob } from "../utils/jobPlan";
+import { moreBudgetHint } from "talon-shared/budget";
 
 const jobNameCountersStorageKey = "talon.jobNameCounters";
 
@@ -95,7 +96,7 @@ function makeInitialForm(defaultRepo, defaultBranch) {
   };
 }
 
-export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, githubLinked = false, githubLogin = "", driveLinked = false, driveLogin = "", compute = null, budgetDollars = null }) {
+export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, githubLinked = false, githubLogin = "", driveLinked = false, driveLogin = "", compute = null, budgetDollars = null, roles = [] }) {
   const [form, setForm] = useState(makeInitialForm(defaultRepo, defaultBranch));
   const [isAutoName, setIsAutoName] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -627,7 +628,7 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
                   : "Runs on the web server itself: free, but not isolated. "}
                 {ec2.maxJobsPerUser === 1 ? "One job at a time." : ""}
                 {overBudget && Number(budgetDollars) <= 0
-                  ? " You have no budget yet ($0.00). Ask your teacher to give you some."
+                  ? ` You have no budget left ($0.00). ${moreBudgetHint(roles)}`
                   : overBudget
                     ? ` Even the shortest time limit on this machine is more than your remaining budget (${formatDollars(budgetDollars)}): choose a smaller machine.`
                     : ""}

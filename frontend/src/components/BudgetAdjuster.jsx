@@ -4,11 +4,12 @@ import { formatDollars } from "../utils/format";
 
 // One balance changed in place: type an amount, then Add or Subtract. Each
 // button is enabled only when that move is possible (addLimit: what the
-// source can give, e.g. the teacher's pool; subtractLimit: what can be taken
-// out), and says why when it is not; the server checks again.
+// source can give, e.g. the teacher's pool or the School account, named by
+// addSource; subtractLimit: what can be taken out), and says why when it is
+// not; the server checks again.
 // onAdjust(direction "add" | "subtract", amount) returns a promise; an error
 // is shown under the control, success clears the amount.
-export default function BudgetAdjuster({ who, balance, addLimit = null, subtractLimit, onAdjust, disabled = false }) {
+export default function BudgetAdjuster({ who, balance, addLimit = null, addSource = "Your pool", subtractLimit, onAdjust, disabled = false }) {
   const [text, setText] = useState("");
   const [error, setError] = useState("");
   const [isBusy, setIsBusy] = useState(false);
@@ -16,7 +17,7 @@ export default function BudgetAdjuster({ who, balance, addLimit = null, subtract
   const amount = parseAmount(text);
   const typed = text.trim() !== "";
   const limit = Math.max(0, subtractLimit ?? balance ?? 0);
-  const addProblem = !amount ? null : addLimit !== null && amount > addLimit ? `Your pool has only ${formatDollars(addLimit)}` : null;
+  const addProblem = !amount ? null : addLimit !== null && amount > addLimit ? `${addSource} has only ${formatDollars(addLimit)}` : null;
   const subtractProblem = !amount ? null : amount > limit ? `At most ${formatDollars(limit)} can be taken out` : null;
   const canAdd = Boolean(amount) && !addProblem && !disabled && !isBusy;
   const canSubtract = Boolean(amount) && !subtractProblem && !disabled && !isBusy;

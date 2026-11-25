@@ -1,5 +1,5 @@
 import { getPool, withTransaction } from "../db/pool.js";
-import { dollarsToCents, ensureAccount, grant } from "../budget/ledger.js";
+import { dollarsToCents, ensureAccount } from "../budget/ledger.js";
 import { createPasswordHash } from "../utils/passwords.js";
 import {
   ManagementError,
@@ -7,6 +7,7 @@ import {
   cleanRoles,
   cleanText,
   cleanUsername,
+  fundFromSchool,
   generatePassword,
   setRoles,
 } from "./management.js";
@@ -337,7 +338,8 @@ export async function importRoster({ csv, defaultRole = "student", dryRun = true
             userId,
             row.roles.includes("teacher") ? "teacher_pool" : "personal",
           );
-          await grant(client, { accountId, amountCents: row.budgetCents, note: "Roster import", createdBy: actorId });
+          // From the School account; not enough there fails the whole import.
+          await fundFromSchool(client, { toAccountId: accountId, amountCents: row.budgetCents, note: "Roster import", createdBy: actorId });
         }
         // Hashing is CPU-heavy; let other requests through between users.
         await new Promise((resolve) => setImmediate(resolve));
