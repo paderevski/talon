@@ -465,3 +465,6 @@ export const changeOwnPassword = (currentPassword, newPassword) =>
 // dryRun true previews without writing; false imports and returns the passwords.
 export const importRoster = (csv, { defaultRole = "student", dryRun = true } = {}) =>
   requestJson("POST", "/api/admin/import", { csv, defaultRole, dryRun });
+
+// { style, seed } to pick an avatar, null for initials. Returns the updated user.
+export const saveAvatar = async (avatar) => (await requestJson("PUT", "/api/auth/avatar", { avatar })).user;

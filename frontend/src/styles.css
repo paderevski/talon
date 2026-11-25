@@ -162,9 +162,9 @@ body {
   background: var(--bg-card);
   border-color: var(--border);
 }
-.user-avatar {
-  width: 30px;
-  height: 30px;
+.avatar-circle {
+  width: 28px;
+  height: 28px;
   flex: none;
   border-radius: 50%;
   display: inline-flex;
@@ -176,6 +176,10 @@ body {
   color: #fff;
   background: linear-gradient(135deg, var(--accent-blue-dim), var(--accent-purple));
 }
+.avatar-circle-image { background: var(--bg-card-hover); object-fit: cover; }
+/* A list's name cell: avatar on the left, name and details on the right. */
+.person { display: flex; align-items: center; gap: 10px; }
+.person-text { min-width: 0; }
 .user-trigger-text { display: flex; flex-direction: column; line-height: 1.2; }
 .user-trigger-name { font-size: var(--fs-sm); font-weight: 600; }
 .user-trigger-role { font-size: var(--fs-xs); color: var(--text-muted); }
@@ -1220,7 +1224,8 @@ th.cell-num .sort-btn { margin-left: auto; text-align: right; }
 .classes-table tr.row-detail > td { background: var(--bg-secondary); padding: 16px; }
 .class-detail {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  /* The students side holds avatars, names and budget controls. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.8fr);
   gap: 24px;
 }
 .class-detail-col table { margin-bottom: 10px; }
@@ -1614,3 +1619,49 @@ th.budget-adjust-cell, td.budget-adjust-cell { width: 1%; padding-left: 0; paddi
   .budget-panel { grid-template-columns: 1fr; }
   .budget-panel-fields { grid-template-columns: 1fr; }
 }
+
+/* Profile dialog: avatar picker (ProfileDialog) */
+.profile-modal { max-width: 460px; }
+.profile-who { display: flex; align-items: center; gap: 14px; }
+.profile-preview {
+  width: 64px;
+  height: 64px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+}
+.profile-preview-initials {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent-blue-dim), var(--accent-purple));
+}
+.profile-style-row { display: flex; gap: 8px; align-items: center; }
+.profile-style-row .form-input { flex: 1; }
+.avatar-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 6px;
+}
+@media (max-width: 480px) {
+  .avatar-grid { grid-template-columns: repeat(4, 1fr); }
+}
+.avatar-choice {
+  padding: 4px;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  aspect-ratio: 1;
+}
+.avatar-choice img,
+.avatar-choice-blank { width: 100%; height: 100%; border-radius: 50%; display: block; }
+.avatar-choice-blank { background: var(--bg-card-hover); }
+.avatar-choice:hover { border-color: var(--border); }
+.avatar-choice.picked { border-color: var(--accent-blue); }
+.avatar-choice:focus-visible { outline: 2px solid var(--accent-blue); outline-offset: 2px; }
+.profile-credit { font-size: var(--fs-xs); color: var(--text-muted); }
+.profile-credit a { color: inherit; }

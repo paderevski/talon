@@ -79,5 +79,6 @@ export function publicUser(user) {
     canRunJobs: canRunJobs(user),
     localSignIn: user.localSignIn !== false,
     inClass: user.inClass === true,
+    avatar: user.avatar ?? null,
   };
 }

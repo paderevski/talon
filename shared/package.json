@@ -7,6 +7,7 @@
     ".": "./src/index.js",
     "./repo": "./src/repo.js",
     "./status": "./src/status.js",
-    "./budget": "./src/budget.js"
+    "./budget": "./src/budget.js",
+    "./avatars": "./src/avatars.js"
   }
 }
