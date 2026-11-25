@@ -1,10 +1,50 @@
 # Talon infra - current status
 
-_Last updated: 2026-11-07 (Connections, Google Drive, Drive jobs and background EC2 launches: Next up items -5 to -2). Before that, 2026-11-05 (status doc refreshed for architecture doc v8; CI and protected `main`; zone resilience and DB failover fixes; web tier phase 3 merged to `main`: two web servers in an Auto Scaling group behind an internal ALB, failover, deploy and reconciler checks pass; changed files skip hidden paths). Earlier the same day: phases 1 and 2 (Talon VPC, RDS with IAM sign-in and split roles, web server from a launch template), per-launch S3 job folders, old box and its code removed. Before that, 2026-11-04 (GPU jobs, build step 4, merged to `main`: one GPU launch template on the PyTorch DLAMI for g4dn.xlarge, g4dn.2xlarge, g6.xlarge and g6e.2xlarge, admin-only; verified on the box with g4dn; the box runs the same code from branch `gpu-jobs`). Before that, 2026-11-03 (GitHub App sign-in, code-source choice, job folders, admin GitHub unlink and script arguments). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
+_Last updated: 2026-11-24 (Entra sign-in live, site opened to the internet, logging for investigations, admin "Not in a class" view; see "Latest (2026-11-24)" below). Before that, 2026-11-07 (Connections, Google Drive, Drive jobs and background EC2 launches: Next up items -5 to -2). Before that, 2026-11-05 (status doc refreshed for architecture doc v8; CI and protected `main`; zone resilience and DB failover fixes; web tier phase 3 merged to `main`: two web servers in an Auto Scaling group behind an internal ALB, failover, deploy and reconciler checks pass; changed files skip hidden paths). Earlier the same day: phases 1 and 2 (Talon VPC, RDS with IAM sign-in and split roles, web server from a launch template), per-launch S3 job folders, old box and its code removed. Before that, 2026-11-04 (GPU jobs, build step 4, merged to `main`: one GPU launch template on the PyTorch DLAMI for g4dn.xlarge, g4dn.2xlarge, g6.xlarge and g6e.2xlarge, admin-only; verified on the box with g4dn; the box runs the same code from branch `gpu-jobs`). Before that, 2026-11-03 (GitHub App sign-in, code-source choice, job folders, admin GitHub unlink and script arguments). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
 Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 (gitignored). Architecture doc: `docs/talon-architecture-summary-v8.docx`
 (local, gitignored; 2026-11-05, describes the system as built, with where
 it differs from v7 and a short what-comes-next; v7 kept for history).
+
+## Latest (2026-11-24)
+
+Servers run `main` at `d6888e4` (PRs #45 to #57). Done that day:
+
+- **Entra sign-in live** (#52, hardened in #53): admin consent granted by
+  IT; the ID token carries `email` with `xms_edov` true. Staff are linked
+  by an admin (`db:link-entra`); the owner's admin account is linked.
+- **Site open to the internet** (`public_alb_ingress_cidrs = ["0.0.0.0/0"]`,
+  old allow-list kept as a comment in `terraform.tfvars`).
+- **Admin -> Not in a class** (#54): assign several students to a class
+  with an optional starting budget; students not in a class see a notice.
+- **Security**: git and tar get a minimal environment, no secrets
+  (`utils/childEnv.js`); sessions end `SESSION_MAX_HOURS` (12) after
+  sign-in (#56). Logging (#57, `logging.tf`): CloudTrail trail adopted with
+  log file validation and bucket versioning, SSM session and Run Command
+  logs in `/talon/demo/ssm`, job-subnet flow logs to S3, retention 90 days
+  (backend 365). `configure.sh` reloads systemd when units are flagged (#55).
+
+Open:
+
+1. **Entra: an unexpected user got in.** On 2026-11-25 02:30 UTC a
+   Microsoft sign-in for a user who should not have access created a
+   student account (`entra_auto_create = "student"`). Microsoft issued her
+   a token, so either "Assignment required?" is off on the Enterprise app
+   or she is in an assigned group. Asked IT to check (Properties, Users
+   and groups, sign-in logs). Options: `entra_auto_create = "off"` until
+   IT confirms (needs a deploy: the servers cache the setting); then an
+   app role (e.g. `Talon.User`) that Talon requires in the `roles` claim
+   (planned setting `ENTRA_REQUIRED_ROLE`). Her account: delete or disable
+   in Admin -> Users.
+2. **WAF**: SQLi and rate rules still count only (`waf_new_rules_block =
+   false`); zero matches before opening. Read the counts after 3-5 school
+   days of public traffic, then decide on blocking.
+3. **GuardDuty**: owner to decide (Terraform switch `enable_guardduty`).
+4. Route 53 Resolver query logging for job subnets (not done).
+5. Entra client secret: get its expiry date from IT; the value was seen
+   in an assistant session on 2026-11-24 (rotate if policy requires).
+6. Flaky test: `zz-small-fixes` (admins demoting each other at once)
+   sometimes gets a 500, on `main` too.
 
 ## Next up (as of 2026-11-07)
 
@@ -258,7 +298,7 @@ fixes only. Items 1 and 2 below describe the current EC2 path.
 | Region | `us-east-1`, Talon VPC `10.20.0.0/16` (`network.tf`): web servers in app subnets 1a/1b behind an internal ALB (private, out via a NAT gateway in each zone), RDS Multi-AZ in data subnets 1a/1b, jobs in public jobs subnets 1a-1d |
 | Web servers | Auto Scaling group `talon-demo-web` (`web.tf`): two t4g.small, Ubuntu 24.04 arm64, one per zone, from launch template `talon-demo-web`; tagged `Component=web`. Internal ALB `talon-demo-web` (`alb.tf`), health `GET /api/health/live` (app up, no database) every 10 s, unhealthy after 2 |
 | Elastic IP | None for the web servers (private). One per NAT gateway (1a, 1b) |
-| Inbound access | None from the internet. SSM Session Manager only (`tunnel.sh`: SSM port forward through a web server to the internal ALB, or with `TALON_ALB=public` to the internet-facing ALB). That ALB (`talon-public`, `public_alb.tf`, HTTP:80 only, no certificate yet) allows port 80 only from the two NAT gateways' Elastic IPs |
+| Inbound access | **Since 2026-11-24 the public ALB `talon-public` (HTTPS, WAF) admits the whole internet** (`public_alb_ingress_cidrs`). Admin access to servers: SSM Session Manager only. Older note:  (`tunnel.sh`: SSM port forward through a web server to the internal ALB, or with `TALON_ALB=public` to the internet-facing ALB). That ALB (`talon-public`, `public_alb.tf`, HTTP:80 only, no certificate yet) allows port 80 only from the two NAT gateways' Elastic IPs |
 | Runtime | Node 24 LTS (pinned tarball, `/usr/local/bin/node`), nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`. Postgres 16 on RDS `talon-demo` (`db.t4g.small`, Multi-AZ since 2026-11-05, TLS, IAM sign-in as `talon_app`; migrations as `talon_migrate`, run from an operator's laptop, not from the servers). `EC2_JOBS_ENABLED=true` |
 | Deployed | `main`, unless `deploy.sh <branch>` put a test branch on the box (normally tested before merge; the branch may stay until the next deploy since it equals `main` after the PR). `infra/scripts/status.sh --deep` shows the commit, template versions and drift |
 | Approx cost | ~$165/month at list price, not read from the bill (Cost Explorer shows less: LCPS Savings Plans and discounts): two web servers ~$24 + EBS ~$3.20, internal ALB ~$17, two NAT gateways ~$66 + traffic, RDS db.t4g.small Multi-AZ ~$51, KMS key ~$1, alarms/S3/SNS pennies. Plus job instances, billed per second and charged to budgets |
@@ -515,8 +555,8 @@ toward two servers)
 
 **Blocked on others**
 
-9. **Entra ID sign-in** - _code done on branch `entraID` (2026-11-23), not
-   deployed._ LCPS IT made the App Registration (tenant ID, client ID,
+9. **Entra ID sign-in** - _live since 2026-11-24 (see "Latest" above; an
+   unexpected user got in, assignment enforcement unconfirmed)._ LCPS IT made the App Registration (tenant ID, client ID,
    secret) and limits sign-in to an assigned list of users. "Sign in with
    Microsoft" on the login page: OIDC authorization code + PKCE as a
    confidential client (`backend/src/auth/entra.js`; ID token verified with
@@ -544,12 +584,12 @@ toward two servers)
    `auth.entra_error`; in the "Failed logins" saved query (missing fields
    shown as "-", with the Microsoft object id for linking). Tested against a
    fake Microsoft (`tests/cases/auth-entra-sign-in.test.mjs`) and in the
-   browser locally; **not yet against the real tenant.** To go live:
+   browser locally, and against the real tenant on 2026-11-24. Went live via:
    (1) secret into SSM by hand; (2) `entra_tenant_id`/`entra_client_id` in
    `terraform.tfvars`, plan, apply (adds SSM parameters and an IAM policy
    only, no server roll); (3) deploy the branch; (4) sign in with a
-   real account. Open: the secret's expiry date (renew before it);
-   whether IT also registered the localhost redirect URIs.
+   real account. Open: the secret's expiry date (renew before it). The
+   localhost:5173 redirect URI works (tested 2026-11-24).
 10. **ALB + WAF go-public** - hostname chosen (`talon.lcps.org`, needs
     LCPS IT to add DNS records). **Step 1 done 2026-11-10:** the
     internet-facing ALB `talon-public` exists (`public_alb.tf`) but admits
@@ -570,7 +610,7 @@ toward two servers)
     do after that: the exposure decision, WAF, the X-Forwarded-Proto check
     over HTTPS, `SESSION_COOKIE_SECURE` (it may break login through the
     plain-HTTP tunnel), removing demo users, creating the real admin (see
-    "Going public" below).
+    "Going public" below). **All done; opened to the internet 2026-11-24.**
 11. **Read-only AWS role** (`lcps-ro`) - ask the LCPS AWS admins.
 
 **Housekeeping**
