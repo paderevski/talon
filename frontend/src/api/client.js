@@ -429,6 +429,10 @@ export const removeAdminClassMember = (classId, userId) =>
     `/api/admin/classes/${encodeURIComponent(classId)}/members/${encodeURIComponent(userId)}`,
   );
 
+// Several students into one class; budget: dollars each (optional, "" = none).
+export const assignAdminStudents = (classId, userIds, budget) =>
+  requestJson("POST", `/api/admin/classes/${encodeURIComponent(classId)}/students`, { userIds, budget });
+
 // direction: "increase" | "decrease"; target: "personal" | "pool"; amount in dollars.
 export const adjustAdminBudget = (adjustment) =>
   requestJson("POST", "/api/admin/budget/adjustments", adjustment);

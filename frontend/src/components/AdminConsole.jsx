@@ -4,11 +4,12 @@ import AdminRosterPanel from "./AdminRosterPanel";
 import AdminUsersPanel from "./AdminUsersPanel";
 import AdminClassesPanel from "./AdminClassesPanel";
 import AdminImportPanel from "./AdminImportPanel";
+import AdminUnassignedPanel from "./AdminUnassignedPanel";
 
 // Owns the users and classes lists shared by the admin views; any change
 // calls reload() so every view (and the overview counts) stays in step.
 // Renders only the admin view named by `view` (overview, users, classes,
-// import); `sub` picks the users tab. Other views render nothing here.
+// unassigned, import); `sub` picks the users tab. Other views render nothing here.
 export default function AdminConsole({ authUser, view, sub }) {
   const [users, setUsers] = useState([]);
   const [classes, setClasses] = useState([]);
@@ -55,6 +56,14 @@ export default function AdminConsole({ authUser, view, sub }) {
       <>
         {errorBanner}
         <AdminClassesPanel classes={classes} users={users} onChanged={reload} />
+      </>
+    );
+  }
+  if (view === "unassigned") {
+    return (
+      <>
+        {errorBanner}
+        <AdminUnassignedPanel users={users} classes={classes} onChanged={reload} />
       </>
     );
   }

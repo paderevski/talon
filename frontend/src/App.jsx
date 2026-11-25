@@ -36,6 +36,7 @@ function getViews(role, teacherStudent) {
       { id: "overview", label: "Overview" },
       { id: "users", label: "Users" },
       { id: "classes", label: "Classes" },
+      { id: "unassigned", label: "Not in a class" },
       { id: "import", label: "Import" },
       ...jobViews,
     ];
@@ -117,13 +118,15 @@ function getStoredAuthUser() {
 
 // The fields the app keeps about the signed-in user (from /api/auth/login,
 // /api/auth/me, or localStorage). localSignIn is false for people who only
-// sign in with Microsoft: they have no Talon password to change.
+// sign in with Microsoft: they have no Talon password to change. inClass is
+// false for a student nobody has put in a class yet (they see a notice).
 function toSessionUser(user) {
   return {
     username: String(user.username ?? "").trim(),
     fullName: String(user.fullName ?? "").trim(),
     role: normalizeUserRole(user.role),
     localSignIn: user.localSignIn !== false,
+    inClass: user.inClass !== false,
   };
 }
 
@@ -815,6 +818,12 @@ export default function App() {
         </nav>
 
         <main className="main">
+          {normalizeUserRole(authUser.role) === "student" && authUser.inClass === false ? (
+            <div className="notice-warn" role="status">
+              You're signed in, but you're not in a class yet, so you can't run jobs. Your teacher or an admin will
+              add you; check back after your next class.
+            </div>
+          ) : null}
           {isAdmin ? <AdminConsole authUser={authUser} view={activeView} sub={route.sub} /> : null}
 
           {isTeacher && activeView === "students" ? (

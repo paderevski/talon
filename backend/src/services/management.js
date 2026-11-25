@@ -111,8 +111,9 @@ async function revokeSessions(client, userId, keepSid = "") {
 
 export async function listUsers({ pool = getPool() } = {}) {
   const result = await pool.query(`
-    SELECT u.id, u.username, u.email, u.display_name, u.status, u.last_login_at,
+    SELECT u.id, u.username, u.email, u.display_name, u.status, u.last_login_at, u.created_at,
            ARRAY(SELECT r.role::text FROM user_roles r WHERE r.user_id = u.id ORDER BY r.role) AS roles,
+           ARRAY(SELECT i.provider FROM user_identities i WHERE i.user_id = u.id ORDER BY i.provider) AS sign_in,
            personal.balance_cents AS personal_cents,
            pool.balance_cents AS pool_cents,
            COALESCE((
@@ -142,6 +143,9 @@ export async function listUsers({ pool = getPool() } = {}) {
     status: row.status,
     roles: row.roles,
     lastLoginAt: row.last_login_at,
+    createdAt: row.created_at,
+    // How the user signs in: "local" (Talon password) and/or "entra" (Microsoft).
+    signIn: row.sign_in,
     // Linked outside accounts: [{ provider, login }]. githubLogin is kept for
     // the user list's search and the Unlink GitHub button.
     connections: row.connections,
@@ -582,6 +586,80 @@ export async function addClassMember(classId, userId, memberRole) {
       "INSERT INTO class_members (class_id, user_id) VALUES ($1, $2) ON CONFLICT (class_id, user_id) DO NOTHING",
       [classId, userId],
     );
+  });
+}
+
+// Admin puts several students into one class at once, each optionally with
+// a starting budget (an admin grant to their personal budget, as roster
+// import does). For students who signed in before anyone set them up (a new
+// Microsoft account). All or nothing. A student already in the class is left
+// as is and gets no second grant (a repeated click changes nothing).
+// Returns { added, alreadyMembers, grantedCents } (grantedCents per student).
+const maxAssignBatch = 200;
+
+export async function assignStudentsToClass({ classId, userIds, budget }, actorId) {
+  const ids = Array.isArray(userIds) ? [...new Set(userIds.map((id) => String(id ?? "").toLowerCase()))] : [];
+  if (ids.length === 0) {
+    throw new ManagementError("Choose at least one student");
+  }
+  if (ids.length > maxAssignBatch) {
+    throw new ManagementError(`At most ${maxAssignBatch} students at a time`);
+  }
+  if (ids.some((id) => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id))) {
+    throw new ManagementError("Choose students from the list");
+  }
+  const noBudget = budget === undefined || budget === null || String(budget).trim() === "" || Number(budget) === 0;
+  const grantCents = noBudget ? 0 : toCents(budget);
+
+  return withTransaction(async (client) => {
+    const found = await client.query("SELECT name, block, archived_at FROM classes WHERE id = $1 FOR UPDATE", [classId]);
+    if (found.rows.length === 0) {
+      throw new ManagementError("Class not found", 404);
+    }
+    if (found.rows[0].archived_at) {
+      throw new ManagementError("This class is archived", 409);
+    }
+    const { name, block } = found.rows[0];
+
+    const users = await client.query(
+      `SELECT u.id, u.username, u.status,
+              EXISTS (SELECT 1 FROM user_roles r WHERE r.user_id = u.id AND r.role = 'student') AS is_student
+       FROM users u WHERE u.id = ANY($1::uuid[])
+       ORDER BY u.id
+       FOR UPDATE`,
+      [ids],
+    );
+    if (users.rows.length !== ids.length) {
+      throw new ManagementError("A chosen user no longer exists; reload the page", 404);
+    }
+    const notStudents = users.rows.filter((user) => !user.is_student).map((user) => user.username);
+    if (notStudents.length) {
+      throw new ManagementError(`Not students: ${notStudents.join(", ")}`);
+    }
+    const disabled = users.rows.filter((user) => user.status !== "active").map((user) => user.username);
+    if (disabled.length) {
+      throw new ManagementError(`Turned off (enable them first): ${disabled.join(", ")}`);
+    }
+
+    const inserted = await client.query(
+      `INSERT INTO class_members (class_id, user_id)
+       SELECT $1, id FROM unnest($2::uuid[]) AS id
+       ON CONFLICT (class_id, user_id) DO NOTHING
+       RETURNING user_id`,
+      [classId, ids],
+    );
+    if (grantCents > 0) {
+      const note = `Starting budget (${block ? `${name}, block ${block}` : name})`;
+      for (const { user_id: userId } of inserted.rows) {
+        const accountId = await ensureAccount(client, userId, "personal");
+        await grant(client, { accountId, amountCents: grantCents, note, createdBy: actorId });
+      }
+    }
+    return {
+      added: inserted.rows.length,
+      alreadyMembers: ids.length - inserted.rows.length,
+      grantedCents: grantCents,
+    };
   });
 }
 

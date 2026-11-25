@@ -803,6 +803,15 @@ td:last-child, th:last-child { border-right: none; }
   padding: 8px 12px;
   font-size: var(--fs-base);
 }
+.notice-warn {
+  margin-bottom: 10px;
+  border: 1px solid var(--accent-amber);
+  background: var(--accent-amber-dim);
+  color: var(--accent-amber);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: var(--fs-base);
+}
 .class-member-add { display: flex; gap: 8px; margin-top: 8px; }
 .class-member-add .form-select { flex: 1; }
 .modal-backdrop {

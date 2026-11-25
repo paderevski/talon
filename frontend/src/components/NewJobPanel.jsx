@@ -626,7 +626,11 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
                   ? `This job can cost up to ${formatDollars(estimateDollars)}. That is set aside when it starts; you are charged per second for the time it actually runs and the rest is returned. `
                   : "Runs on the web server itself: free, but not isolated. "}
                 {ec2.maxJobsPerUser === 1 ? "One job at a time." : ""}
-                {overBudget ? ` Even the shortest time limit on this machine is more than your remaining budget (${formatDollars(budgetDollars)}): choose a smaller machine.` : ""}
+                {overBudget && Number(budgetDollars) <= 0
+                  ? " You have no budget yet ($0.00). Ask your teacher to give you some."
+                  : overBudget
+                    ? ` Even the shortest time limit on this machine is more than your remaining budget (${formatDollars(budgetDollars)}): choose a smaller machine.`
+                    : ""}
               </span>
             </div>
           </>
