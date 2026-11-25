@@ -444,7 +444,7 @@ resource "aws_wafv2_web_acl_association" "public" {
 
 resource "aws_cloudwatch_log_group" "waf" {
   name              = "aws-waf-logs-${var.public_alb_name}"
-  retention_in_days = 30
+  retention_in_days = var.log_retention_days
 }
 
 resource "aws_wafv2_web_acl_logging_configuration" "public" {

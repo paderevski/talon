@@ -13,9 +13,15 @@
 # too. Alerts go to the SNS topic in alarms.tf.
 
 variable "log_retention_days" {
-  description = "Days to keep server logs in CloudWatch Logs."
+  description = "Days to keep server, job and WAF logs in CloudWatch Logs (the backend log: backend_log_retention_days)."
   type        = number
-  default     = 30
+  default     = 90
+}
+
+variable "backend_log_retention_days" {
+  description = "Days to keep the backend log (sign-ins, refusals, admin actions, job events) in CloudWatch Logs."
+  type        = number
+  default     = 365
 }
 
 variable "alarm_gpu_vcpus" {
@@ -83,7 +89,7 @@ locals {
 resource "aws_cloudwatch_log_group" "server" {
   for_each          = local.server_logs
   name              = "/talon/${var.environment}/${each.key}"
-  retention_in_days = var.log_retention_days
+  retention_in_days = each.key == "backend" ? var.backend_log_retention_days : var.log_retention_days
 }
 
 # The AmazonCloudWatch- prefix is the agent's convention for config parameters.
@@ -106,6 +112,20 @@ data "aws_iam_policy_document" "cw_agent" {
     sid       = "WriteServerLogs"
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"]
     resources = flatten([for g in aws_cloudwatch_log_group.server : [g.arn, "${g.arn}:log-stream:*"]])
+  }
+
+  # The SSM agent: Session Manager transcripts and Run Command output
+  # (logging.tf). DescribeLogGroups has no resource-level permissions.
+  statement {
+    sid       = "WriteSsmLogs"
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"]
+    resources = [aws_cloudwatch_log_group.ssm.arn, "${aws_cloudwatch_log_group.ssm.arn}:log-stream:*"]
+  }
+
+  statement {
+    sid       = "FindSsmLogGroup"
+    actions   = ["logs:DescribeLogGroups"]
+    resources = ["*"]
   }
 
   statement {
