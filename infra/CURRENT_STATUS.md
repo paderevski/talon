@@ -44,12 +44,11 @@ before deploying shows which accounts). Overview -> Money: School, pools,
 own budgets, running-job reservations now; budget and spend per school
 year (July 1 to June 30; `GET /api/admin/budget/summary`). Spend is job
 compute in Talon, not the AWS bill. Deleting a never-used user gives a
-starting budget back to School. **To do after this deploy:** add the
-2026-27 budget to School (Overview -> Money) before funding anyone. School
-starts at $0, so until then every Add (pools, own budgets, class starting
-budgets, roster import) is refused for lack of money. Balances people
-already had are kept; earlier pool grants are not counted as this year's
-budget.
+starting budget back to School. School started at $0 (balances people
+already had were kept; earlier pool grants are not counted as this year's
+budget); the 2026-27 budget was added to School (Overview -> Money) on
+2026-11-25. Every Add (pools, own budgets, class starting budgets, roster
+import) draws from it and is refused once School runs out.
 
 Deployed (PR #66, no migration): **UI pass and admin budget panel.**
 
