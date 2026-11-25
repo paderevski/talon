@@ -32,6 +32,7 @@ function getNavSections(user, teacherStudent) {
         { id: "classes", label: "Classes" },
         { id: "unassigned", label: "Not in a class" },
         { id: "import", label: "Import" },
+        { id: "all-jobs", label: "All jobs" },
       ],
     });
   }
@@ -267,10 +268,18 @@ export default function App() {
   const views = useMemo(() => navSections.flatMap((section) => section.views), [navSections]);
   const activeView = views.some((view) => view.id === route.view) ? route.view : views[0]?.id ?? "";
 
-  // The server already limits jobs and results to what this user may see
-  // (students: their own; teachers: their students'; admins: everyone). A
-  // teacher viewing one student additionally asks the server for just that student.
-  const viewedOwner = activeView === "student" ? selectedStudentView?.username || "" : "";
+  // Whose jobs and results the current view lists. The server already limits
+  // them to what this user may see (students: their own; teachers: their
+  // students'; admins: everyone) and ?owner= only narrows that. All jobs
+  // (admins) asks for everything; a teacher's student view for that student;
+  // every other view, My work included, for the user's own.
+  const ownUsername = authUser?.username || "";
+  const viewedOwner =
+    activeView === "student"
+      ? selectedStudentView?.username || ""
+      : activeView === "all-jobs"
+        ? ""
+        : ownUsername;
   const effectiveOwnerUsername = viewedOwner;
 
   const visibleJobs = jobs;
@@ -854,7 +863,10 @@ export default function App() {
                   onClick={() => setIsMobileNavOpen(false)}
                 >
                   {view.label}
-                  {view.showCount ? <span className="nav-count">{statusCount}</span> : null}
+                  {/* The count is of the loaded list, so only while that list is the user's own. */}
+                  {view.showCount && viewedOwner === ownUsername ? (
+                    <span className="nav-count">{statusCount}</span>
+                  ) : null}
                 </a>
               ))}
             </div>
@@ -896,7 +908,7 @@ export default function App() {
             </section>
           ) : null}
 
-          {activeView === "jobs" || activeView === "student" ? (
+          {activeView === "jobs" || activeView === "student" || activeView === "all-jobs" ? (
             <>
               <JobStatusPanel
                 jobs={visibleJobs}
@@ -910,6 +922,7 @@ export default function App() {
                 onUnhideJob={onUnhideJob}
                 jobActionError={jobActionError}
                 readOnly={activeView === "student"}
+                showOwner={activeView === "all-jobs"}
               />
               <ResultsPanel results={visibleResults} jobs={visibleJobs} filesByJobId={filesByJobId} />
             </>
