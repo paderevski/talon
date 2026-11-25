@@ -24,7 +24,7 @@ From `backend/`:
 
 ## Current coverage
 
-One file per case in `cases/` (45 today): sign-in, sessions, password
+One file per case in `cases/` (46 today): sign-in, sessions, password
 changes and login throttling, roles and roster access, header spoofing, job
 visibility, files and budgets, EC2 access and cancel, connections, logging
 and proxy trust, management and roster import.

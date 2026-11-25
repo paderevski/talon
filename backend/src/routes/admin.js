@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { getUsersRepository } from "../repositories/usersRepository.js";
+import { getJobsRepository } from "../repositories/jobsRepository.js";
 import {
   addClassMember,
   assignStudentsToClass,
@@ -24,6 +25,7 @@ import { log } from "../utils/log.js";
 // Mounted behind requireRole("admin") in server.js.
 const router = Router();
 const usersRepository = await getUsersRepository();
+const jobsRepository = await getJobsRepository();
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -50,6 +52,14 @@ function handle(fn) {
     }
   };
 }
+
+// Everyone's visible jobs for the All jobs nav count: { running, queued, total }.
+// A count query, not the job list (which syncs each job with its instance).
+router.get("/job-counts", async (_req, res) => {
+  const byStatus = await jobsRepository.countByStatus();
+  const total = Object.values(byStatus).reduce((sum, n) => sum + n, 0);
+  return res.json({ running: byStatus.running || 0, queued: byStatus.queued || 0, total });
+});
 
 router.get("/roster", async (_req, res) => {
   const roster = await usersRepository.listAdminRoster();

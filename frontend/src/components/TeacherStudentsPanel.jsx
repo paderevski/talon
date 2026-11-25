@@ -78,7 +78,8 @@ export function ClassTables({ classes, onOpenStudentView, onAllocate, poolBalanc
 }
 
 // onBudgetChanged: the teacher's own budget changed (the header shows it).
-export default function TeacherStudentsPanel({ authUser, onOpenStudentView, onBudgetChanged }) {
+// onStudentCount: the roster loaded; reports its student count (for the nav).
+export default function TeacherStudentsPanel({ authUser, onOpenStudentView, onBudgetChanged, onStudentCount }) {
   const [roster, setRoster] = useState(emptyRoster);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
@@ -135,7 +136,9 @@ export default function TeacherStudentsPanel({ authUser, onOpenStudentView, onBu
           return;
         }
 
-        setRoster(response?.roster || emptyRoster);
+        const nextRoster = response?.roster || emptyRoster;
+        setRoster(nextRoster);
+        onStudentCount?.(nextRoster.students.length);
       })
       .catch((nextError) => {
         if (cancelled) {

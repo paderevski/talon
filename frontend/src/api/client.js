@@ -438,6 +438,8 @@ export const assignAdminStudents = (classId, userIds, budget) =>
 // "pool": from the School account, or back to it.
 export const adjustAdminBudget = (adjustment) =>
   requestJson("POST", "/api/admin/budget/adjustments", adjustment);
+// Everyone's visible jobs: { running, queued, total } (the All jobs nav count).
+export const fetchAdminJobCounts = () => requestJson("GET", "/api/admin/job-counts");
 // Money now and the budget and spending between from and to (YYYY-MM-DD;
 // both omitted: the current school year).
 export const fetchBudgetSummary = ({ from = "", to = "" } = {}) => {

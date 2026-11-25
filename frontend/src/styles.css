@@ -7,8 +7,12 @@
   --border: #232938;
   --text-primary: #e8eaf0;
   --text-secondary: #8b92a8;
+  --text-label: #b4bacb; /* form field labels: between secondary and primary */
   /* Muted text must stay >= 4.5:1 on every background (WCAG AA). */
   --text-muted: #7a829c;
+  /* Placeholder examples sit well below real input text so they don't read as filled in.
+     Deliberately under 4.5:1: every field also has a visible label and hint. */
+  --text-placeholder: #3a4052;
 
   /* Type scale. 12px is the floor for any text; 14px is the base. */
   --fs-xs: 12px;   /* labels, pills, captions */
@@ -34,6 +38,7 @@
 * { box-sizing: border-box; }
 /* Form controls do not inherit the page font by default. */
 button, input, select, textarea { font: inherit; }
+::placeholder { color: var(--text-placeholder); opacity: 1; }
 html, body, #root { margin: 0; min-height: 100%; }
 body {
   font-family: "Plus Jakarta Sans", sans-serif;
@@ -260,19 +265,32 @@ body {
 .nav-item:hover { background: var(--bg-card); color: var(--text-primary); }
 .nav-item.nested { padding-left: 22px; font-size: var(--fs-sm); }
 /* Section headings (Admin, Teaching, My work) for users with several roles. */
-.nav-section + .nav-section { margin-top: 14px; }
 .nav-section-title {
-  padding: 4px 10px;
+  padding: 4px 10px 6px;
   font-size: var(--fs-xs);
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--text-muted);
+  color: var(--text-primary);
 }
 .nav-item.active {
   background: var(--accent-blue-glow);
   color: var(--text-primary);
   box-shadow: inset 2px 0 0 var(--accent-blue);
+}
+
+/* With several sections: a bright heading and its items indented on a guide line. */
+.nav-section + .nav-section { margin-top: 22px; }
+.nav-section-title ~ .nav-item {
+  margin-left: 14px;
+  border-left: 1px solid var(--border);
+  border-radius: 0 6px 6px 0;
+  padding-left: 12px;
+}
+.nav-section-title ~ .nav-item.nested { padding-left: 24px; }
+.nav-section-title ~ .nav-item.active {
+  border-left-color: var(--accent-blue);
+  box-shadow: inset 1px 0 0 var(--accent-blue);
 }
 
 /* Tabs inside a view (Users: Students / Teachers / Admins). */
@@ -306,6 +324,8 @@ body {
   font-family: "JetBrains Mono", monospace;
   color: var(--accent-blue-text);
 }
+/* A count that needs action (students in no class). */
+.nav-count.attention { color: var(--accent-amber); }
 
 .main {
   margin-left: 200px;
@@ -343,7 +363,7 @@ h3.panel-title { font-size: var(--fs-md); }
 .form-group { display: flex; flex-direction: column; gap: 6px; }
 .form-group.full { grid-column: 1 / -1; }
 .form-label {
-  color: var(--text-muted);
+  color: var(--text-label);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   font-size: var(--fs-xs);

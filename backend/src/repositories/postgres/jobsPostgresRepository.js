@@ -140,6 +140,16 @@ export function createJobsPostgresRepository({ pool } = {}) {
     return result.rows.map(mapJobRow);
   }
 
+  // Visible (not hidden) jobs by status, everyone's: { running: 2, completed: 9, ... }.
+  // Straight from the table, without the execution sync the list does, so a
+  // job's status may trail its instance by one sync.
+  async function countByStatus() {
+    const result = await db().query(
+      "SELECT status, count(*)::int AS n FROM jobs WHERE NOT hidden GROUP BY status",
+    );
+    return Object.fromEntries(result.rows.map((row) => [row.status, row.n]));
+  }
+
   async function findById(jobId) {
     const result = await db().query(`${jobSelect} WHERE j.id = $1`, [String(jobId ?? "")]);
     return mapJobRow(result.rows[0]);
@@ -452,5 +462,5 @@ export function createJobsPostgresRepository({ pool } = {}) {
     return result.rows.length ? Number(result.rows[0].balance_cents) : 0;
   }
 
-  return { list, findById, create, createWithReservation, setExecutionRef, setLaunchProgress, recordInputSnapshot, listUnfinished, recordProgress, finalize, setHidden, listResults, personalBalanceCents };
+  return { list, countByStatus, findById, create, createWithReservation, setExecutionRef, setLaunchProgress, recordInputSnapshot, listUnfinished, recordProgress, finalize, setHidden, listResults, personalBalanceCents };
 }
