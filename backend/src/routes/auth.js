@@ -12,6 +12,7 @@ import { changeOwnPassword, sendManagementError } from "../services/management.j
 import { createEntraClient } from "../auth/entra.js";
 import { signInWithEntra } from "../services/entraSignIn.js";
 import { log } from "../utils/log.js";
+import { normalizeAvatar } from "talon-shared/avatars";
 
 const router = Router();
 const usersRepository = await getUsersRepository();
@@ -200,6 +201,28 @@ router.post("/password", async (req, res, next) => {
     return res.json({ ok: true });
   } catch (error) {
     return sendManagementError(error, res, next);
+  }
+});
+
+// Pick an avatar ({ avatar: { style, seed } }) or go back to initials
+// ({ avatar: null }). Answers with the updated user.
+router.put("/avatar", async (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ message: "Not signed in" });
+  }
+
+  const requested = req.body?.avatar ?? null;
+  const avatar = requested === null ? null : normalizeAvatar(requested);
+  if (requested !== null && !avatar) {
+    return res.status(400).json({ message: "Unknown avatar" });
+  }
+
+  try {
+    await usersRepository.setAvatar(req.user.id, avatar);
+    const user = await usersRepository.findById(req.user.id);
+    return res.json({ ok: true, user: await publicUserWithBudget(user) });
+  } catch (error) {
+    return next(error);
   }
 });
 

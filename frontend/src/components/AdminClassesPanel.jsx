@@ -9,6 +9,7 @@ import {
 import { formatBlock, formatDollars } from "../utils/format";
 import BudgetAdjuster from "./BudgetAdjuster";
 import { schoolAddProps, useSchoolBalance } from "./schoolBalance";
+import Person from "./Person";
 
 function MemberAdder({ label, role, candidates, onAdd, disabled }) {
   const [userId, setUserId] = useState("");
@@ -72,8 +73,10 @@ function ClassMembers({ classItem, users, run, isBusy, adjustBudget }) {
   const memberRow = (member, extra) => (
     <tr key={member.id}>
       <td>
-        {member.fullName}
-        <div className="form-hint mono-sm">{member.username}</div>
+        <Person user={member}>
+          {member.fullName}
+          <div className="form-hint mono-sm">{member.username}</div>
+        </Person>
       </td>
       {extra}
       <td className="cell-actions">{removeButton(member)}</td>

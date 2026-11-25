@@ -1,6 +1,7 @@
 import { getPool } from "../../db/pool.js";
 import { centsToDollars } from "../../budget/ledger.js";
 import { burnPasswordCheck, verifyPassword } from "../../utils/passwords.js";
+import { normalizeAvatar } from "talon-shared/avatars";
 
 // Highest role wins for the single `role` field older callers still read.
 const rolePrecedence = ["admin", "teacher", "student"];
@@ -11,7 +12,7 @@ function primaryRole(roles) {
 
 const userSelect = `
   SELECT u.id, u.username, u.display_name, u.email, u.status, u.can_run_jobs,
-         u.storage_quota_bytes, u.storage_used_bytes,
+         u.storage_quota_bytes, u.storage_used_bytes, u.avatar_style, u.avatar_seed,
          ARRAY(SELECT r.role::text FROM user_roles r WHERE r.user_id = u.id ORDER BY r.role) AS roles,
          EXISTS (SELECT 1 FROM user_identities i WHERE i.user_id = u.id AND i.provider = 'local') AS local_sign_in,
          EXISTS (SELECT 1 FROM class_members m JOIN classes c ON c.id = m.class_id
@@ -41,6 +42,8 @@ function mapUserRow(row) {
     inClass: row.in_class === true,
     // The admin's job-running setting: true, false, or null for the role default.
     canRunJobsOverride: row.can_run_jobs ?? null,
+    // { style, seed } the user picked, or null for initials.
+    avatar: normalizeAvatar({ style: row.avatar_style, seed: row.avatar_seed }),
   };
 }
 
@@ -124,6 +127,15 @@ export function createUsersPostgresRepository({ pool = getPool() } = {}) {
       `,
       [userId],
     );
+  }
+
+  // avatar: { style, seed } (already validated) or null to go back to initials.
+  async function setAvatar(userId, avatar) {
+    await pool.query("UPDATE users SET avatar_style = $2, avatar_seed = $3 WHERE id = $1", [
+      userId,
+      avatar?.style ?? null,
+      avatar?.seed ?? null,
+    ]);
   }
 
   async function listAdminRoster() {
@@ -249,7 +261,7 @@ export function createUsersPostgresRepository({ pool = getPool() } = {}) {
       ),
       pool.query(
         `
-          SELECT c.id AS class_id, s.username, s.display_name, a.balance_cents, credited.credited_cents
+          SELECT c.id AS class_id, s.username, s.display_name, s.avatar_style, s.avatar_seed, a.balance_cents, credited.credited_cents
           FROM classes c
           JOIN class_members sm ON sm.class_id = c.id
           JOIN users s ON s.id = sm.user_id
@@ -268,6 +280,7 @@ export function createUsersPostgresRepository({ pool = getPool() } = {}) {
     const mapStudent = (row) => ({
       username: row.username,
       fullName: row.display_name,
+      avatar: normalizeAvatar({ style: row.avatar_style, seed: row.avatar_seed }),
       ...mapStudentBudget(row),
     });
 
@@ -313,6 +326,7 @@ export function createUsersPostgresRepository({ pool = getPool() } = {}) {
     findByUsername,
     findById,
     recordLogin,
+    setAvatar,
     listStudentUsernamesForTeacher,
     listAdminRoster,
     getTeacherRoster,

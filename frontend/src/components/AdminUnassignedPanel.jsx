@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { assignAdminStudents } from "../api/client";
 import { formatClassName, formatDollars } from "../utils/format";
+import Person from "./Person";
 
 // Students who are in no active class: usually someone whose first
 // "Sign in with Microsoft" created their account before anyone set them up.
@@ -179,8 +180,10 @@ export default function AdminUnassignedPanel({ users, classes, onChanged }) {
                       />
                     </td>
                     <td>
-                      {student.fullName}
-                      <div className="form-hint mono-sm">{student.username}</div>
+                      <Person user={student}>
+                        {student.fullName}
+                        <div className="form-hint mono-sm">{student.username}</div>
+                      </Person>
                     </td>
                     <td className="mono-sm">{student.email || "—"}</td>
                     <td>{signInLabel(student)}</td>
