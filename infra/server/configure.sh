@@ -34,6 +34,19 @@ set -euo pipefail
 changed_backend=false
 changed_nginx=false
 
+# systemd can flag units as changed on disk although none of ours changed
+# (seen 2026-11-24 on talon-backend and the stock nginx unit, likely after an
+# OS update); every later restart then prints "Run 'systemctl daemon-reload'".
+# A reload only re-reads unit files and restarts nothing, so do it whenever
+# either unit asks.
+for unit in talon-backend nginx; do
+  if [ "$(systemctl show "$unit" -p NeedDaemonReload --value 2>/dev/null)" = "yes" ]; then
+    echo "configure: systemd unit files changed on disk ($unit); reloading systemd"
+    systemctl daemon-reload
+    break
+  fi
+done
+
 # CloudWatch agent release (Ubuntu arm64 package). To move to a newer one:
 # download .../ubuntu/arm64/latest/amazon-cloudwatch-agent.deb, read its
 # version (dpkg-deb -f <file> Version, without the trailing -1) and take its
