@@ -3,19 +3,25 @@
 [![CI](https://github.com/paderevski/talon/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/paderevski/talon/actions/workflows/ci.yml)
 
 Talon is an educational GPU/CPU job portal for the Academy of Loudoun (LCPS).
-Students submit training jobs from a GitHub repository and run them on their
-own EC2 machine, teachers manage classes and budgets, and admins oversee
-everything.
+Students submit training jobs from a GitHub repository or a Google Drive
+folder and run them on their own EC2 machine (CPU or GPU), teachers manage
+classes and budgets, and admins oversee everything. It runs at
+https://talon.lcps.org; staff and students sign in with Microsoft (LCPS
+Entra ID), and Talon passwords remain for admins and break-glass use.
 
 - **Students** pick a machine (memory, CPUs, price per hour) and a time limit,
   see what the job can cost, and watch logs while it runs. Jobs are charged to
   a personal compute budget per second of use; the maximum is set aside when a
   job starts and the unused part is returned. Output files and results are
   kept for 30 days.
-- **Teachers** see their classes, hand out budget from a pool, and view their
-  students' jobs read-only.
+- **Teachers** see their classes, hand out budget from a pool, move money
+  between their pool and their own budget (with the money model below),
+  and view their students' jobs read-only. Teachers do not run jobs unless an admin allows it
+  (`users.can_run_jobs`).
 - **Admins** manage users, roles, classes and budgets (including CSV roster
-  import) and can run jobs themselves.
+  import) and can run jobs themselves. Money flows from one School account
+  (the yearly budget) to teacher pools and personal budgets; no account may
+  go below zero. (Money model: merged 2026-11-25, deploy pending.)
 
 A user can hold several roles. Identity comes only from the session cookie.
 
@@ -126,26 +132,33 @@ On AWS the bucket, launch template and subnets come from SSM parameters under
 All routes except `/api/health` and `/api/auth/*` need a signed-in session.
 
 - Auth: `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`,
-  `POST /api/auth/password`
+  `POST /api/auth/password`, `GET /api/auth/options` (which sign-in methods
+  are on), `GET /api/auth/entra/login` and `GET /api/auth/entra/callback`
+  (Microsoft sign-in round trip)
 - Jobs: `GET /api/jobs`, `POST /api/jobs`, `GET /api/jobs/compute-options`,
   `GET /api/jobs/:id`, `GET /api/jobs/:id/logs?cursor=0`,
   `GET /api/jobs/:id/files`, `GET /api/jobs/:id/files/download`,
   `POST /api/jobs/:id/cancel`, `DELETE /api/jobs/:id` (hide),
   `POST /api/jobs/:id/unhide`
-- Results and repos: `GET /api/results`, `GET /api/repos/:owner/:repo/tree`
-- Connections (linked outside accounts; GitHub today):
+- Results and repos: `GET /api/results`, `GET /api/repos/:owner/:repo/tree`,
+  `GET /api/repos/:owner/:repo/branches`
+- Connections (linked outside accounts: `github`, `google_drive`):
   `GET /api/connections` (every provider and the user's link),
   `GET|DELETE /api/connections/:provider` (one provider, unlink),
   `GET /api/connections/:provider/connect[?mode=install]` and
   `GET /api/connections/:provider/callback` (browser round trip),
-  `GET /api/connections/:provider/items` (for GitHub: the repositories).
+  `GET /api/connections/:provider/items` (GitHub: the repositories; Drive:
+  the files and folders picked in the Google Picker).
   GitHub's are also served under `/api/github/...`, where its callback is
   registered.
 - Submit (`POST /api/jobs`) takes the code source as
   `source: { type: "github", repo, branch }` or `{ type: "drive", itemId, path }`; jobs return it as
   `job.source = { type, label, ref }`.
-- Teacher: `/api/teacher/*` (roster and budget allocations)
-- Admin: `/api/admin/*` (users, classes, budget adjustments, CSV roster import)
+- Teacher: `/api/teacher/*` (`students` roster, `allocations` from the
+  pool, `own-budget` pool <-> own budget)
+- Admin: `/api/admin/*` (users, classes, assigning students to a class,
+  budget adjustments and `budget/summary` per school year, CSV roster
+  import)
 
 ## GitHub App
 
@@ -178,9 +191,10 @@ GitHub App**.
 
 - Name: for example `Talon AET-CS`. Its URL name (slug) is shown afterwards.
 - Homepage URL: the repo or the Talon URL.
-- Callback URLs: `http://localhost:8080/api/github/callback` (SSM tunnel to
-  the demo box) and `http://localhost:5173/api/github/callback` (local dev);
-  later `https://talon.lcps.org/api/github/callback`. **Order matters:**
+- Callback URLs: `https://talon.lcps.org/api/github/callback` (production,
+  first) and `http://localhost:5173/api/github/callback` (local dev).
+  Production builds its callbacks from `public_url`, so connecting through
+  the SSM tunnel does not work. **Order matters:**
   after an install GitHub always returns to the *first* callback URL (the
   install page takes no redirect), so list the server's own URL first.
   **Connect GitHub** itself is a sign-in that names its callback, so it works
@@ -261,12 +275,14 @@ key), see `infra/README.md`, "Migrations and admin scripts".
 
 ## Deploy
 
-The demo runs on two web servers behind an internal ALB, reachable only through an SSM tunnel. Creating
-it, deploying a branch, and the Terraform workflow are documented in
+Talon runs on two web servers in private subnets behind an internal ALB and
+an internet-facing ALB with HTTPS and a WAF (`talon.lcps.org`); the data is
+in RDS and is real (deploys never wipe or reseed it). Creating it, deploying
+a branch, and the Terraform workflow are documented in
 [`infra/README.md`](infra/README.md) (for example
 `infra/scripts/deploy.sh <branch>` migrates from your laptop, then builds and
 restarts each server; the servers themselves can only sign in to the database as
 the rows-only `talon_app`), and
-[`infra/CURRENT_STATUS.md`](infra/CURRENT_STATUS.md) lists what is blocked and
-what the gaps to production are (Entra ID sign-in, the ALB and WAF, student
-data compliance, and more).
+[`infra/CURRENT_STATUS.md`](infra/CURRENT_STATUS.md) lists what is open and
+what the gaps to production are (student data compliance, a job queue,
+per-job credentials, and more).
