@@ -1,6 +1,6 @@
 # Talon infra - current status
 
-_Last updated: 2026-11-25 (UI pass and admin budget panel merged, not deployed; money model merged, not deployed; nav grouped by role and a per-user job-running setting, deployed; stale items across this file corrected the same day). Earlier updates: "Latest (2026-11-24)" below, the "Next up" items, and "History" at the end. The account-level items in "Gaps to production" were last reviewed 2026-10-25, with corrections through 2026-11-25._
+_Last updated: 2026-11-25 (avatars deployed with `main` at `fcd1192`, migration 018 on RDS; money model, UI pass and admin budget panel deployed earlier with `0d7d53d`, migration 017; nav grouped by role and a per-user job-running setting deployed earlier the same day; stale items across this file corrected the same day). Earlier updates: "Latest (2026-11-24)" below, the "Next up" items, and "History" at the end. The account-level items in "Gaps to production" were last reviewed 2026-10-25, with corrections through 2026-11-25._
 Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 (gitignored). Architecture doc: `docs/talon-architecture-summary-v8.docx`
 (local, gitignored; 2026-11-05, describes the system as built, with where
@@ -8,9 +8,24 @@ it differs from v7 and a short what-comes-next; v7 kept for history).
 
 ## Latest (2026-11-25)
 
-Servers run `main` at `2430423` (PRs #60 and #61), deployed and checked
-on the live site 2026-11-25. Migration 016 applied on RDS (additive: one
-nullable column, no data changed).
+Servers run `main` at `fcd1192` (PR #68, avatars), deployed 2026-11-25
+15:07 (recorded in SSM `/talon/demo/deployed-commit`). Before that, the
+same day: `0d7d53d` (PRs #60, #61, #63, #64 and #66), checked on the live
+site. Migrations 016, 017 and 018 applied on RDS (016 and 018 add nullable
+columns; 017 adds the School account and the no-negative-balance check,
+below).
+
+- **Avatars** (#68, migration 018, `users.avatar_style` / `avatar_seed`,
+  both NULL = initials): account menu -> Profile picks a DiceBear avatar
+  (10 styles: CC0, Bottts, and CC BY 4.0 with the credit shown in the
+  picker) or goes back to initials. Drawn in the browser, one lazily
+  loaded chunk per style; no outside requests, CSP unchanged.
+  `PUT /api/auth/avatar` sets only your own; styles are checked against
+  `shared/src/avatars.js`. Users, Classes -> Manage, Not in a class and
+  Teaching -> Students show the avatar (or initials) left of the name.
+  CodeQL flags the new route under its existing "missing CSRF token"
+  alert (#4, open on main): Talon's same-origin check (`requireSameOrigin`)
+  covers it, CodeQL does not recognise it.
 
 - **Nav grouped by role** (#60): Admin, Teaching and My work sections,
   built from all of a user's roles (an admin who teaches sees both).
@@ -26,9 +41,8 @@ nullable column, no data changed).
   of their own: fund them with Own budget -> Add on the Teachers tab (after
   the money work below: they move it from their pool themselves).
 
-Merged, **not deployed** (PR #64, `main` at `43c5d69`): **money
-model**, migration 017. (Also merged since the deploy: PR #63, the test
-harness takes a free port from the OS; tests only.) One School account (`budget_accounts.kind =
+Deployed (PR #64): **money model**, migration 017. (PR #63, also in this
+deploy: the test harness takes a free port from the OS; tests only.) One School account (`budget_accounts.kind =
 'school'`, no owner) is the only account that receives grants: Overview ->
 Money adds the yearly budget there (Subtract only corrects a mistake).
 Admin Add/Subtract on pools and own budgets (the admin's own included)
@@ -44,12 +58,13 @@ before deploying shows which accounts). Overview -> Money: School, pools,
 own budgets, running-job reservations now; budget and spend per school
 year (July 1 to June 30; `GET /api/admin/budget/summary`). Spend is job
 compute in Talon, not the AWS bill. Deleting a never-used user gives a
-starting budget back to School. After deploy: add the 2026-27 budget to
-School before funding anyone (School starts at $0; earlier pool grants are
-not counted as this year's budget).
+starting budget back to School. School started at $0 (balances people
+already had were kept; earlier pool grants are not counted as this year's
+budget); the 2026-27 budget was added to School (Overview -> Money) on
+2026-11-25. Every Add (pools, own budgets, class starting budgets, roster
+import) draws from it and is refused once School runs out.
 
-Merged, **not deployed** (branch `nav-section-styling`, no migration):
-**UI pass and admin budget panel.**
+Deployed (PR #66, no migration): **UI pass and admin budget panel.**
 
 - Nav: section headings with items indented under them; counts on Users,
   Classes, Not in a class (amber above zero), Teaching -> Students, Jobs
@@ -711,7 +726,7 @@ toward two servers)
   and the old local Terraform state copies~~ _(done 2026-10-28; the personal
   user has no access keys, it signs in with `aws login`.)_
 - Term end: return leftover teacher pool money. With the money model (PR
-  #64, merged, not deployed) an admin's Subtract on a pool moves the money
+  #64, deployed 2026-11-25) an admin's Subtract on a pool moves the money
   back to the School account; a one-click "return all pools" is not built.
 
 ## Probably to do (not scheduled)
