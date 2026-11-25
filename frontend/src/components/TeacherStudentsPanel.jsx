@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { allocateStudentBudget, fetchTeacherRoster, moveOwnBudget } from "../api/client";
 import { formatClassName, formatDollars } from "../utils/format";
 import BudgetAdjuster from "./BudgetAdjuster";
+import Person from "./Person";
 
 const emptyRoster = {
   teacher: {
@@ -43,7 +44,9 @@ export function ClassTables({ classes, onOpenStudentView, onAllocate, poolBalanc
           <tbody>
             {classItem.students.map((student) => (
               <tr key={student.username}>
-                <td>{student.fullName}</td>
+                <td>
+                  <Person user={student}>{student.fullName}</Person>
+                </td>
                 <td className="mono-sm">{student.username}</td>
                 <td className="cell-num">{formatDollars(student.quota)}</td>
                 <td className={onAllocate ? undefined : "cell-num"}>

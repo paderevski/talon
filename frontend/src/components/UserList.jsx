@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import AdminBudgetPanel from "./AdminBudgetPanel";
 import { formatClassName, formatDollars } from "../utils/format";
+import Person from "./Person";
 
 // "Ada Lovelace" sorts as "lovelace ada", so lists read alphabetically by last name.
 function nameKey(user) {
@@ -201,20 +202,22 @@ export default function UserList({
                 <Fragment key={user.id}>
                 <tr className={rowClass || undefined}>
                   <td>
-                    {user.fullName}
-                    <div className="form-hint mono-sm">{user.username}</div>
-                    {user.roles.length > 1 ? (
-                      <div>
-                        {user.roles.map((role) => (
-                          <span key={role} className={`role-chip ${role}`}>{role}</span>
-                        ))}
-                      </div>
-                    ) : null}
-                    {user.status === "disabled" ? <div className="form-hint">Disabled</div> : null}
-                    {user.canRunJobsOverride === false ? <div className="form-hint">Job running off</div> : null}
-                    {user.canRunJobsOverride === true && !user.roles.includes("student") && !user.roles.includes("admin") ? (
-                      <div className="form-hint">Can run jobs</div>
-                    ) : null}
+                    <Person user={user}>
+                      {user.fullName}
+                      <div className="form-hint mono-sm">{user.username}</div>
+                      {user.roles.length > 1 ? (
+                        <div>
+                          {user.roles.map((role) => (
+                            <span key={role} className={`role-chip ${role}`}>{role}</span>
+                          ))}
+                        </div>
+                      ) : null}
+                      {user.status === "disabled" ? <div className="form-hint">Disabled</div> : null}
+                      {user.canRunJobsOverride === false ? <div className="form-hint">Job running off</div> : null}
+                      {user.canRunJobsOverride === true && !user.roles.includes("student") && !user.roles.includes("admin") ? (
+                        <div className="form-hint">Can run jobs</div>
+                      ) : null}
+                    </Person>
                   </td>
                   {kind !== "admin" ? (
                     <td>{classesKey(user) || "—"}</td>

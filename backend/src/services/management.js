@@ -14,6 +14,7 @@ import { createPasswordHash, verifyPassword } from "../utils/passwords.js";
 import { clearFailures } from "../auth/loginThrottle.js";
 import { log } from "../utils/log.js";
 import { canRunJobs } from "../auth/jobPermission.js";
+import { normalizeAvatar } from "talon-shared/avatars";
 
 // Admin and teacher operations: users, classes, class membership, budgets.
 // Everything that changes more than one row runs in one transaction.
@@ -139,7 +140,7 @@ async function revokeSessions(client, userId, keepSid = "") {
 
 export async function listUsers({ pool = getPool() } = {}) {
   const result = await pool.query(`
-    SELECT u.id, u.username, u.email, u.display_name, u.status, u.last_login_at, u.created_at, u.can_run_jobs,
+    SELECT u.id, u.username, u.email, u.display_name, u.avatar_style, u.avatar_seed, u.status, u.last_login_at, u.created_at, u.can_run_jobs,
            ARRAY(SELECT r.role::text FROM user_roles r WHERE r.user_id = u.id ORDER BY r.role) AS roles,
            ARRAY(SELECT i.provider FROM user_identities i WHERE i.user_id = u.id ORDER BY i.provider) AS sign_in,
            personal.balance_cents AS personal_cents,
@@ -168,6 +169,7 @@ export async function listUsers({ pool = getPool() } = {}) {
     username: row.username,
     email: row.email,
     fullName: row.display_name,
+    avatar: normalizeAvatar({ style: row.avatar_style, seed: row.avatar_seed }),
     status: row.status,
     roles: row.roles,
     // The admin's setting (true, false, or null for the role default) and
@@ -528,13 +530,14 @@ export async function listClasses({ includeArchived = false, pool = getPool() } 
   const [classes, members] = await Promise.all([
     pool.query(
       `SELECT c.id, c.name, c.term, c.block, c.archived_at,
-              t.id AS teacher_id, t.username AS teacher_username, t.display_name AS teacher_name
+              t.id AS teacher_id, t.username AS teacher_username, t.display_name AS teacher_name,
+              t.avatar_style AS teacher_avatar_style, t.avatar_seed AS teacher_avatar_seed
        FROM classes c LEFT JOIN users t ON t.id = c.teacher_id
        ${includeArchived ? "" : "WHERE c.archived_at IS NULL"}
        ORDER BY lower(c.name), lower(c.block), lower(t.display_name), c.id`,
     ),
     pool.query(`
-      SELECT m.class_id, u.id AS user_id, u.username, u.display_name, a.balance_cents
+      SELECT m.class_id, u.id AS user_id, u.username, u.display_name, u.avatar_style, u.avatar_seed, a.balance_cents
       FROM class_members m
       JOIN users u ON u.id = m.user_id
       LEFT JOIN budget_accounts a ON a.owner_user_id = u.id AND a.kind = 'personal'
@@ -549,7 +552,12 @@ export async function listClasses({ includeArchived = false, pool = getPool() } 
     block: row.block,
     archived: row.archived_at !== null,
     teacher: row.teacher_id
-      ? { id: row.teacher_id, username: row.teacher_username, fullName: row.teacher_name }
+      ? {
+          id: row.teacher_id,
+          username: row.teacher_username,
+          fullName: row.teacher_name,
+          avatar: normalizeAvatar({ style: row.teacher_avatar_style, seed: row.teacher_avatar_seed }),
+        }
       : null,
     students: members.rows
       .filter((member) => Number(member.class_id) === Number(row.id))
@@ -557,6 +565,7 @@ export async function listClasses({ includeArchived = false, pool = getPool() } 
         id: member.user_id,
         username: member.username,
         fullName: member.display_name,
+        avatar: normalizeAvatar({ style: member.avatar_style, seed: member.avatar_seed }),
         balance: centsToDollars(member.balance_cents ?? 0),
       })),
   }));

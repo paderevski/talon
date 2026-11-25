@@ -6,9 +6,13 @@ import ResultsPanel from "./components/ResultsPanel";
 import ConnectionsPanel from "./components/ConnectionsPanel";
 import AdminConsole from "./components/AdminConsole";
 import ChangePasswordDialog from "./components/ChangePasswordDialog";
+import ProfileDialog from "./components/ProfileDialog";
 import TeacherStudentsPanel from "./components/TeacherStudentsPanel";
 import talonLogo from "../../assets/talon-logo.png";
 import { formatDollars } from "./utils/format";
+import { initialsOf } from "./utils/avatar";
+import { UserAvatar } from "./components/Person";
+import { normalizeAvatar } from "talon-shared/avatars";
 import { isPageHidden } from "./utils/polling";
 
 // Each nav item is its own view, addressed by the URL hash (#jobs, #users/teachers).
@@ -173,6 +177,8 @@ function toSessionUser(user) {
         : sessionRoles(user).some((role) => role === "student" || role === "admin"),
     localSignIn: user.localSignIn !== false,
     inClass: user.inClass !== false,
+    // { style, seed } the user picked, or null: show initials.
+    avatar: normalizeAvatar(user.avatar),
   };
 }
 
@@ -272,6 +278,7 @@ export default function App() {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
+  const [isProfileDialogOpen, setIsProfileDialogOpen] = useState(false);
   // The repo and branch of the last job submitted from GitHub: the New Job
   // form starts from them.
   const [repoPath, setRepoPath] = useState(fallbackRepo);
@@ -660,18 +667,11 @@ export default function App() {
   };
 
 
-  // Initials from the full name ("Ada Lovelace" -> AL), else the username.
-  const avatar = useMemo(() => {
-    const value = authUser?.fullName || authUser?.username || "";
-    if (!value) {
-      return "--";
-    }
-    const parts = value.split(/[^A-Za-z0-9]+/).filter(Boolean);
-    if (parts.length >= 2) {
-      return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
-    }
-    return value.slice(0, 2).toUpperCase();
-  }, [authUser]);
+  const onProfileSaved = (user) => {
+    const sessionUser = toSessionUser(user);
+    setAuthUser(sessionUser);
+    window.localStorage.setItem(authStorageKey, JSON.stringify(sessionUser));
+  };
   const isAdmin = hasRole(authUser, "admin");
   const [computeOptions, setComputeOptions] = useState(null);
   const signedInUsername = authUser?.username || "";
@@ -870,7 +870,7 @@ export default function App() {
               aria-expanded={isUserMenuOpen}
               onClick={() => setIsUserMenuOpen((previous) => !previous)}
             >
-              <span className="user-avatar" aria-hidden="true">{avatar}</span>
+              <UserAvatar user={authUser} size={30} />
               <span className="user-trigger-text">
                 <span className="user-trigger-name">{authUser.fullName || authUser.username}</span>
                 <span className="user-trigger-role">{roleOrder.filter((role) => authUser.roles.includes(role)).map(roleLabel).join(" · ")}</span>
@@ -889,6 +889,17 @@ export default function App() {
                   </div>
                 ) : null}
               </div>
+              <button
+                type="button"
+                className="user-menu-item"
+                role="menuitem"
+                onClick={() => {
+                  setIsUserMenuOpen(false);
+                  setIsProfileDialogOpen(true);
+                }}
+              >
+                Profile
+              </button>
               {authUser.localSignIn ? (
                 <button
                   type="button"
@@ -917,6 +928,14 @@ export default function App() {
       </nav>
 
       {isPasswordDialogOpen ? <ChangePasswordDialog onClose={() => setIsPasswordDialogOpen(false)} /> : null}
+      {isProfileDialogOpen ? (
+        <ProfileDialog
+          user={authUser}
+          initials={initialsOf(authUser)}
+          onClose={() => setIsProfileDialogOpen(false)}
+          onSaved={onProfileSaved}
+        />
+      ) : null}
 
       <div className="layout">
         <nav className={`leftnav ${isMobileNavOpen ? "mobile-open" : ""}`}>
