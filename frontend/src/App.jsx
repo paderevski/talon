@@ -12,37 +12,57 @@ import { formatDollars } from "./utils/format";
 import { isPageHidden } from "./utils/polling";
 
 // Each nav item is its own view, addressed by the URL hash (#jobs, #users/teachers).
-// The first view in the list is where the role lands after sign-in.
-function getViews(role, teacherStudent) {
-  const normalizedRole = normalizeUserRole(role);
+// Views are grouped by what the user is doing: Admin and Teaching come from
+// their roles, My work from whether they may run jobs (canRunJobs, decided by
+// the server). A user with one section sees no section headings. The first
+// view of the first section is where the user lands after sign-in.
+function getNavSections(user, teacherStudent) {
+  if (!user) {
+    return [];
+  }
+  const sections = [];
 
-  if (normalizedRole === "teacher") {
+  if (hasRole(user, "admin")) {
+    sections.push({
+      id: "admin",
+      label: "Admin",
+      views: [
+        { id: "overview", label: "Overview" },
+        { id: "users", label: "Users" },
+        { id: "classes", label: "Classes" },
+        { id: "unassigned", label: "Not in a class" },
+        { id: "import", label: "Import" },
+        { id: "all-jobs", label: "All jobs" },
+      ],
+    });
+  }
+
+  if (hasRole(user, "teacher")) {
     const views = [{ id: "students", label: "Students" }];
     // A teacher looking at one student sees that student's jobs and results.
     if (teacherStudent) {
-      views.push({ id: "student", label: teacherStudent.fullName || teacherStudent.username });
+      views.push({ id: "student", label: teacherStudent.fullName || teacherStudent.username, nested: true });
     }
-    return views;
+    sections.push({ id: "teaching", label: "Teaching", views });
   }
 
-  const jobViews = [
-    { id: "jobs", label: "Jobs", showCount: true },
-    { id: "new-job", label: "New Job" },
-    { id: "connections", label: "Connections" },
-  ];
-
-  if (normalizedRole === "admin") {
-    return [
-      { id: "overview", label: "Overview" },
-      { id: "users", label: "Users" },
-      { id: "classes", label: "Classes" },
-      { id: "unassigned", label: "Not in a class" },
-      { id: "import", label: "Import" },
-      ...jobViews,
-    ];
+  if (user.canRunJobs) {
+    sections.push({
+      id: "work",
+      label: "My work",
+      views: [
+        { id: "jobs", label: "Jobs", showCount: true },
+        { id: "new-job", label: "New Job" },
+        { id: "connections", label: "Connections" },
+      ],
+    });
   }
 
-  return jobViews;
+  return sections;
+}
+
+function hasRole(user, role) {
+  return Boolean(user?.roles?.includes(role));
 }
 
 // "#users/teachers" -> { view: "users", sub: "teachers" }
@@ -125,9 +145,28 @@ function toSessionUser(user) {
     username: String(user.username ?? "").trim(),
     fullName: String(user.fullName ?? "").trim(),
     role: normalizeUserRole(user.role),
+    roles: sessionRoles(user),
+    // Older stored sessions have no canRunJobs: fall back to the role default.
+    canRunJobs:
+      typeof user.canRunJobs === "boolean"
+        ? user.canRunJobs
+        : sessionRoles(user).some((role) => role === "student" || role === "admin"),
     localSignIn: user.localSignIn !== false,
     inClass: user.inClass !== false,
   };
+}
+
+function sessionRoles(user) {
+  const roles = Array.isArray(user.roles)
+    ? user.roles.map((role) => String(role).trim().toLowerCase()).filter((role) => validUserRoles.has(role))
+    : [];
+  return roles.length ? roles : [normalizeUserRole(user.role)];
+}
+
+// Whose personal budget the header shows: anyone who runs jobs and pays for
+// them. Admins are not limited by their balance yet, so it means nothing.
+function showsPersonalBudget(user) {
+  return Boolean(user?.canRunJobs) && !hasRole(user, "admin");
 }
 
 // ?signin=<code> is set by the server when Microsoft sign-in did not work
@@ -222,13 +261,25 @@ export default function App() {
   const userMenuRef = useRef(null);
   const onLogoutRef = useRef(null);
 
-  // The server already limits jobs and results to what this user may see
-  // (students: their own; teachers: their students'; admins: everyone). A
-  // teacher viewing one student additionally asks the server for just that student.
-  const viewedOwner = useMemo(
-    () => (normalizeUserRole(authUser?.role) === "teacher" ? selectedStudentView?.username || "" : ""),
+  const navSections = useMemo(
+    () => getNavSections(authUser, selectedStudentView),
     [authUser, selectedStudentView],
   );
+  const views = useMemo(() => navSections.flatMap((section) => section.views), [navSections]);
+  const activeView = views.some((view) => view.id === route.view) ? route.view : views[0]?.id ?? "";
+
+  // Whose jobs and results the current view lists. The server already limits
+  // them to what this user may see (students: their own; teachers: their
+  // students'; admins: everyone) and ?owner= only narrows that. All jobs
+  // (admins) asks for everything; a teacher's student view for that student;
+  // every other view, My work included, for the user's own.
+  const ownUsername = authUser?.username || "";
+  const viewedOwner =
+    activeView === "student"
+      ? selectedStudentView?.username || ""
+      : activeView === "all-jobs"
+        ? ""
+        : ownUsername;
   const effectiveOwnerUsername = viewedOwner;
 
   const visibleJobs = jobs;
@@ -455,7 +506,7 @@ export default function App() {
 
   // A student's remaining budget changes when jobs finish; keep the header current.
   const refreshBudget = async () => {
-    if (normalizeUserRole(authUser?.role) !== "student") {
+    if (!showsPersonalBudget(authUser)) {
       return;
     }
     try {
@@ -578,7 +629,7 @@ export default function App() {
     }
     return value.slice(0, 2).toUpperCase();
   }, [authUser]);
-  const isAdmin = normalizeUserRole(authUser?.role) === "admin";
+  const isAdmin = hasRole(authUser, "admin");
   const [computeOptions, setComputeOptions] = useState(null);
   const signedInUsername = authUser?.username || "";
   useEffect(() => {
@@ -601,13 +652,8 @@ export default function App() {
       loadConnections();
     }
   }, [signedInUsername]);
-  const isTeacher = normalizeUserRole(authUser?.role) === "teacher";
+  const isTeacher = hasRole(authUser, "teacher");
   const hasTeacherStudentView = Boolean(selectedStudentView);
-  const views = useMemo(
-    () => getViews(authUser?.role, selectedStudentView),
-    [authUser, selectedStudentView],
-  );
-  const activeView = views.some((view) => view.id === route.view) ? route.view : views[0].id;
 
   useEffect(() => {
     const onHashChange = () => setRoute(readHashRoute());
@@ -754,7 +800,7 @@ export default function App() {
           <div className="topbar-brand">Academies of Loudoun</div>
         </div>
         <div className="topbar-right">
-          {normalizeUserRole(authUser.role) === "student" && budgetBalance !== null ? (
+          {showsPersonalBudget(authUser) && budgetBalance !== null ? (
             <div className="server-pill" title="Your remaining compute budget">
               Budget {formatDollars(budgetBalance)}
             </div>
@@ -768,7 +814,7 @@ export default function App() {
               onClick={() => setIsUserMenuOpen((previous) => !previous)}
             >
               <div className="user-avatar">{avatar}</div>
-              {authUser.fullName || authUser.username} · {normalizeUserRole(authUser.role)}
+              {authUser.fullName || authUser.username} · {authUser.roles.join(", ")}
             </button>
             <div className="user-menu-hint">Click for account menu</div>
             <div className={`user-menu${isUserMenuOpen ? " open" : ""}`} role="menu">
@@ -785,9 +831,11 @@ export default function App() {
                   Change password
                 </button>
               ) : null}
-              <a className="user-menu-item" href="#connections" role="menuitem" onClick={() => setIsUserMenuOpen(false)}>
-                Connections
-              </a>
+              {authUser.canRunJobs ? (
+                <a className="user-menu-item" href="#connections" role="menuitem" onClick={() => setIsUserMenuOpen(false)}>
+                  Connections
+                </a>
+              ) : null}
               <button type="button" className="user-menu-item" role="menuitem" onClick={onLogout}>
                 Logout
               </button>
@@ -803,22 +851,30 @@ export default function App() {
           <div className="side-title">
             <img src={talonLogo} alt="Talon" className="side-logo" />
           </div>
-          {views.map((view) => (
-            <a
-              key={view.id}
-              href={`#${view.id}`}
-              className={`nav-item${view.id === activeView ? " active" : ""}`}
-              aria-current={view.id === activeView ? "page" : undefined}
-              onClick={() => setIsMobileNavOpen(false)}
-            >
-              {view.label}
-              {view.showCount ? <span className="nav-count">{statusCount}</span> : null}
-            </a>
+          {navSections.map((section) => (
+            <div key={section.id} className="nav-section">
+              {navSections.length > 1 ? <div className="nav-section-title">{section.label}</div> : null}
+              {section.views.map((view) => (
+                <a
+                  key={view.id}
+                  href={`#${view.id}`}
+                  className={`nav-item${view.nested ? " nested" : ""}${view.id === activeView ? " active" : ""}`}
+                  aria-current={view.id === activeView ? "page" : undefined}
+                  onClick={() => setIsMobileNavOpen(false)}
+                >
+                  {view.label}
+                  {/* The count is of the loaded list, so only while that list is the user's own. */}
+                  {view.showCount && viewedOwner === ownUsername ? (
+                    <span className="nav-count">{statusCount}</span>
+                  ) : null}
+                </a>
+              ))}
+            </div>
           ))}
         </nav>
 
         <main className="main">
-          {normalizeUserRole(authUser.role) === "student" && authUser.inClass === false ? (
+          {hasRole(authUser, "student") && !isAdmin && authUser.inClass === false ? (
             <div className="notice-warn" role="status">
               You're signed in, but you're not in a class yet, so you can't run jobs. Your teacher or an admin will
               add you; check back after your next class.
@@ -852,7 +908,7 @@ export default function App() {
             </section>
           ) : null}
 
-          {activeView === "jobs" || activeView === "student" ? (
+          {activeView === "jobs" || activeView === "student" || activeView === "all-jobs" ? (
             <>
               <JobStatusPanel
                 jobs={visibleJobs}
@@ -865,7 +921,8 @@ export default function App() {
                 onHideJob={onHideJob}
                 onUnhideJob={onUnhideJob}
                 jobActionError={jobActionError}
-                readOnly={isTeacher}
+                readOnly={activeView === "student"}
+                showOwner={activeView === "all-jobs"}
               />
               <ResultsPanel results={visibleResults} jobs={visibleJobs} filesByJobId={filesByJobId} />
             </>
@@ -882,7 +939,7 @@ export default function App() {
                 driveLinked={Boolean(driveConnection?.configured && driveConnection?.linked && !driveConnection?.needsReconnect)}
                 driveLogin={driveConnection?.account?.login || ""}
                 compute={computeOptions}
-                budgetDollars={normalizeUserRole(authUser?.role) === "student" ? budgetBalance : null}
+                budgetDollars={showsPersonalBudget(authUser) ? budgetBalance : null}
               />
             </>
           ) : null}

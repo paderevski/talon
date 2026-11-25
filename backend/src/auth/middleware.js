@@ -1,5 +1,6 @@
 import { getUsersRepository } from "../repositories/usersRepository.js";
 import { sessionMaxMs } from "./session.js";
+import { canRunJobs } from "./access.js";
 
 const usersRepository = await getUsersRepository();
 
@@ -75,6 +76,7 @@ export function publicUser(user) {
     fullName: user.fullName,
     role: user.role,
     roles: user.roles ?? [user.role],
+    canRunJobs: canRunJobs(user),
     localSignIn: user.localSignIn !== false,
     inClass: user.inClass === true,
   };

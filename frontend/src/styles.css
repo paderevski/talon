@@ -235,6 +235,7 @@ body {
   position: fixed;
   top: 52px;
   bottom: 0;
+  overflow-y: auto;
 }
 .side-title {
   font-size: var(--fs-lg);
@@ -257,6 +258,17 @@ body {
   font-weight: 500;
 }
 .nav-item:hover { background: var(--bg-card); color: var(--text-primary); }
+.nav-item.nested { padding-left: 22px; font-size: var(--fs-sm); }
+/* Section headings (Admin, Teaching, My work) for users with several roles. */
+.nav-section + .nav-section { margin-top: 14px; }
+.nav-section-title {
+  padding: 4px 10px;
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
 .nav-item.active {
   background: var(--accent-blue-glow);
   color: var(--text-primary);

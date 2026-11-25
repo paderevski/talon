@@ -21,7 +21,7 @@ import { getJobsRepository } from "../repositories/jobsRepository.js";
 import { getSourceType, parseCodeSource, resolveSourceAccess } from "../sources/index.js";
 import { normalizeFolder } from "talon-shared/repo";
 import { parseScriptArgs } from "../utils/scriptArgs.js";
-import { attachAccessScope, canModify, hasRole, narrowScopeToOwner, scopeAllows } from "../auth/access.js";
+import { attachAccessScope, canModify, canRunJobs, hasRole, narrowScopeToOwner, scopeAllows } from "../auth/access.js";
 import { log } from "../utils/log.js";
 
 const router = Router();
@@ -229,6 +229,9 @@ async function codeSourceOr4xx(req, res, payload, runner) {
 }
 
 router.post("/", async (req, res) => {
+  if (!canRunJobs(req.user)) {
+    return res.status(403).json({ message: "Your account can't run jobs. Ask an admin if you need to." });
+  }
   const payload = req.body ?? {};
   const folder = normalizeFolder(payload.folder);
   if (folder === null) {

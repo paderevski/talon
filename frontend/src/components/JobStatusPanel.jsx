@@ -51,6 +51,7 @@ export default function JobStatusPanel({
   onUnhideJob,
   jobActionError,
   readOnly = false,
+  showOwner = false,
 }) {
   const [logJobId, setLogJobId] = useState(null);
   // Also look in all jobs: the status filter switches on its own (queued,
@@ -147,6 +148,7 @@ export default function JobStatusPanel({
             <thead>
               <tr>
                 <th>Job</th>
+                {showOwner ? <th>Owner</th> : null}
                 <th>Repo</th>
                 <th>Status</th>
                 <th>Compute</th>
@@ -161,6 +163,7 @@ export default function JobStatusPanel({
               {jobs.map((job) => (
                 <tr key={job.id}>
                   <td className="job-name-cell">{job.name}</td>
+                  {showOwner ? <td className="mono-sm">{job.ownerUsername}</td> : null}
                   <td className="repo-cell">{job.source?.label}</td>
                   <td>
                     <span className={`status-pill ${job.status}`}>
