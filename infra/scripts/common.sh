@@ -66,6 +66,7 @@ run_ssm() {
     --document-name AWS-RunShellScript \
     --comment "$comment" \
     --parameters "{\"commands\":$commands,\"executionTimeout\":[\"900\"]}" \
+    --cloud-watch-output-config "CloudWatchOutputEnabled=true,CloudWatchLogGroupName=/talon/$TALON_ENV/ssm" \
     --query Command.CommandId --output text)"
   # Poll rather than `aws ssm wait`, which gives up after 100 s (a deploy
   # with a build takes longer).
