@@ -636,10 +636,14 @@ security review (2026-11-07), listed roughly in the order it suggested.
   endpoint counts like any other.
 - **Attribution and network audit** (review, auditing). AWS abuse reports
   give an IP and a time, and job public IPs change per launch: record each
-  instance's public IPv4 in the boot summary and `executionRef`. Add VPC
-  Flow Logs on the jobs subnets (to S3) and Route 53 Resolver query
-  logging, kept 90 days or more (job files in S3 expire after 30). Confirm
-  the account has an organization CloudTrail (not in our Terraform).
+  instance's public IPv4 in the boot summary and `executionRef`.
+  _Done 2026-11-24 (`logging.tf`):_ VPC Flow Logs on the jobs subnets to S3
+  (`talon-demo-flow-logs-*`, 365 days, with instance id); the account's
+  trail `management-events` (not an organization trail) adopted into
+  Terraform with log file validation and bucket versioning; SSM session
+  transcripts and Run Command output in `/talon/demo/ssm` (365 days);
+  retention 90 days (backend log 365, was 30). Still open: Route 53
+  Resolver query logging.
   Decide who may read these logs and for how long (students are minors),
   and say in the acceptable-use terms that jobs are monitored.
 - **Narrow the job role** (review #4). `AmazonSSMManagedInstanceCore` is
@@ -833,9 +837,10 @@ Verify CloudFront VPC origin support for EC2 before choosing it.
    Allow-listing is the strongest single control while auth is new.
    **Decided and applied:** allow-list at the ALB security group
    (`public_alb_ingress_cidrs`, set in the gitignored `terraform.tfvars`;
-   two entries as of 2026-11-16). Attempts from outside it are dropped by
-   the security group and not logged (no VPC flow logs or ALB access or
-   connection logs yet; WAF logs only what reaches the ALB).
+   two entries as of 2026-11-16). **Opened to `0.0.0.0/0` on 2026-11-24**
+   (the old entries are kept as a comment in `terraform.tfvars`). No ALB
+   access or connection logs (decided 2026-11-24: WAF plus nginx logs cover
+   requests); the WAF logs every request that reaches the ALB.
 3. **Instance subnet.** (a) Keep it in a public subnet with **no inbound
    except port 80 from the ALB security group** - no NAT needed; or
    (b) private subnet per the architecture doc - requires a NAT gateway

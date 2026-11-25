@@ -47,6 +47,7 @@ while read -r id az state health ver; do
   commit=""
   if [ "$DEEP" = 1 ]; then
     commit="$(aws ssm send-command --instance-ids "$id" --document-name AWS-RunShellScript \
+      --cloud-watch-output-config "CloudWatchOutputEnabled=true,CloudWatchLogGroupName=/talon/$TALON_ENV/ssm" \
       --parameters 'commands=["sudo -u talon git -C /opt/talon log -1 --format=%h"]' --query Command.CommandId --output text 2>/dev/null)"
     sleep 3
     commit="commit $(q ssm get-command-invocation --command-id "$commit" --instance-id "$id" --query StandardOutputContent | tr -d '\n')"
