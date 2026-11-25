@@ -4,6 +4,7 @@ import { createReadStream } from "node:fs";
 import { lstat, readdir, readlink, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { childEnv } from "../utils/childEnv.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -105,7 +106,7 @@ async function sha256File(file) {
 // Returns { archive, bytes, sha256, files }.
 export async function packSnapshot(dir, archive, limits = snapshotLimits()) {
   const { files, biggest } = await checkTree(dir, limits);
-  await execFileAsync("tar", ["-czf", archive, "-C", dir, "."], { timeout: 60 * 1000 });
+  await execFileAsync("tar", ["-czf", archive, "-C", dir, "."], { timeout: 60 * 1000, env: childEnv() });
   const bytes = (await stat(archive)).size;
   if (bytes > limits.maxBytes) {
     throw httpError(`The code is larger than ${formatBytes(limits.maxBytes)} packed (${formatBytes(bytes)}); biggest files: ${describeBiggest(biggest)}. Move large data or videos out of the folder.`);

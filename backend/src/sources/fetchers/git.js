@@ -3,6 +3,7 @@ import { lstat, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { assertGitHost, describeCloneError, gitAuthEnv } from "../../execution/gitAuth.js";
+import { childEnv } from "../../utils/childEnv.js";
 
 const execFileAsync = promisify(execFile);
 const gitBin = () => process.env.TALON_GIT_BIN || "git";
@@ -56,7 +57,8 @@ async function directoryBytes(dir) {
 export async function cloneInto({ host = "github.com", repoPath, branch, token = null, dir, timeoutMs = defaultTimeoutMs(), maxBytes = defaultMaxCloneBytes(), pollMs = defaultPollMs(), hint }) {
   const safeHost = assertGitHost(host);
   const safeBranch = assertBranch(branch);
-  const env = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "echo", ...gitAuthEnv(token, safeHost) };
+  // Never process.env (secrets): the repository is the student's choice.
+  const env = childEnv({ GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "echo", ...gitAuthEnv(token, safeHost) });
   const clone = execFileAsync(
     gitBin(),
     ["clone", "--depth", "1", "--branch", safeBranch, `https://${safeHost}/${repoPath}.git`, dir],
