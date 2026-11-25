@@ -1,9 +1,13 @@
 # Talon infra (LCPS account)
 
-Talon's private demo in the LCPS AWS account (profile `lcps`; account ID in
-`ec2/terraform.tfvars`). Nothing is exposed to the internet: you reach the app
-through an SSM Session Manager port forward. `CURRENT_STATUS.md` is the map of
-what is running, what is done and what is next.
+Talon in the LCPS AWS account (profile `lcps`; account ID in
+`ec2/terraform.tfvars`). Live since 2026-11-15 and open to the internet since
+2026-11-24 at https://talon.lcps.org (internet-facing ALB with HTTPS and a
+WAF; the web servers stay in private subnets). Operators can also reach the
+app through an SSM Session Manager port forward. The data in RDS is real.
+AWS names still say `demo` (`var.environment`) until a planned rebuild.
+`CURRENT_STATUS.md` is the map of what is running, what is done and what is
+next.
 
 ## What gets created (`infra/ec2`)
 
@@ -12,6 +16,11 @@ what is running, what is done and what is next.
 | `network.tf` | Talon's VPC `10.20.0.0/16`: public subnets (a NAT gateway per zone), private app subnets (web servers, ALB), data subnets (RDS, no route out), jobs subnets (job instances, own public IP, no inbound); S3 gateway endpoint |
 | `web.tf` | Launch template and Auto Scaling group: two `t4g.small` web servers (Ubuntu 24.04 arm64), one per zone; no inbound except port 80 from the ALB |
 | `alb.tf` | Internal ALB in front of them (health check `GET /api/health/live`), its security group rules and alarms |
+| `public_alb.tf`, `https.tf`, `cert.tf` | Internet-facing ALB `talon-public` (admits `public_alb_ingress_cidrs`), HTTPS:443 listener, HTTP:80 redirect, ACM certificate for `talon.lcps.org` (its validation CNAME must stay in DNS) |
+| `waf.tf` | WAF web ACL on the public ALB (managed rules, login and write rate limits; newer rules count only until `waf_new_rules_block = true`), its log group and alarm |
+| `logging.tf` | CloudTrail trail (adopted), SSM session and Run Command logs, job-subnet VPC flow logs |
+| `entra.tf`, `google.tf` | Microsoft Entra sign-in and Google Drive settings in SSM (client secrets set by hand with `secrets.sh`) |
+| `image.tf` | EC2 Image Builder pipeline for the CPU job image (monthly) |
 | `rds.tf` | Postgres 16 on RDS (`db.t4g.small`, Multi-AZ, TLS, IAM sign-in; roles `talon_app` for the servers and `talon_migrate` for operators) |
 | `jobs.tf` | Student jobs: jobs bucket, CPU and GPU job launch templates, job role, and the web servers' limited permission to launch and terminate job instances |
 | `deploy.tf` | SSM parameter `deployed-commit` (the commit new servers deploy; written by `deploy.sh`) and the web role's read access to it |
@@ -121,7 +130,11 @@ infra/scripts/shell.sh                     # shell on a web server
 infra/scripts/check-launch-policy.sh       # dry-run what the web role may launch
 infra/scripts/status.sh [--deep] [--plan]  # one-screen status: servers, ALB, RDS, jobs, network, IAM, alarms, cost
 infra/scripts/secrets.sh [list|set|rm|init] # SSM secrets by name, values never shown; type secrets hidden
+infra/scripts/job-image.sh status          # job AMIs: pinned vs newest; `test cpu|gpu <ami>` smoke-tests one
 ```
+
+GitHub and Google Drive connections only work on https://talon.lcps.org
+(their callbacks are registered there), not through the tunnel.
 
 On a web server:
 
@@ -133,7 +146,7 @@ sudo tail -f /var/log/talon-bootstrap.log # first boot
 From a laptop, `aws logs tail /talon/demo/backend --follow` (all servers), or
 the saved Logs Insights queries `Talon/*`.
 
-## Demo-mode caveats
+## Caveats
 
 - All data is in RDS (automated backups, 7 days, point-in-time restore) and
   survives server replacement. `deploy.sh` never touches the data.
@@ -148,8 +161,11 @@ the saved Logs Insights queries `Talon/*`.
   re-import the bucket (`terraform import aws_s3_bucket.state <bucket name>`)
   and apply.
 
-## Going public
+## Public access
 
-Not built yet: an internet-facing ALB with HTTPS on `talon.lcps.org` and
-WAF. It waits on LCPS IT (DNS records) and the exposure and subnet
-decisions; see `CURRENT_STATUS.md`, "Going public".
+Built and live: the internet-facing ALB `talon-public` serves HTTPS on
+`talon.lcps.org` (LCPS IT's CNAME) behind a WAF. Who may connect is one
+variable, `public_alb_ingress_cidrs` in `terraform.tfvars` (`["0.0.0.0/0"]`
+since 2026-11-24; the earlier allow-list is kept there as a comment). Do not
+replace the ALB: the DNS record points at its name. See `CURRENT_STATUS.md`,
+"Going public".

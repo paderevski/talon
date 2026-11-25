@@ -41,6 +41,9 @@ if you want to keep one).
 | Talon student | Balance, jobs, cost, classes, ledger |
 | Talon request trace | nginx and backend lines for one request id |
 
-Gaps: no VPC flow logs (network shows NAT and server traffic only); job
-machines have basic EC2 metrics only, one point every 5 minutes (no memory or GPU use); CloudWatch alarm
-states are not shown; spend comes from the ledger (job cost), not AWS billing.
+Gaps: the job subnets' VPC flow logs (since 2026-11-24) go to S3 and are
+not on any dashboard (network shows NAT and server traffic only); job
+machines have 1-minute EC2 metrics, and CPU jobs on the baked image also
+send memory and disk use (`Talon/Jobs`), but GPU jobs have no memory, disk
+or GPU use; CloudWatch alarm states are not shown; spend comes from the
+ledger (job cost), not AWS billing.

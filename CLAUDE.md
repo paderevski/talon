@@ -3,8 +3,9 @@
 Talon is an educational GPU/CPU job portal for the Academy of Loudoun (LCPS):
 students submit training jobs, teachers manage classes and budgets, admins
 oversee. Express + Postgres backend, React (Vite) frontend, deployed with
-Terraform to AWS (two web servers behind an internal ALB, RDS Postgres,
-one EC2 instance per job). **This repo is public: never put account IDs,
+Terraform to AWS (two web servers behind an internal ALB and a public
+HTTPS ALB with WAF at `talon.lcps.org`, RDS Postgres, one EC2 instance per
+job). **This repo is public: never put account IDs,
 IPs, instance IDs, emails, secrets or real passwords in tracked files.**
 
 ## Where things are
@@ -15,8 +16,9 @@ IPs, instance IDs, emails, secrets or real passwords in tracked files.**
 - `frontend/src/` React app: `App.jsx`, `components/`, `api/client.js`
   (all API calls), `utils/format.js` (`formatDollars`).
 - `shared/` status helpers used by both.
-- `infra/ec2` Terraform for the demo (VPC, two web servers in an Auto
-  Scaling group behind an internal ALB, RDS, jobs); `infra/state` the state
+- `infra/ec2` Terraform (VPC, two web servers in an Auto Scaling group
+  behind an internal ALB, public ALB + WAF, RDS, jobs, logging; AWS names
+  still say `demo`); `infra/state` the state
   bucket; `infra/server` web server config (`configure.sh`) and DB
   bootstrap; `infra/scripts` helper scripts.
 - **`infra/CURRENT_STATUS.md` is the map**: what is running, what is done,
@@ -95,9 +97,11 @@ found in a breach" dialog; it blocks clicks until dismissed.
 - Never read secret values into the conversation (no `secretsmanager
   get-secret-value`). App secrets live in SSM under `/talon/demo/` and must
   not be deleted (stored GitHub tokens and backups depend on them).
-- The ALB + WAF go-public work is on hold until the exposure and subnet
-  decisions are made and LCPS IT adds the DNS records for the planned
-  hostname `talon.lcps.org` (see CURRENT_STATUS.md).
+- The public ALB `talon-public` (HTTPS, WAF) is open to the internet since
+  2026-11-24 (`public_alb_ingress_cidrs` in the gitignored tfvars). Do not
+  change who may connect, the listeners or the WAF block switch
+  (`waf_new_rules_block`) without the user's go, and never replace the ALB
+  (LCPS IT's DNS record points at it).
 - Agent may run `terraform apply` after checking with user.
 
 ## Gotchas

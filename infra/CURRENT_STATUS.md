@@ -1,6 +1,6 @@
 # Talon infra - current status
 
-_Last updated: 2026-11-25 (nav grouped by role and a per-user job-running setting, deployed; see "Latest (2026-11-25)" below). Before that, 2026-11-24 (Entra sign-in live, site opened to the internet, logging for investigations, admin "Not in a class" view; see "Latest (2026-11-24)" below). Before that, 2026-11-07 (Connections, Google Drive, Drive jobs and background EC2 launches: Next up items -5 to -2). Before that, 2026-11-05 (status doc refreshed for architecture doc v8; CI and protected `main`; zone resilience and DB failover fixes; web tier phase 3 merged to `main`: two web servers in an Auto Scaling group behind an internal ALB, failover, deploy and reconciler checks pass; changed files skip hidden paths). Earlier the same day: phases 1 and 2 (Talon VPC, RDS with IAM sign-in and split roles, web server from a launch template), per-launch S3 job folders, old box and its code removed. Before that, 2026-11-04 (GPU jobs, build step 4, merged to `main`: one GPU launch template on the PyTorch DLAMI for g4dn.xlarge, g4dn.2xlarge, g6.xlarge and g6e.2xlarge, admin-only; verified on the box with g4dn; the box runs the same code from branch `gpu-jobs`). Before that, 2026-11-03 (GitHub App sign-in, code-source choice, job folders, admin GitHub unlink and script arguments). Before that, 2026-10-28. The cleanup pass is merged and deployed to the box (service healthy after the deploy; the new behavior has not been exercised on a real job yet). The Talon app and job instances were checked on the live box that day; the account-level items in "Gaps to production" were last reviewed 2026-10-25._
+_Last updated: 2026-11-25 (money model merged, not deployed; nav grouped by role and a per-user job-running setting, deployed; stale items across this file corrected the same day). Earlier updates: "Latest (2026-11-24)" below, the "Next up" items, and "History" at the end. The account-level items in "Gaps to production" were last reviewed 2026-10-25, with corrections through 2026-11-25._
 Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 (gitignored). Architecture doc: `docs/talon-architecture-summary-v8.docx`
 (local, gitignored; 2026-11-05, describes the system as built, with where
@@ -26,8 +26,9 @@ nullable column, no data changed).
   of their own: fund them with Own budget -> Add on the Teachers tab (after
   the money work below: they move it from their pool themselves).
 
-In progress (branch `school-account`, not merged or deployed): **money
-model**, migration 017. One School account (`budget_accounts.kind =
+Merged, **not deployed** (PR #64, `main` at `43c5d69`): **money
+model**, migration 017. (Also merged since the deploy: PR #63, the test
+harness takes a free port from the OS; tests only.) One School account (`budget_accounts.kind =
 'school'`, no owner) is the only account that receives grants: Overview ->
 Money adds the yearly budget there (Subtract only corrects a mistake).
 Admin Add/Subtract on pools and own budgets (the admin's own included)
@@ -90,10 +91,11 @@ Open:
 6. Flaky test: `zz-small-fixes` (admins demoting each other at once)
    sometimes gets a 500, on `main` too.
 
-## Next up (as of 2026-11-07)
+## Next up (as of 2026-11-07; done items marked since)
 
--9. **Deploy hardening** (branch `deploy-hardening`, stacked on
-   `split-migrate-role`; not yet applied or deployed). `deploy.sh` resolves
+-9. ~~**Deploy hardening**~~ (PR #47, merged, applied and live
+   2026-11-16: servers on the pinned Node, sandboxed backend, root-owned
+   deploy clone, SSM `deployed-commit` written by `deploy.sh`). `deploy.sh` resolves
    the branch to a commit SHA once and every step uses it; the SHA is written
    to SSM `/talon/demo/deployed-commit` (created in `deploy.tf` with the
    value ignored by Terraform) after all servers have it, and a replacement
@@ -112,12 +114,12 @@ Open:
    unpinned (it is public and rotates). `talon-backend` is sandboxed
    (`ProtectSystem=strict`, `ProtectHome`, kernel protections,
    `RestrictSUIDSGID`, `LockPersonality`; writable: `/tmp`, `/var/lib/talon`,
-   `/opt/talon/backend/data`). All but the deploy.sh part reach servers
-   through the instance refresh that `terraform apply` starts (user data
-   changed). **Apply and let the refresh finish before the first
-   `deploy.sh`**: it refuses to run while a server still has the old tools.
--8. **Servers can no longer change the schema or the secrets** (branch
-   `split-migrate-role`, not yet applied or deployed). The web role's
+   `/opt/talon/backend/data`). All but the deploy.sh part reached servers
+   through the instance refresh that `terraform apply` started (user data
+   changed).
+-8. ~~**Servers can no longer change the schema or the secrets**~~ (PR #46,
+   merged, applied and live 2026-11-16: a server signs in as `talon_app`
+   and is refused as `talon_migrate`; migrations run from the laptop). The web role's
    `rds-db:connect` is for `talon_app` only and `DATABASE_MIGRATE_URL` is gone
    from `talon.env`, so code running as the service cannot run DDL. Migrations
    run from the operator's laptop: `deploy.sh` opens an SSM port forward
@@ -139,7 +141,6 @@ Open:
    Changing `web_user_data.sh.tftpl` rolls the servers one at a time
    (instance refresh); the data is untouched. Needs: your SSO identity must
    allow `rds-db:connect` as `talon_migrate` (AdministratorAccess does).
-   Order of rollout: apply first, then deploy (see the PR notes).
 -7. **Test review, second pass** (merged, PR #19, deployed 2026-11-07): more tests (role changes
    mid-session, admin unlock and the throttle window, expired and tampered
    sessions, what a teacher sees after a student leaves or a class moves or
@@ -251,8 +252,9 @@ Open:
    The box runs branch `grafana`, which has `gateway-timeouts` merged in
    (that branch was on the box before). That apply also moved the GPU job
    template to AWS's new PyTorch DLAMI (published 2026-11-06; launch
-   template version 10) and its AMI allow-list: GPU jobs on it are not
-   tested yet.
+   template version 10) and its AMI allow-list. (GPU jobs on the newer
+   DLAMIs have run since, e.g. job 1136 on g4dn 2026-11-16; both job images
+   are pinned since 2026-11-17, see "CPU job image".)
 
 0. ~~**Web tier phase 3**~~ done and merged 2026-11-05: Auto Scaling group
    of two web servers (1a, 1b) behind an internal ALB, reached through the
@@ -307,9 +309,10 @@ Open:
    Postgres and frontend tests and the build on every push and pull request
    (Postgres 16 service container, no AWS access, about 70 s). `main` is
    protected: pull requests only, the `test` check required on an
-   up-to-date branch, enforced for admins. Next (before going public):
-   deploys from GitHub through an OIDC role limited to SSM on web servers,
-   with deploy.sh's reseed off; later, `terraform plan` on infra PRs.
+   up-to-date branch, enforced for admins. Still open: deploys from GitHub
+   through an OIDC role (`deploy.sh` migrates from a laptop as
+   `talon_migrate`, so this needs a design); later, `terraform plan` on
+   infra PRs.
 **Direction (2026-11-07): AWS Batch** is the planned next step for job
 execution, replacing the web servers creating EC2 instances directly (plan:
 `docs/talon-batch-plan.md`, local only). Until then the EC2 path gets bug
@@ -331,8 +334,9 @@ fixes only. Items 1 and 2 below describe the current EC2 path.
 4. Test g6e.2xlarge on the box when it has capacity. GPU machines are open
    to students (`ec2_gpu_admin_only = false`, the Terraform default since
    2026-11-04; changing it rolls the web servers).
-5. Not code: decide exposure and subnet for ALB/WAF. (The `talon.lcps.org`
-   DNS records and the Entra App Registration have arrived from LCPS IT.)
+5. ~~Not code: decide exposure and subnet for ALB/WAF.~~ _(Done: web
+   servers in private app subnets; the public ALB served an allow-list from
+   2026-11-15 and the whole internet since 2026-11-24.)_
 
 ## Running now
 
@@ -342,20 +346,22 @@ fixes only. Items 1 and 2 below describe the current EC2 path.
 | Region | `us-east-1`, Talon VPC `10.20.0.0/16` (`network.tf`): web servers in app subnets 1a/1b behind an internal ALB (private, out via a NAT gateway in each zone), RDS Multi-AZ in data subnets 1a/1b, jobs in public jobs subnets 1a-1d |
 | Web servers | Auto Scaling group `talon-demo-web` (`web.tf`): two t4g.small, Ubuntu 24.04 arm64, one per zone, from launch template `talon-demo-web`; tagged `Component=web`. Internal ALB `talon-demo-web` (`alb.tf`), health `GET /api/health/live` (app up, no database) every 10 s, unhealthy after 2 |
 | Elastic IP | None for the web servers (private). One per NAT gateway (1a, 1b) |
-| Inbound access | **Since 2026-11-24 the public ALB `talon-public` (HTTPS, WAF) admits the whole internet** (`public_alb_ingress_cidrs`). Admin access to servers: SSM Session Manager only. Older note:  (`tunnel.sh`: SSM port forward through a web server to the internal ALB, or with `TALON_ALB=public` to the internet-facing ALB). That ALB (`talon-public`, `public_alb.tf`, HTTP:80 only, no certificate yet) allows port 80 only from the two NAT gateways' Elastic IPs |
+| Inbound access | **https://talon.lcps.org: since 2026-11-24 the internet-facing ALB `talon-public` admits the whole internet** (`public_alb_ingress_cidrs = ["0.0.0.0/0"]`). HTTPS:443 with an ACM certificate (`cert.tf`, `https.tf`; TLS 1.2 and 1.3), HTTP:80 redirects to HTTPS, WAF web ACL in front (`waf.tf`). Operators can still use `tunnel.sh` (SSM port forward through a web server to the internal ALB, or with `TALON_ALB=public` to the public one). Admin access to servers: SSM Session Manager only |
 | Runtime | Node 24 LTS (pinned tarball, `/usr/local/bin/node`), nginx (port 80 -> static `frontend/dist`, `/api` -> `127.0.0.1:5174`), systemd `talon-backend`. Postgres 16 on RDS `talon-demo` (`db.t4g.small`, Multi-AZ since 2026-11-05, TLS, IAM sign-in as `talon_app`; migrations as `talon_migrate`, run from an operator's laptop, not from the servers). `EC2_JOBS_ENABLED=true` |
 | Deployed | `main`, unless `deploy.sh <branch>` put a test branch on the box (normally tested before merge; the branch may stay until the next deploy since it equals `main` after the PR). `infra/scripts/status.sh --deep` shows the commit, template versions and drift |
-| Approx cost | ~$165/month at list price, not read from the bill (Cost Explorer shows less: LCPS Savings Plans and discounts): two web servers ~$24 + EBS ~$3.20, internal ALB ~$17, two NAT gateways ~$66 + traffic, RDS db.t4g.small Multi-AZ ~$51, KMS key ~$1, alarms/S3/SNS pennies. Plus job instances, billed per second and charged to budgets |
-| Other AWS resources | SSM parameters under `/talon/demo/`, KMS key `alias/talon-demo-secrets`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), CloudWatch alarms (`monitoring.tf`: disk, backend errors, unknown job instance, failed logins, GPU and standard vCPUs; `alb.tf`: healthy hosts, ALB 5xx; `public_alb.tf` and `waf.tf`: the public ALB's unhealthy hosts and 5xx, WAF blocked requests), CloudWatch agent on each web server (installed and configured by `infra/server/configure.sh`; logs in `/talon/demo/{backend,syslog,nginx-access,nginx-error,bootstrap}`, 30 days; metrics in `Talon/Server`), saved Logs Insights queries `Talon/*` (`log_queries.tf`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and CPU/GPU launch templates (`jobs.tf`), 2 AWS Budgets alerts (`alarms.tf`: 150 USD a month, 10 USD a day) |
+| Approx cost | ~$195/month at list price, not read from the bill (Cost Explorer shows less: LCPS Savings Plans and discounts): two web servers ~$24 + EBS ~$3.20, internal ALB ~$17, public ALB ~$17 + LCUs, WAF ~$13 (web ACL $5 + $1 per rule, 8 rules) + $0.60 per million requests, two NAT gateways ~$66 + traffic, RDS db.t4g.small Multi-AZ ~$51, KMS key ~$1, logs/flow logs/alarms/S3/SNS small. Plus job instances, billed per second and charged to budgets |
+| Other AWS resources | SSM parameters under `/talon/demo/`, KMS key `alias/talon-demo-secrets`, SNS topic `talon-demo-alerts` (email subscribed and confirmed), CloudWatch alarms (`monitoring.tf`: disk, backend errors, unknown job instance, failed logins, GPU and standard vCPUs; `alb.tf`: healthy hosts, ALB 5xx; `public_alb.tf` and `waf.tf`: the public ALB's unhealthy hosts and 5xx, WAF blocked requests), CloudWatch agent on each web server (installed and configured by `infra/server/configure.sh`; logs in `/talon/demo/{backend,syslog,nginx-access,nginx-error,bootstrap}`, 90 days, backend 365; metrics in `Talon/Server`), saved Logs Insights queries `Talon/*` (`log_queries.tf`), S3 state bucket (`infra/state`), jobs bucket, job role, security group and CPU/GPU launch templates (`jobs.tf`), CPU job image pipeline (`image.tf`), WAF web ACL `talon-public-waf` (`waf.tf`), ACM certificate for `talon.lcps.org` (`cert.tf`), Entra and Google settings in SSM (`entra.tf`, `google.tf`), CloudTrail trail `management-events` (adopted), SSM session logs and job-subnet flow logs (`logging.tf`), 2 AWS Budgets alerts (`alarms.tf`: 150 USD a month, 10 USD a day) |
 | Root volume | 20 GB gp3, encrypted with the default AWS-managed EBS key (the architecture doc asks for a KMS key; not changed) |
 | OS patching | `unattended-upgrades` enabled on the box (checked) |
 | Terraform state | S3 `talon-tfstate-<account id>` (versioned, locked); `infra/state` stack's own state is local and tiny |
 
 ## How to use
 
+The site: https://talon.lcps.org (Microsoft sign-in or a Talon password).
+
 ```bash
 aws sso login --profile lcps     # when credentials expire (usually daily)
-infra/scripts/tunnel.sh          # then open http://localhost:8080 (internal ALB)
+infra/scripts/tunnel.sh          # then open http://localhost:8080 (internal ALB; GitHub/Drive connect only work on talon.lcps.org)
 TALON_ALB=public infra/scripts/tunnel.sh 8081   # the internet-facing ALB (testing)
 infra/scripts/deploy.sh          # migrate from this laptop, then deploy origin/main (push first); data is never touched
 infra/scripts/deploy.sh B        # deploy branch B (--no-migrate skips the migration step)
@@ -372,7 +378,8 @@ to each server in turn (no reseed since go-live; `--keep-data` is accepted
 and does nothing); `TALON_INSTANCE=<id>`
 picks the server for `tunnel.sh`, `shell.sh` and `check-launch-policy.sh`.
 
-Demo login: see the main README.
+Demo logins (see the main README) work only on local and test databases;
+production disables demo accounts.
 
 On the box:
 
@@ -392,7 +399,8 @@ Key paths: app `/opt/talon`, config `/etc/talon/talon.env`, secrets
 
 ### Logs
 
-Everything is in CloudWatch Logs (us-east-1), 30 days:
+Everything is in CloudWatch Logs (us-east-1), 90 days (`log_retention_days`;
+the backend log 365, `backend_log_retention_days`; since 2026-11-24, was 30):
 
 | Log group | What |
 |---|---|
@@ -402,6 +410,12 @@ Everything is in CloudWatch Logs (us-east-1), 30 days:
 | `/talon/demo/syslog` | Everything else: backups, deploys, systemd, kernel |
 | `/talon/demo/bootstrap` | First-boot user_data log |
 | `/talon/demo/jobs` | Job instances' boot logs (`job_boot.sh`, root's output, not the student's), stream `<job id>/<instance id>`, sent every 5 s and at exit. Last line: JSON `job.boot_summary` (result, exit code, boot/setup/run seconds, instance type). The same log is `jobs/<id>/logs/boot.log` in S3, uploaded every 3 s when changed and on every exit path; the student's `job.log` is in S3 only |
+| `/talon/demo/ssm` | SSM session transcripts and Run Command output (deploys, `shell.sh`, `status.sh`), 365 days (`logging.tf`) |
+| `aws-waf-logs-talon-public` | WAF log: every request that reaches the public ALB (cookies, authorization and query string redacted) |
+
+Outside CloudWatch: job-subnet VPC flow logs in S3 `talon-demo-flow-logs-<account id>`
+(365 days, with instance id) and the CloudTrail trail's bucket (log file
+validation, versioning).
 
 nginx passes its `$request_id` to the backend (`X-Request-Id`, also returned
 to the browser), so one `requestId` finds both sides of a request.
@@ -458,10 +472,11 @@ to the browser), so one `requestId` finds both sides of a request.
 - Database backups are RDS's (automated, 7 days, point-in-time restore).
   A restore drill into a new RDS instance has not been done yet. Deletion
   protection and a final snapshot are on since go-live (`rds.tf`).
-- Demo accounts have public passwords (they are in this repo). Fine only
-  because the box is reachable through the SSM tunnel and nothing else; see
-  "Going public".
-- Plain HTTP on port 80 inside the tunnel (no TLS yet; the ALB adds it).
+- Demo accounts have public passwords (they are in this repo). The demo
+  seed refuses in production, and a production server disables any demo
+  account at startup (since 2026-11-15; see "Going public").
+- The public site is HTTPS only (HTTP redirects). The SSM tunnel and the
+  internal ALB are still plain HTTP on port 80 (inside the VPC).
 - Changing `web_user_data.sh.tftpl` (or anything in the web launch
   template) replaces the web servers one at a time on the next apply
   (instance refresh, no downtime, about 12 minutes for two; data in RDS
@@ -473,8 +488,8 @@ to the browser), so one `requestId` finds both sides of a request.
 
 ## To-do (in order)
 
-Ordered so each item makes the next one easier. Items 1-8 and 12 are done;
-9-11 need other people.
+Ordered so each item makes the next one easier. Items 1-10, 12 and 13 are
+done; 11 needs other people.
 
 **Foundation**
 
@@ -536,8 +551,9 @@ toward two servers)
    `compute_type` and `hourly_rate_cents` are ready for EC2-launched jobs
    (price = instance type's on-demand rate, per-second, 60 s minimum);
    seeded demo jobs match the ledger; JSON files and `demoOwnership.js`
-   removed.)_ Still to do for EC2 launches: look up the rate from the Pricing
-   API, reserve the maximum cost at launch, and terminate at the time limit.
+   removed.)_ For EC2 launches, reserving the maximum cost at launch and
+   terminating at the time limit are done (see "EC2-launched jobs"); rates
+   still come from a static table (`ec2Rates.js`), not the Pricing API.
 
 **Frontend** (can move earlier if the demo needs polish)
 
@@ -597,9 +613,9 @@ toward two servers)
     (revoked anywhere: disconnecting on one server revokes the app's grant
     for all of them) now unlinks instead of failing.
 
-**Blocked on others**
+**Was blocked on others** (9 and 10 done; 11 still waiting)
 
-9. **Entra ID sign-in** - _live since 2026-11-24 (see "Latest" above; an
+9. ~~**Entra ID sign-in**~~ - _live since 2026-11-24 (see "Latest" above; an
    unexpected user got in, assignment enforcement unconfirmed)._ LCPS IT made the App Registration (tenant ID, client ID,
    secret) and limits sign-in to an assigned list of users. "Sign in with
    Microsoft" on the login page: OIDC authorization code + PKCE as a
@@ -634,8 +650,9 @@ toward two servers)
    only, no server roll); (3) deploy the branch; (4) sign in with a
    real account. Open: the secret's expiry date (renew before it). The
    localhost:5173 redirect URI works (tested 2026-11-24).
-10. **ALB + WAF go-public** - hostname chosen (`talon.lcps.org`, needs
-    LCPS IT to add DNS records). **Step 1 done 2026-11-10:** the
+10. ~~**ALB + WAF go-public**~~ - _done: HTTPS on `talon.lcps.org` with
+    WAF since 2026-11-15 (allow-list), open to the internet since
+    2026-11-24._ How it got there: **Step 1 done 2026-11-10:** the
     internet-facing ALB `talon-public` exists (`public_alb.tf`) but admits
     only the NAT gateways, so it is reachable through the SSM tunnel only
     (`TALON_ALB=public infra/scripts/tunnel.sh 8081`; direct requests from
@@ -645,8 +662,8 @@ toward two servers)
     GoDaddy zone) and the ACM certificate is requested (`cert.tf`, applied):
     pending until IT adds the validation CNAME (`terraform output
     public_cert_validation_records`; it must stay in the zone, ACM renews
-    through it). **Step 2 (HTTPS), prepared on branch `https-listener`, merge
-    and apply once the certificate shows Issued:** `https.tf` waits for
+    through it). **Step 2 (HTTPS), PR #33, applied 2026-11-13 once the
+    certificate was issued:** `https.tf` waits for
     validation, adds the 443 listener (TLS 1.2 and 1.3), turns port 80 into a
     redirect except from our NAT gateways, and adds `public_alb_ingress_cidrs`
     (empty: still closed; the exposure decision is this one variable). Test
@@ -662,8 +679,9 @@ toward two servers)
 - ~~Delete the deactivated personal IAM access keys, `~/.aws/credentials-bk`
   and the old local Terraform state copies~~ _(done 2026-10-28; the personal
   user has no access keys, it signs in with `aws login`.)_
-- Term end: return leftover teacher pool money to the admin (needs a
-  small admin action; see "Gaps to production").
+- Term end: return leftover teacher pool money. With the money model (PR
+  #64, merged, not deployed) an admin's Subtract on a pool moves the money
+  back to the School account; a one-click "return all pools" is not built.
 
 ## Probably to do (not scheduled)
 
@@ -671,15 +689,19 @@ Ideas worth doing that are not in the ordered list yet. Move one up into
 "To-do (in order)" when it is scheduled. Most come from the EC2 runner
 security review (2026-11-07), listed roughly in the order it suggested.
 
+Done items below (marked done) are merged, applied and live; they stay
+for the record until the next cleanup.
+
 - **Cap the job log; read it with a byte range** (review #3, availability).
-  Server half done 2026-11-15 (branch `job-log-cap`): `getLogs`
+  _Done: server half PR #36 (deployed 2026-11-16), instance half PR #49
+  (applied 2026-11-17, job template v20, GPU v18; tested on real CPU and
+  GPU instances first)._ Server half (branch `job-log-cap`): `getLogs`
   (`ec2ExecutionAdapter.js`) now takes a byte offset as its cursor and reads
   at most 512 KB per poll with ranged GETs (a first view of a big log gets
   the first 128 KB, a "not shown" note and the latest 512 KB; lines are cut
   at 10,000 characters; `JOB_LOG_CHUNK_BYTES`, `JOB_LOG_HEAD_BYTES`,
   `JOB_LOG_LINE_MAX_CHARS`), and `status.json` and the like are read with a
-  1 MB cap. Instance half done 2026-11-16 (branch `job-log-cap-instance`,
-  needs a Terraform apply, not yet tested on a real instance): the student
+  1 MB cap. Instance half (branch `job-log-cap-instance`): the student
   unit's stdout and stderr go to a root-only FIFO (`/run/talon-job.fifo`)
   read by `talon-logcap` (root, outside the unit, written by `job_boot.sh`).
   It copies the first 10 MiB to `/tmp/job.log` live, then adds a note line,
@@ -691,7 +713,7 @@ security review (2026-11-07), listed roughly in the order it suggested.
   says WARNING (job uncapped). Lines root writes during the job (egress
   note) land among the head, not after the tail.
 - **Billing times are the web server's, not the job's** (done 2026-11-16,
-  branch `server-side-billing-times`). A job instance can write its own
+  PR #40, deployed). A job instance can write its own
   `status.json`, so the bill no longer reads times from it. Start: EC2's
   launch time (saved in the execution ref; AWS bills from there too). End:
   when S3 stored the terminal `status.json` (or the cancel marker), capped
@@ -703,8 +725,8 @@ security review (2026-11-07), listed roughly in the order it suggested.
   rewriting `status.json` later changes nothing. Remaining: a job can still
   write a terminal status early to stop its own bill (its instance is then
   terminated by the reconciler, so it does not keep computing for free).
-- **Outbound data quota per job** (done in branch `job-box-hardening`,
-  needs a Terraform apply; no new image). The budget covers instance time,
+- **Outbound data quota per job** (done: PR #45, applied 2026-11-16, job
+  template v19, GPU v17; no new image). The budget covers instance time,
   not data sent to the internet (about $0.09/GB). `job_boot.sh` now adds an
   iptables chain `TALON_EGRESS` for the `student` user only (loopback
   exempt, root's S3 upload not matched): `-m quota` lets packets through
@@ -720,7 +742,9 @@ security review (2026-11-07), listed roughly in the order it suggested.
   endpoint counts like any other.
 - **Attribution and network audit** (review, auditing). AWS abuse reports
   give an IP and a time, and job public IPs change per launch: record each
-  instance's public IPv4 in the boot summary and `executionRef`.
+  instance's public IPv4 in the boot summary and `executionRef` (not done;
+  the flow logs below carry the instance id, which CloudTrail ties to the
+  launch).
   _Done 2026-11-24 (`logging.tf`):_ VPC Flow Logs on the jobs subnets to S3
   (`talon-demo-flow-logs-*`, 365 days, with instance id); the account's
   trail `management-events` (not an organization trail) adopted into
@@ -731,8 +755,8 @@ security review (2026-11-07), listed roughly in the order it suggested.
   Decide who may read these logs and for how long (students are minors),
   and say in the acceptable-use terms that jobs are monitored.
 - **Narrow the job role** (review #4). `AmazonSSMManagedInstanceCore` is
-  dropped from the job role (branch `job-box-hardening`, needs a Terraform
-  apply): it granted `ssm:GetParameter(s)` on `*`, and nothing uses SSM on
+  dropped from the job role (PR #45, applied 2026-11-16; the job role has
+  no managed policies now): it granted `ssm:GetParameter(s)` on `*`, and nothing uses SSM on
   job instances (the backend and `infra/scripts` only talk SSM to web
   servers; a job instance never accepts a connection). Consequence: the
   "admin shell on a job instance" idea (`aws ssm start-session`) needs the
@@ -750,8 +774,8 @@ security review (2026-11-07), listed roughly in the order it suggested.
   keep DNS working and force lookups through the resolver, where Route 53
   Resolver DNS Firewall (AWS managed threat lists, tunnel and mining
   domains) and query logging apply.
-- **Kill student processes before the final upload** (done in branch
-  `job-box-hardening`). The student's code now runs in its own transient
+- **Kill student processes before the final upload** (done: PR #45,
+  applied 2026-11-16; real CPU and GPU jobs ran on it the same day). The student's code now runs in its own transient
   unit `talon-student-job` (slice `talon-student.slice`, started with
   `systemd-run --wait` from `job_boot.sh`: MemoryMax=90%, TasksMax=16384,
   NoNewPrivileges, RuntimeMaxSec=limit+60 as a limit the student cannot
@@ -891,9 +915,14 @@ carries `imageRelease` (`stock` when absent).
 - Plan: `docs/talon-cpu-image-plan.md` (local). Not done: the GPU image, a
   lifecycle policy, GPU use metrics.
 
-## Going public: ALB + WAF (likely needed for the first stakeholder demo)
+## Going public: ALB + WAF (built; live since 2026-11-15, open since 2026-11-24)
 
-The ALB is for protection, not load. One instance is plenty for ~100 users.
+Everything in this section is built: internet-facing ALB `talon-public`
+with HTTPS on `talon.lcps.org` and a WAF, web servers in private subnets.
+Still open: switching the newer WAF rules from count to block (see
+"Latest (2026-11-24)"). The design notes below are kept for the record.
+
+The ALB is for protection, not load.
 
 | Layer | Provides |
 |---|---|
@@ -925,14 +954,20 @@ Verify CloudFront VPC origin support for EC2 before choosing it.
    (the old entries are kept as a comment in `terraform.tfvars`). No ALB
    access or connection logs (decided 2026-11-24: WAF plus nginx logs cover
    requests); the WAF logs every request that reaches the ALB.
-3. **Instance subnet.** (a) Keep it in a public subnet with **no inbound
+3. ~~**Instance subnet.**~~ _(Settled 2026-11-05: (b), private app
+   subnets with a NAT gateway per zone.)_ (a) Keep it in a public subnet with **no inbound
    except port 80 from the ALB security group** - no NAT needed; or
    (b) private subnet per the architecture doc - requires a NAT gateway
    (~$32/mo + data) or VPC endpoints for SSM plus egress for apt / npm /
    GitHub. (a) is nearly as safe and simpler for the demo; (b) when moving
    into the LCPS VPC.
 
-### Build list (Terraform in `infra/ec2`, new `alb.tf` / `waf.tf`)
+### Build list (Terraform in `infra/ec2`)
+
+Done: 1 (`cert.tf`), 2 (`public_alb.tf`, `https.tf`; the ALB is in the
+public subnets, servers stay private), 3, 4, 5 (`waf.tf`, see below), 6
+(LCPS IT's CNAME). 7: decided against on 2026-11-24 (WAF and nginx logs
+cover requests).
 
 1. ACM certificate for the hostname, DNS-validated.
 2. ALB in Talon's two public subnets (1a, 1b), HTTPS:443 listener with
@@ -965,7 +1000,7 @@ Verify CloudFront VPC origin support for EC2 before choosing it.
   inputs, common rule set (`SizeRestrictions_BODY` counts only: roster
   imports exceed 8 KB), login rate limit per IP (`waf_login_rate_limit`,
   300 per 5 min, loose because schools share addresses; no general per-IP
-  limit for the same reason). Logs in `aws-waf-logs-talon-public` (30 days,
+  limit for the same reason). Logs in `aws-waf-logs-talon-public` (90 days since 2026-11-24,
   cookie and authorization headers and the query string redacted). Since
   2026-11-16 (branch `waf-and-alarms`), in COUNT mode until
   `waf_new_rules_block = true`:
@@ -977,7 +1012,7 @@ Verify CloudFront VPC origin support for EC2 before choosing it.
   ALB 5xx, target 5xx) and a WAF blocked-requests alarm (`waf.tf`,
   `waf_blocked_alarm_threshold`, 100 per 5 min). Body inspection stays at
   the fixed 8 KB limit for ALBs; larger bodies are only checked by the app.
-- **Security headers** (branch `security-headers`). Express: no
+- ~~**Security headers**~~ (PR #38, CSP enforced by PR #43, deployed 2026-11-16; HSTS confirmed over the public URL). Express: no
   `X-Powered-By`; `Cache-Control: no-store` and `X-Content-Type-Options:
   nosniff` on every `/api` response (`server.js`). nginx (`configure.sh`,
   re-applied each deploy): `nosniff`, `Referrer-Policy: same-origin`,
@@ -988,7 +1023,8 @@ Verify CloudFront VPC origin support for EC2 before choosing it.
   (`CSP_HEADER` in `configure.sh`; set it back to report-only to test a new
   third-party script or frame).
 - ~~Per-account login throttling~~ (done, item 2).
-- **No demo users on a reachable server** (branch `go-live-no-demo`).
+- ~~**No demo users on a reachable server**~~ (PR #34, applied and the
+  production database wiped once, 2026-11-15).
   Their passwords are public in this repo. `TALON_ALLOW_DEMO_SEED` is gone:
   the demo seed refuses whenever `NODE_ENV=production`, a production server
   disables any active demo account and deletes its sessions at startup
@@ -996,7 +1032,7 @@ Verify CloudFront VPC origin support for EC2 before choosing it.
   `deploy.sh` no longer reseeds. Go-live: `npm run db:wipe --workspace
   backend -- --yes-delete-everything` on one server (deletes all users,
   classes, jobs, links; refuses while EC2 jobs run), then create the admin.
-- Create the real first admin:
+- ~~Create the real first admin~~ (done 2026-11-15; a second admin 2026-11-17):
   `infra/scripts/db-run.sh -- npm run db:create-admin --workspace backend -- --username you@lcps.org`
   (random password, printed once; runs from your laptop as `talon_migrate`,
   the servers cannot).
@@ -1119,8 +1155,9 @@ know about AWS and the decisions behind the design.
 
 ### Decided approach for the first build (2026-10-26)
 
-Where this differs from the architecture doc (v7), and why. Build step 1 is
-done (below); the adapter and everything after it are not built yet.
+Where this differs from the architecture doc (v7), and why. Build steps 1-4
+are done (below); step 5 (Spot, overnight queue) is not, and waits for the
+AWS Batch direction.
 
 **Changes from the doc**
 
@@ -1268,7 +1305,7 @@ done (below); the adapter and everything after it are not built yet.
    g6e.2xlarge on the box when it has capacity; GPU opened to students
    2026-11-04 (Terraform variable `ec2_gpu_admin_only`, default `false`, written into
    `/etc/talon/talon.env` at first boot like `ec2_jobs_enabled`; changing it
-   replaces the web instance, which is fine since demo data is disposable).
+   rolls the web servers (instance refresh; the data in RDS stays).
    Checked that day in the LCPS account: G and P on-demand quotas 768 vCPUs
    each; on-demand prices g4dn.xlarge $0.526/h, g4dn.2xlarge $0.752/h,
    g6.xlarge $0.805/h, g7e.2xlarge $3.363/h (1x RTX PRO 6000, 96 GB);
@@ -1437,8 +1474,8 @@ real students.
 
 ## Gaps to production (compared with the architecture doc, 2026-10-25)
 
-Beyond the blocked items above (Entra, ALB/WAF, `lcps-ro`) and EC2-launched
-jobs (previous section). Rough priority order.
+Beyond the blocked item above (`lcps-ro`; Entra and ALB/WAF are done) and
+EC2-launched jobs (previous section). Rough priority order.
 
 ### 1. Management screens and budget API
 
@@ -1474,24 +1511,26 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   teacher columns to the import is still to do.
 - Roster provisioning: only pre-provisioned users may sign in (decided).
   CSV import exists; an SIS sync is still to do.
-- Term rollover: reset budgets, return pool money to the admin (archiving
-  classes exists), remove graduated students; per-user storage quota
+- Term rollover: reset budgets, return pool money to School (an admin's
+  Subtract on a pool does it one pool at a time once PR #64 is deployed;
+  archiving classes exists; the yearly summary reports per school year),
+  remove graduated students; per-user storage quota
   overrides. No audit screen yet (grants record who did them, nothing reads
   them). New users have no forced password change on first sign-in.
-- Submit form: done for on-demand CPU jobs (machine menu, time limit, cost
-  estimate, environment variables). Still to do from the design: Spot,
-  overnight queue, GPU tiers, and an environment/image choice (the Machine
+- Submit form: done for on-demand CPU and GPU jobs (machine menu, time
+  limit, cost estimate, environment variables). Still to do from the
+  design: Spot, overnight queue, and an environment/image choice (the Machine
   Image select was removed because it did nothing).
 - Job-finished notification (students run overnight jobs).
 - Submit form, code source: a "Code source" choice (GitHub app, public
   repository, Google Drive) above the job fields, merged to `main`
-  2026-11-03. GitHub and public repos work; Google Drive
-  is a mock-up only (disabled folder picker, submit disabled). Each source
+  2026-11-03. GitHub, public repos and (since 2026-11-07, PR #11) Google
+  Drive all work. Each source
   keeps its own repo when switching. Since branch `connections`
   (2026-11-06) the form sends `source: { type: "github", ... }` and the
   backend has a source registry (`src/sources/`); both git choices are the
-  `github` source (no token = anonymous clone). Drive is the next source
-  type: `docs/connections-and-sources-plan.md`.
+  `github` source (no token = anonymous clone); Drive is the `drive`
+  source (`docs/connections-and-sources-plan.md`).
 - Job folder (merged, migration 007 `jobs.folder`): a job can run from
   a folder inside the repo (working directory, entry script relative to it,
   its requirements.txt else the root's). Pasting a github.com
@@ -1523,12 +1562,14 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
 
 ### 2. Compute pieces beyond the launch itself
 
-- Queue and dispatcher: launches are synchronous today (a capacity failure
-  fails the job and refunds it). The decided design is a Postgres queue
+- Queue and dispatcher: launches run in the background since 2026-11-07
+  (PR #13) but there is no queue: a capacity failure in every zone fails
+  the job and refunds it. The decided design is a Postgres queue
   (`FOR UPDATE SKIP LOCKED`, `not_before` for overnight, retry with backoff),
   with SQS only if it becomes painful. Custom GPU AMI (Ubuntu, NVIDIA
   drivers, Docker) and ECR images (general GPU, AlphaFold, R, CPU-only), plus
-  a baked CPU AMI so boot stops installing the AWS CLI and pip each time.
+  a baked CPU AMI so boot stops installing the AWS CLI and pip each time
+  (the CPU AMI is done, 2026-11-10; the rest is open).
 - ~~Authenticated completion callback~~ (not needed: the instance writes
   `status.json` to S3 and the web server only reads it; there is no inbound
   path to the web server).
@@ -1540,8 +1581,9 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
   user, instance metadata blocked for it, no secrets on the box, HTTPS/DNS
   only outbound, local runner refused in production, admins too). Still
   open: per-job scoped credentials (the job role is shared across jobs),
-  optional hardening (cgroup limits and a unit of its own: done in `job-box-hardening`), a
-  dedicated VPC with private subnets, and GuardDuty.
+  private job subnets behind an egress proxy (jobs are in the Talon VPC's
+  public jobs subnets), and GuardDuty. Done: cgroup limits and a unit of
+  its own, an outbound data quota (PR #45).
 
 ### 3. Security and privacy before real students
 
@@ -1552,16 +1594,19 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
 - Web hardening: CSRF (done: `auth/sameOrigin.js` refuses non-GET `/api`
   requests whose `Sec-Fetch-Site` is not same-origin/none, or, without it,
   whose `Origin` is not this host or `TALON_PUBLIC_URL`; header-less callers
-  pass; the Vite dev proxy no longer rewrites Host), security headers and a content security policy, request size
+  pass; the Vite dev proxy no longer rewrites Host), security headers and a
+  content security policy (done, PRs #38 and #43), request size
   limits, strict validation of repo and script inputs.
-- Remove demo accounts and local password login before anything is public.
+- ~~Remove demo accounts~~ (done 2026-11-15, PR #34). Local password login
+  stays on purpose for admins and break-glass next to Microsoft sign-in.
   The architecture doc says "no passwords stored"; today there are local
-  password hashes for the demo users and the first admin.
+  password hashes for the admins and any user given a password.
 - Audit log for admin actions (role and budget changes; grants record who,
   but nothing reads them yet).
 - Checked 2026-11-04: CloudTrail has a multi-region trail
-  (`management-events`, not an organization trail; its retention not
-  checked); GuardDuty has no detector. Not checked: Inspector. (Web servers
+  (`management-events`, not an organization trail; adopted into Terraform
+  with log file validation and bucket versioning on 2026-11-24);
+  GuardDuty has no detector. Not checked: Inspector. (Web servers
   moved to private app subnets with a NAT gateway per zone and an S3
   endpoint, 2026-11-05.)
 
@@ -1574,12 +1619,12 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
 - Application logs are in CloudWatch Logs (CloudWatch agent: backend JSON,
   nginx JSON access, nginx error, syslog, bootstrap; see "Logs"). Job
   instance boot logs also go to `/talon/demo/jobs` (shipped with the AWS
-  CLI, no agent). SSM session logging is not set up, and no CloudTrail trail
-  is defined in this repo's Terraform. The account has exactly one trail, a
-  management-events trail created outside Talon (`aws cloudtrail
-  list-trails` shows only that one, confirmed 2026-11-07).
+  CLI, no agent). Since 2026-11-24 (`logging.tf`): SSM session and Run
+  Command logs, the account's one trail (`management-events`, made outside
+  Talon) adopted into Terraform, and job-subnet flow logs. Still open:
+  Route 53 Resolver query logging.
 - CI/CD: tests run on every push and pull request (done 2026-11-05, item
-  0d); deploys are still manual SSM runs. Next: automated deploys through
+  0d); deploys are still run by hand (`deploy.sh` from a laptop). Next: automated deploys through
   an OIDC role.
 - End-to-end restore drill onto a brand-new instance; a staging environment
   for the stakeholder demo; a load test at about 100 users; a security
@@ -1599,6 +1644,9 @@ passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
 - ~~Remove the debug panel and the Kubernetes adapter stub~~ _(done 2026-10-28 with the "Save as Template" button; `EXECUTION_PROVIDER` is gone.)_
 
 ## Later: two web servers or auto-replacement
+
+_All done by 2026-11-05 (phases 1-3 below). Kept for the record; the
+numbered list was the plan before it was built._
 
 Not needed for load. If wanted for availability:
 
@@ -1897,3 +1945,26 @@ runs configure itself (talon-deploy does, once per server).
 - 2026-11-03: Script arguments (migration 008) and a branch menu; merged to `main`.
 - 2026-11-04: Class sections (migration 009), merged to `main` (d84af17): a class is name + teacher + block; see Management screens.
 - `infra_2/` (the older EKS design) was deleted 2026-11-05 (0b).
+- 2026-11-07: Google Drive connection and Drive jobs live (PRs #9-#12),
+  EC2 launches in the background (#13), test review fixes (#17, #19).
+- 2026-11-10: Public ALB step 1 (#23, NAT gateways only); baked CPU job
+  image, gzipped job user data, job machine metrics (#26-#30).
+- 2026-11-13: ACM certificate and HTTPS listener for `talon.lcps.org`
+  (#32, #33); log polling backs off (#31).
+- 2026-11-15: Go-live: demo accounts blocked, deploys keep data, RDS
+  deletion protection (#34); production database wiped once, real admin
+  created; Secure session cookie and WAF (#35); allow-list on the public
+  ALB. Security review (report local only).
+- 2026-11-16: Security review fixes (#36-#49): job log cap, fetch limits,
+  login hardening (migration 014), security headers and enforced CSP,
+  server-side billing times, Express update, WAF count rules and alarms,
+  split migrate role, deploy hardening, job box hardening, small fixes,
+  delete never-used users. All applied and deployed by 2026-11-17.
+- 2026-11-17: Both job images pinned in tfvars (#50, `job-image.sh`).
+- 2026-11-23/24: Terraform version pinned for asdf (#51); Entra sign-in live (#52,
+  #53, migration 015); Admin -> Not in a class (#54); logging for
+  investigations (#57); git/tar without secrets, 12-hour session cap
+  (#56); site opened to the internet. Servers on `d6888e4`.
+- 2026-11-25: Nav grouped by role (#60) and `can_run_jobs` (#61, migration
+  016) deployed (`2430423`). Money model (#64, migration 017) merged, not
+  deployed.
