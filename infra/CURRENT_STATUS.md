@@ -1,6 +1,6 @@
 # Talon infra - current status
 
-_Last updated: 2026-11-25 (money model, UI pass and admin budget panel deployed with `main` at `0d7d53d`, migration 017 on RDS; nav grouped by role and a per-user job-running setting deployed earlier the same day; stale items across this file corrected the same day). Earlier updates: "Latest (2026-11-24)" below, the "Next up" items, and "History" at the end. The account-level items in "Gaps to production" were last reviewed 2026-10-25, with corrections through 2026-11-25._
+_Last updated: 2026-11-25 (avatars deployed with `main` at `fcd1192`, migration 018 on RDS; money model, UI pass and admin budget panel deployed earlier with `0d7d53d`, migration 017; nav grouped by role and a per-user job-running setting deployed earlier the same day; stale items across this file corrected the same day). Earlier updates: "Latest (2026-11-24)" below, the "Next up" items, and "History" at the end. The account-level items in "Gaps to production" were last reviewed 2026-10-25, with corrections through 2026-11-25._
 Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 (gitignored). Architecture doc: `docs/talon-architecture-summary-v8.docx`
 (local, gitignored; 2026-11-05, describes the system as built, with where
@@ -8,10 +8,24 @@ it differs from v7 and a short what-comes-next; v7 kept for history).
 
 ## Latest (2026-11-25)
 
-Servers run `main` at `0d7d53d` (PRs #60, #61, #63, #64 and #66),
-deployed and checked on the live site 2026-11-25. Migrations 016 and 017
-applied on RDS (016 adds one nullable column; 017 adds the School account
-and the no-negative-balance check, below).
+Servers run `main` at `fcd1192` (PR #68, avatars), deployed 2026-11-25
+15:07 (recorded in SSM `/talon/demo/deployed-commit`). Before that, the
+same day: `0d7d53d` (PRs #60, #61, #63, #64 and #66), checked on the live
+site. Migrations 016, 017 and 018 applied on RDS (016 and 018 add nullable
+columns; 017 adds the School account and the no-negative-balance check,
+below).
+
+- **Avatars** (#68, migration 018, `users.avatar_style` / `avatar_seed`,
+  both NULL = initials): account menu -> Profile picks a DiceBear avatar
+  (10 styles: CC0, Bottts, and CC BY 4.0 with the credit shown in the
+  picker) or goes back to initials. Drawn in the browser, one lazily
+  loaded chunk per style; no outside requests, CSP unchanged.
+  `PUT /api/auth/avatar` sets only your own; styles are checked against
+  `shared/src/avatars.js`. Users, Classes -> Manage, Not in a class and
+  Teaching -> Students show the avatar (or initials) left of the name.
+  CodeQL flags the new route under its existing "missing CSRF token"
+  alert (#4, open on main): Talon's same-origin check (`requireSameOrigin`)
+  covers it, CodeQL does not recognise it.
 
 - **Nav grouped by role** (#60): Admin, Teaching and My work sections,
   built from all of a user's roles (an admin who teaches sees both).
