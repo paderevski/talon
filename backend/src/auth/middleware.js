@@ -1,4 +1,5 @@
 import { getUsersRepository } from "../repositories/usersRepository.js";
+import { sessionMaxMs } from "./session.js";
 
 const usersRepository = await getUsersRepository();
 
@@ -9,12 +10,22 @@ function destroySession(req) {
 }
 
 // Sets req.user from the session (or null). Drops sessions whose user has
-// been deleted or disabled since they signed in.
+// been deleted or disabled since they signed in, and sessions older than
+// sessionMaxMs however active (a session from before this rule gets its
+// clock started now rather than everyone being signed out at once).
 export async function attachUser(req, _res, next) {
   req.user = null;
   const userId = req.session?.userId;
 
   if (!userId) {
+    return next();
+  }
+
+  const signedInAt = Number(req.session.signedInAt);
+  if (!Number.isFinite(signedInAt) || signedInAt <= 0) {
+    req.session.signedInAt = Date.now();
+  } else if (Date.now() - signedInAt > sessionMaxMs()) {
+    await destroySession(req);
     return next();
   }
 

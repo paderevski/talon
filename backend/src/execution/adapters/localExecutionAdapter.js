@@ -12,29 +12,15 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { assertRepoPath, normalizeFolder } from "talon-shared/repo";
 import { describeCloneError, gitAuthEnv } from "../gitAuth.js";
+import { childEnv } from "../../utils/childEnv.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const backendSrcDir = path.resolve(__dirname, "../../../");
 const runsRootDir = path.resolve(backendSrcDir, "data", "runs");
 
-// What git and the job script may see of the server's environment. Never the
-// whole of process.env: it holds the session secret, the database URL and the
-// credentials key. AWS_EC2_METADATA_DISABLED keeps AWS SDKs and the CLI in the
-// script from picking up the instance role (it does not stop a raw request to
-// the metadata service; local runs are for development and are refused in
-// production).
-const passThroughEnv = ["PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TZ", "SYSTEMROOT"];
-function childEnv(extra) {
-  const env = { AWS_EC2_METADATA_DISABLED: "true" };
-  for (const name of passThroughEnv) {
-    if (process.env[name] !== undefined) {
-      env[name] = process.env[name];
-    }
-  }
-  return { ...env, ...extra };
-}
-
+// git and the job script get childEnv (utils/childEnv.js), never process.env.
+// Local runs are for development and are refused in production.
 const maxConcurrentJobs = Number(process.env.LOCAL_MAX_CONCURRENT_JOBS || 1);
 const pythonBin = process.env.TALON_PYTHON_BIN || "python3";
 const gitBin = process.env.TALON_GIT_BIN || "git";

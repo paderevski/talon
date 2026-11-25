@@ -5,7 +5,7 @@
 // logger reads this when it writes, so setting it here is early enough.
 process.env.TALON_LOG_LEVEL ??= "error";
 import pg from "pg";
-import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
@@ -1754,9 +1754,9 @@ const tests = [
     assert(left.length === 0, `work folders left behind: ${left}`);
   }],
 
-  ["git fetcher: shallow clone of one branch, records the commit, drops .git", async () => {
+  ["git fetcher: shallow clone of one branch, records the commit, drops .git; git never sees the server's secrets", async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), "talon-git-"));
-    const saved = { count: process.env.GIT_CONFIG_COUNT, key: process.env.GIT_CONFIG_KEY_0, value: process.env.GIT_CONFIG_VALUE_0 };
+    const saved = { bin: process.env.TALON_GIT_BIN, secret: process.env.SESSION_SECRET };
     try {
       const work = path.join(dir, "work");
       const git = (...args) => execFileSync("git", args, { cwd: work, env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com" } }).toString().trim();
@@ -1768,10 +1768,12 @@ const tests = [
       const commit = git("rev-parse", "HEAD");
       execFileSync("git", ["clone", "-q", "--bare", work, path.join(dir, "owner", "repo.git")]);
 
-      // Point https://github.com/ at the local folder for this clone only.
-      process.env.GIT_CONFIG_COUNT = "1";
-      process.env.GIT_CONFIG_KEY_0 = `url.file://${dir}/.insteadOf`;
-      process.env.GIT_CONFIG_VALUE_0 = "https://github.com/";
+      // A git wrapper that points https://github.com/ at the local folder
+      // and records the environment it was given.
+      const wrapper = path.join(dir, "git-wrapper.sh");
+      await writeFile(wrapper, `#!/bin/sh\nenv > "${dir}/git-env.txt"\nexec git -c "url.file://${dir}/.insteadOf=https://github.com/" "$@"\n`, { mode: 0o755 });
+      process.env.TALON_GIT_BIN = wrapper;
+      process.env.SESSION_SECRET = "must-not-reach-git";
       const target = path.join(dir, "out");
       const result = await cloneInto({ host: "github.com", repoPath: "owner/repo", branch: "dev", dir: target });
       assert(result.commit === commit, `commit ${result.commit} != ${commit}`);
@@ -1784,8 +1786,11 @@ const tests = [
       let hostError = "";
       try { await cloneInto({ host: "evil host", repoPath: "a/b", branch: "main", dir: path.join(dir, "out3") }); } catch (error) { hostError = error.message; }
       assert(/host is invalid/.test(hostError), hostError);
+      const gitEnv = await readFile(path.join(dir, "git-env.txt"), "utf8");
+      assert(!/must-not-reach-git|SESSION_SECRET|DATABASE_URL|TALON_CREDENTIALS_KEY/.test(gitEnv), `git saw server secrets:\n${gitEnv}`);
+      assert(/^PATH=/m.test(gitEnv) && /^GIT_TERMINAL_PROMPT=0$/m.test(gitEnv), "git keeps PATH and its own settings");
     } finally {
-      for (const [name, value] of [["GIT_CONFIG_COUNT", saved.count], ["GIT_CONFIG_KEY_0", saved.key], ["GIT_CONFIG_VALUE_0", saved.value]]) {
+      for (const [name, value] of [["TALON_GIT_BIN", saved.bin], ["SESSION_SECRET", saved.secret]]) {
         if (value === undefined) delete process.env[name]; else process.env[name] = value;
       }
       await rm(dir, { recursive: true, force: true });

@@ -7,6 +7,14 @@ import { log } from "../utils/log.js";
 const sessionIdleMs = 7 * 24 * 60 * 60 * 1000; // 7 days of inactivity
 export const sessionCookieName = "talon.sid";
 
+// However active it is, a session ends this long after sign-in
+// (SESSION_MAX_HOURS, default 12: about one school day). Logins record
+// req.session.signedInAt; auth/middleware.js enforces it.
+export function sessionMaxMs(env = process.env) {
+  const hours = Number(env.SESSION_MAX_HOURS);
+  return (Number.isFinite(hours) && hours > 0 ? hours : 12) * 60 * 60 * 1000;
+}
+
 function getSessionSecret() {
   const configured = String(process.env.SESSION_SECRET ?? "").trim();
   if (configured) {
