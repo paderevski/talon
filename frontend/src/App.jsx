@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { GatewayError, cancelJob, entraLoginUrl, fetchAuthOptions, fetchComputeOptions, fetchCurrentUser, fetchJobFiles, fetchJobs, fetchConnections, fetchResults, hideJob, login, logout, setUnauthorizedHandler, submitJob, unhideJob } from "./api/client";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { GatewayError, cancelJob, entraLoginUrl, fetchAuthOptions, fetchComputeOptions, fetchCurrentUser, fetchJobFiles, fetchJobs, fetchConnections, fetchResults, fetchTeacherRoster, hideJob, login, logout, setUnauthorizedHandler, submitJob, unhideJob } from "./api/client";
 import NewJobPanel from "./components/NewJobPanel";
 import JobStatusPanel from "./components/JobStatusPanel";
 import ResultsPanel from "./components/ResultsPanel";
@@ -17,6 +17,8 @@ import { isPageHidden } from "./utils/polling";
 // the server). A student whose job running is turned off keeps My work to see
 // their past jobs, without New Job. A user with one section sees no section headings. The first
 // view of the first section is where the user lands after sign-in.
+// countKey names an entry in navCounts shown beside the item once loaded;
+// attention marks a count that asks for action when it is above zero.
 function getNavSections(user, teacherStudent) {
   if (!user) {
     return [];
@@ -29,17 +31,17 @@ function getNavSections(user, teacherStudent) {
       label: "Admin",
       views: [
         { id: "overview", label: "Overview" },
-        { id: "users", label: "Users" },
-        { id: "classes", label: "Classes" },
-        { id: "unassigned", label: "Not in a class" },
+        { id: "users", label: "Users", countKey: "users" },
+        { id: "classes", label: "Classes", countKey: "classes" },
+        { id: "unassigned", label: "Not in a class", countKey: "unassigned", attention: true },
         { id: "import", label: "Import" },
-        { id: "all-jobs", label: "All jobs" },
+        { id: "all-jobs", label: "All jobs", countKey: "allJobs" },
       ],
     });
   }
 
   if (hasRole(user, "teacher")) {
-    const views = [{ id: "students", label: "Students" }];
+    const views = [{ id: "students", label: "Students", countKey: "students" }];
     // A teacher looking at one student sees that student's jobs and results.
     if (teacherStudent) {
       views.push({ id: "student", label: teacherStudent.fullName || teacherStudent.username, nested: true });
@@ -52,7 +54,7 @@ function getNavSections(user, teacherStudent) {
       id: "work",
       label: "My work",
       views: [
-        { id: "jobs", label: "Jobs", showCount: true },
+        { id: "jobs", label: "Jobs", countKey: "jobs" },
         ...(user.canRunJobs ? [{ id: "new-job", label: "New Job" }] : []),
         { id: "connections", label: "Connections" },
       ],
@@ -61,6 +63,23 @@ function getNavSections(user, teacherStudent) {
 
   return sections;
 }
+
+// { active, total } for a jobs nav count: active is running or queued.
+function jobCounts(items) {
+  const active = items.filter((job) => job.status === "running" || job.status === "queued").length;
+  return { active, total: items.length };
+}
+
+// "2 / 14" while jobs are running or queued, else just the total.
+function formatNavCount(value) {
+  if (typeof value === "number") {
+    return String(value);
+  }
+  return value.active > 0 ? `${value.active} / ${value.total}` : String(value.total);
+}
+
+const roleOrder = ["admin", "teacher", "student"];
+const roleLabel = (role) => role.charAt(0).toUpperCase() + role.slice(1);
 
 function hasRole(user, role) {
   return Boolean(user?.roles?.includes(role));
@@ -164,10 +183,10 @@ function sessionRoles(user) {
   return roles.length ? roles : [normalizeUserRole(user.role)];
 }
 
-// Whose personal budget the header shows: anyone who runs jobs and pays for
+// Whose personal budget New Job and the account menu show: anyone who runs jobs and pays for
 // them. Admins are not limited by their balance yet, so it means nothing.
 // Everyone who runs jobs spends their own budget (admins too: no account
-// may go below zero), so the header shows it.
+// may go below zero), so it is shown.
 function showsPersonalBudget(user) {
   return Boolean(user?.canRunJobs);
 }
@@ -238,6 +257,12 @@ export default function App() {
   const githubConnection = connections?.find((c) => c.provider === "github") || null;
   const driveConnection = connections?.find((c) => c.provider === "google_drive") || null;
   const [selectedStudentView, setSelectedStudentView] = useState(null);
+  // Nav counts: { users, classes, unassigned, allJobs } from the admin lists,
+  // { students } from the teacher roster, { jobs, allJobs } from the job
+  // lists as they load (see noteJobCounts). Missing until loaded.
+  const [navCounts, setNavCounts] = useState({});
+  const mergeNavCounts = useCallback((counts) => setNavCounts((previous) => ({ ...previous, ...counts })), []);
+  const setStudentCount = useCallback((students) => mergeNavCounts({ students }), [mergeNavCounts]);
   const [budgetBalance, setBudgetBalance] = useState(null);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -365,6 +390,19 @@ export default function App() {
     });
   };
 
+  // The full list just loaded for `owner` updates that list's nav count: the
+  // user's own (Jobs) or everyone's (All jobs, admins). Other owners (a
+  // teacher's student view) have no nav count.
+  const noteJobCounts = (owner, result) => {
+    if (result.status !== "fulfilled") {
+      return;
+    }
+    const key = owner === ownUsername ? "jobs" : owner === "" ? "allJobs" : "";
+    if (key) {
+      mergeNavCounts({ [key]: jobCounts(result.value.items || []) });
+    }
+  };
+
   const load = async () => {
     void refreshBudget();
     const [jobsResult, allJobsResult, resultsResult] = await Promise.allSettled([
@@ -372,6 +410,7 @@ export default function App() {
       fetchJobs("all", { owner: viewedOwner }),
       fetchResults({ owner: viewedOwner })
     ]);
+    noteJobCounts(viewedOwner, allJobsResult);
 
     if (jobsResult.status === "fulfilled") {
       const items = jobsResult.value.items || [];
@@ -530,6 +569,7 @@ export default function App() {
       fetchJobs("all", { owner: viewedOwner }),
       fetchResults({ owner: viewedOwner }),
     ]);
+    noteJobCounts(viewedOwner, allJobsResult);
 
     if (jobsResult.status === "fulfilled") {
       const items = jobsResult.value.items || [];
@@ -619,10 +659,10 @@ export default function App() {
     }
   };
 
-  const statusCount = useMemo(() => visibleJobs.length, [visibleJobs]);
 
+  // Initials from the full name ("Ada Lovelace" -> AL), else the username.
   const avatar = useMemo(() => {
-    const value = authUser?.username ?? "";
+    const value = authUser?.fullName || authUser?.username || "";
     if (!value) {
       return "--";
     }
@@ -656,6 +696,24 @@ export default function App() {
     }
   }, [signedInUsername]);
   const isTeacher = hasRole(authUser, "teacher");
+  // The Students count shows from sign-in; the roster panel refreshes it when opened.
+  useEffect(() => {
+    setNavCounts({});
+    if (!signedInUsername || !isTeacher) {
+      return;
+    }
+    let cancelled = false;
+    fetchTeacherRoster()
+      .then((response) => {
+        if (!cancelled) {
+          setStudentCount(response?.roster?.students?.length ?? 0);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [signedInUsername, isTeacher, setStudentCount]);
   const hasTeacherStudentView = Boolean(selectedStudentView);
 
   useEffect(() => {
@@ -803,24 +861,34 @@ export default function App() {
           <div className="topbar-brand">Academies of Loudoun</div>
         </div>
         <div className="topbar-right">
-          {showsPersonalBudget(authUser) && budgetBalance !== null ? (
-            <div className="server-pill" title="Your remaining compute budget">
-              Budget {formatDollars(budgetBalance)}
-            </div>
-          ) : null}
           <div className={`user-menu-wrap${isUserMenuOpen ? " menu-open" : ""}`} ref={userMenuRef}>
+            {/* Opens on hover (CSS) and on click or keyboard (state, for touch and keys). */}
             <button
               type="button"
-              className="user-pill user-pill-button"
+              className="user-trigger"
               aria-haspopup="menu"
               aria-expanded={isUserMenuOpen}
               onClick={() => setIsUserMenuOpen((previous) => !previous)}
             >
-              <div className="user-avatar">{avatar}</div>
-              {authUser.fullName || authUser.username} · {authUser.roles.join(", ")}
+              <span className="user-avatar" aria-hidden="true">{avatar}</span>
+              <span className="user-trigger-text">
+                <span className="user-trigger-name">{authUser.fullName || authUser.username}</span>
+                <span className="user-trigger-role">{roleOrder.filter((role) => authUser.roles.includes(role)).map(roleLabel).join(" · ")}</span>
+              </span>
+              <svg className="user-trigger-chevron" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+                <path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             </button>
-            <div className="user-menu-hint">Click for account menu</div>
             <div className={`user-menu${isUserMenuOpen ? " open" : ""}`} role="menu">
+              <div className="user-menu-header">
+                <div className="user-menu-name">{authUser.fullName || authUser.username}</div>
+                <div className="user-menu-username">{authUser.username}</div>
+                {showsPersonalBudget(authUser) && budgetBalance !== null ? (
+                  <div className="user-menu-budget">
+                    Budget left <span className="user-menu-budget-value">{formatDollars(budgetBalance)}</span>
+                  </div>
+                ) : null}
+              </div>
               {authUser.localSignIn ? (
                 <button
                   type="button"
@@ -839,8 +907,9 @@ export default function App() {
                   Connections
                 </a>
               ) : null}
+              <div className="user-menu-divider" role="separator" />
               <button type="button" className="user-menu-item" role="menuitem" onClick={onLogout}>
-                Logout
+                Sign out
               </button>
             </div>
           </div>
@@ -866,9 +935,10 @@ export default function App() {
                   onClick={() => setIsMobileNavOpen(false)}
                 >
                   {view.label}
-                  {/* The count is of the loaded list, so only while that list is the user's own. */}
-                  {view.showCount && viewedOwner === ownUsername ? (
-                    <span className="nav-count">{statusCount}</span>
+                  {view.countKey && navCounts[view.countKey] != null ? (
+                    <span className={`nav-count${view.attention && navCounts[view.countKey] > 0 ? " attention" : ""}`}>
+                      {formatNavCount(navCounts[view.countKey])}
+                    </span>
                   ) : null}
                 </a>
               ))}
@@ -888,10 +958,10 @@ export default function App() {
               teacher or an admin if you need it back.
             </div>
           ) : null}
-          {isAdmin ? <AdminConsole authUser={authUser} view={activeView} sub={route.sub} /> : null}
+          {isAdmin ? <AdminConsole authUser={authUser} view={activeView} sub={route.sub} onCounts={mergeNavCounts} /> : null}
 
           {isTeacher && activeView === "students" ? (
-            <TeacherStudentsPanel authUser={authUser} onOpenStudentView={openStudentView} onBudgetChanged={() => void refreshBudget()} />
+            <TeacherStudentsPanel authUser={authUser} onOpenStudentView={openStudentView} onBudgetChanged={() => void refreshBudget()} onStudentCount={setStudentCount} />
           ) : null}
 
           {isTeacher && activeView === "student" && hasTeacherStudentView ? (

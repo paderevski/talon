@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { getUsersRepository } from "../repositories/usersRepository.js";
+import { getJobsRepository } from "../repositories/jobsRepository.js";
 import {
   addClassMember,
   assignStudentsToClass,
@@ -8,6 +9,7 @@ import {
   deleteUnusedUser,
   adjustBudget,
   budgetSummary,
+  userBudgetDetails,
   listClasses,
   listUsers,
   removeClassMember,
@@ -24,6 +26,7 @@ import { log } from "../utils/log.js";
 // Mounted behind requireRole("admin") in server.js.
 const router = Router();
 const usersRepository = await getUsersRepository();
+const jobsRepository = await getJobsRepository();
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -50,6 +53,14 @@ function handle(fn) {
     }
   };
 }
+
+// Everyone's visible jobs for the All jobs nav count: { running, queued, total }.
+// A count query, not the job list (which syncs each job with its instance).
+router.get("/job-counts", async (_req, res) => {
+  const byStatus = await jobsRepository.countByStatus();
+  const total = Object.values(byStatus).reduce((sum, n) => sum + n, 0);
+  return res.json({ running: byStatus.running || 0, queued: byStatus.queued || 0, total });
+});
 
 router.get("/roster", async (_req, res) => {
   const roster = await usersRepository.listAdminRoster();
@@ -170,12 +181,21 @@ router.delete("/classes/:classId/members/:userId", handle(async (req, res) => {
 }));
 
 router.post("/budget/adjustments", handle(async (req, res) => {
-  const { userId, target, direction, amount, note } = req.body ?? {};
+  const { userId, target, direction, amount, note, fromTeacherId } = req.body ?? {};
   if (target !== "school" && !uuidPattern.test(String(userId ?? ""))) {
     return res.status(400).json({ message: "Choose a user" });
   }
-  await adjustBudget({ userId, target, direction, amount, note }, req.user.id);
+  if (fromTeacherId != null && !uuidPattern.test(String(fromTeacherId))) {
+    return res.status(400).json({ message: "Choose a teacher" });
+  }
+  await adjustBudget({ userId, target, direction, amount, note, fromTeacherId: fromTeacherId ? String(fromTeacherId).toLowerCase() : null }, req.user.id);
   return res.status(201).json({ ok: true });
+}));
+
+// One user's budget panel: balances, this school year, set-aside money, the
+// teachers whose pools can fund them, and the School balance.
+router.get("/users/:userId/budget", handle(async (req, res) => {
+  return res.json(await userBudgetDetails(req.params.userId));
 }));
 
 // Where the money is now, and the yearly budget and spending between

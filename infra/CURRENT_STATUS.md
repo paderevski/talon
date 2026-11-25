@@ -1,6 +1,6 @@
 # Talon infra - current status
 
-_Last updated: 2026-11-25 (money model merged, not deployed; nav grouped by role and a per-user job-running setting, deployed; stale items across this file corrected the same day). Earlier updates: "Latest (2026-11-24)" below, the "Next up" items, and "History" at the end. The account-level items in "Gaps to production" were last reviewed 2026-10-25, with corrections through 2026-11-25._
+_Last updated: 2026-11-25 (UI pass and admin budget panel merged, not deployed; money model merged, not deployed; nav grouped by role and a per-user job-running setting, deployed; stale items across this file corrected the same day). Earlier updates: "Latest (2026-11-24)" below, the "Next up" items, and "History" at the end. The account-level items in "Gaps to production" were last reviewed 2026-10-25, with corrections through 2026-11-25._
 Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 (gitignored). Architecture doc: `docs/talon-architecture-summary-v8.docx`
 (local, gitignored; 2026-11-05, describes the system as built, with where
@@ -47,6 +47,37 @@ compute in Talon, not the AWS bill. Deleting a never-used user gives a
 starting budget back to School. After deploy: add the 2026-27 budget to
 School before funding anyone (School starts at $0; earlier pool grants are
 not counted as this year's budget).
+
+Merged, **not deployed** (branch `nav-section-styling`, no migration):
+**UI pass and admin budget panel.**
+
+- Nav: section headings with items indented under them; counts on Users,
+  Classes, Not in a class (amber above zero), Teaching -> Students, Jobs
+  and All jobs ("active / total", active = running or queued; All jobs
+  from `GET /api/admin/job-counts`, a count query without the per-job
+  execution sync the job list does).
+- Account menu (top right) opens on hover or click and shows the budget
+  left; the top bar budget pill is gone. New Job shows "Budget left" and
+  "This job, at most" in its header; its fields sit on one 12-column grid.
+  Dropdowns render in-page below the field where the browser supports
+  `appearance: base-select` (Chrome/Edge); others keep native menus.
+- Users: Edit and the new budget panel open as an expanded row under the
+  user. Users -> Adjust (students, teachers and now admins: an admin's
+  own budget is a personal account funded from School, no separate admin
+  account) shows budget left, received and spent this school year, money
+  set aside for running jobs, the student's teachers' pools and School,
+  then Add or Take back with a note, a preview and a confirm button.
+  Money can come from (or go back to) School or one of the student's
+  own teachers' pools (`fromTeacherId` on
+  `POST /api/admin/budget/adjustments`; the teacher must teach the student
+  in an active class). Details: `GET /api/admin/users/:id/budget`.
+- Guards: removing the teacher role is refused while the pool has money,
+  and disabling an account is refused while its own budget or pool has
+  money (409 naming the amounts; the UI warns and opens Take back). The
+  production demo-account check still disables demo users unconditionally.
+- Still to do: Teaching -> Students keeps the old inline add/subtract
+  control (to rethink with "teaching mode"); no "Admins' own budgets"
+  line on Overview yet.
 
 Open items from 2026-11-24 (Entra unexpected user, WAF blocking, GuardDuty
 and the rest) are unchanged: see the list below.
@@ -1493,7 +1524,8 @@ budget; preview first, all-or-nothing, up to 500 rows, new classes created,
 existing usernames left alone but still added to the class; generated
 passwords returned once as a downloadable CSV; `rosterImport.js`), teacher
 "add from pool" per student, and self-service change password (user menu). API:
-`/api/admin/users|classes|budget/adjustments`, `/api/teacher/allocations`,
+`/api/admin/users|classes|budget/adjustments`, `/api/admin/users/:id/budget`,
+`/api/admin/job-counts`, `/api/teacher/allocations`,
 `/api/auth/password`; logic in `backend/src/services/management.js`. Still to do:
 
 - ~~Class sections~~ done (migration 009, merged to `main`, d84af17):

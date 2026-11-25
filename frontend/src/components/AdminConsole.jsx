@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { fetchAdminClasses, fetchAdminUsers, fetchBudgetSummary } from "../api/client";
+import { fetchAdminClasses, fetchAdminJobCounts, fetchAdminUsers, fetchBudgetSummary } from "../api/client";
 import AdminRosterPanel from "./AdminRosterPanel";
 import AdminUsersPanel from "./AdminUsersPanel";
 import AdminClassesPanel from "./AdminClassesPanel";
 import AdminImportPanel from "./AdminImportPanel";
-import AdminUnassignedPanel from "./AdminUnassignedPanel";
+import AdminUnassignedPanel, { unassignedStudents } from "./AdminUnassignedPanel";
 import AdminMoneyPanel from "./AdminMoneyPanel";
 import { SchoolBalanceContext } from "./schoolBalance";
 
@@ -12,7 +12,9 @@ import { SchoolBalanceContext } from "./schoolBalance";
 // calls reload() so every view (and the overview counts) stays in step.
 // Renders only the admin view named by `view` (overview, users, classes,
 // unassigned, import); `sub` picks the users tab. Other views render nothing here.
-export default function AdminConsole({ authUser, view, sub }) {
+// onCounts: after each load, the nav counts { users, classes, unassigned }
+// and { allJobs: { active, total } }.
+export default function AdminConsole({ authUser, view, sub, onCounts }) {
   const [users, setUsers] = useState([]);
   const [classes, setClasses] = useState([]);
   // The School account's balance: the most an admin control can add.
@@ -27,8 +29,15 @@ export default function AdminConsole({ authUser, view, sub }) {
     Promise.all([fetchAdminUsers(), fetchAdminClasses(), fetchBudgetSummary()])
       .then(([usersResponse, classesResponse, summaryResponse]) => {
         if (!cancelled) {
-          setUsers(usersResponse.users || []);
-          setClasses(classesResponse.classes || []);
+          const nextUsers = usersResponse.users || [];
+          const nextClasses = classesResponse.classes || [];
+          setUsers(nextUsers);
+          setClasses(nextClasses);
+          onCounts?.({
+            users: nextUsers.length,
+            classes: nextClasses.length,
+            unassigned: unassignedStudents(nextUsers).length,
+          });
           setSchoolBalance(typeof summaryResponse?.summary?.school === "number" ? summaryResponse.summary.school : null);
           setError("");
         }
@@ -38,6 +47,14 @@ export default function AdminConsole({ authUser, view, sub }) {
           setError(nextError.message || "Unable to load users and classes");
         }
       });
+    // Separate from the lists above: a failed count only leaves the nav without it.
+    fetchAdminJobCounts()
+      .then((counts) => {
+        if (!cancelled) {
+          onCounts?.({ allJobs: { active: counts.running + counts.queued, total: counts.total } });
+        }
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };

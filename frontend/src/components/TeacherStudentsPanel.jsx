@@ -35,8 +35,8 @@ export function ClassTables({ classes, onOpenStudentView, onAllocate, poolBalanc
             <tr>
               <th>Student</th>
               <th>Username</th>
-              <th>Allocated</th>
-              <th>Remaining</th>
+              <th className="cell-num">Allocated</th>
+              <th className={onAllocate ? undefined : "cell-num"}>Remaining</th>
               <th>Workspace</th>
             </tr>
           </thead>
@@ -45,8 +45,8 @@ export function ClassTables({ classes, onOpenStudentView, onAllocate, poolBalanc
               <tr key={student.username}>
                 <td>{student.fullName}</td>
                 <td className="mono-sm">{student.username}</td>
-                <td>{formatDollars(student.quota)}</td>
-                <td>
+                <td className="cell-num">{formatDollars(student.quota)}</td>
+                <td className={onAllocate ? undefined : "cell-num"}>
                   {onAllocate ? (
                     <BudgetAdjuster
                       who={student.fullName}
@@ -78,7 +78,8 @@ export function ClassTables({ classes, onOpenStudentView, onAllocate, poolBalanc
 }
 
 // onBudgetChanged: the teacher's own budget changed (the header shows it).
-export default function TeacherStudentsPanel({ authUser, onOpenStudentView, onBudgetChanged }) {
+// onStudentCount: the roster loaded; reports its student count (for the nav).
+export default function TeacherStudentsPanel({ authUser, onOpenStudentView, onBudgetChanged, onStudentCount }) {
   const [roster, setRoster] = useState(emptyRoster);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
@@ -135,7 +136,9 @@ export default function TeacherStudentsPanel({ authUser, onOpenStudentView, onBu
           return;
         }
 
-        setRoster(response?.roster || emptyRoster);
+        const nextRoster = response?.roster || emptyRoster;
+        setRoster(nextRoster);
+        onStudentCount?.(nextRoster.students.length);
       })
       .catch((nextError) => {
         if (cancelled) {

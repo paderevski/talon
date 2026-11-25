@@ -436,8 +436,14 @@ export const assignAdminStudents = (classId, userIds, budget) =>
 // direction: "increase" | "decrease"; amount in dollars. target "school"
 // (no userId): add to the yearly budget or correct it. target "personal" |
 // "pool": from the School account, or back to it.
+// One user's budget panel: { year, personal, pool, teachers, school } (dollars).
+export const fetchAdminUserBudget = (id) => requestJson("GET", `/api/admin/users/${encodeURIComponent(id)}/budget`);
+// { userId, target: "personal" | "pool" | "school", direction: "increase" | "decrease",
+//   amount, note?, fromTeacherId? (personal only: that teacher's pool instead of School) }
 export const adjustAdminBudget = (adjustment) =>
   requestJson("POST", "/api/admin/budget/adjustments", adjustment);
+// Everyone's visible jobs: { running, queued, total } (the All jobs nav count).
+export const fetchAdminJobCounts = () => requestJson("GET", "/api/admin/job-counts");
 // Money now and the budget and spending between from and to (YYYY-MM-DD;
 // both omitted: the current school year).
 export const fetchBudgetSummary = ({ from = "", to = "" } = {}) => {

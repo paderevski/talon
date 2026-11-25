@@ -202,11 +202,16 @@ export async function run({ baseUrl }) {
   const pupilJar = createCookieJar();
   await login(pupilJar, baseUrl, "mgmt_pupil", pupil.payload.password);
   assert((await pupilJar.fetch(`${baseUrl}/api/auth/me`)).ok, "Expected pupil to be signed in");
+  // Money must go back before disabling (refused while the pupil holds $9).
+  const refusedDisable = await send(admin, baseUrl, "PATCH", `/api/admin/users/${pupil.payload.id}`, { status: "disabled" });
+  assert(refusedDisable.status === 409, `Expected disabling with money left refused, got ${refusedDisable.status}`);
+  assert((await take("mgmt_pupil", 9)).status === 201, "Expected the pupil's $9 back in the pool");
   await send(admin, baseUrl, "PATCH", `/api/admin/users/${pupil.payload.id}`, { status: "disabled" });
   assert((await pupilJar.fetch(`${baseUrl}/api/auth/me`)).status === 401, "Expected disabled user's session to end");
   assert((await login(createCookieJar(), baseUrl, "mgmt_pupil", pupil.payload.password)).status === 401,
     "Expected disabled user to be unable to sign in");
   await send(admin, baseUrl, "PATCH", `/api/admin/users/${pupil.payload.id}`, { status: "active" });
+  assert((await allocate("mgmt_pupil", 9)).status === 201, "Expected the $9 handed back after re-enabling");
 
   const reset = await send(admin, baseUrl, "POST", `/api/admin/users/${pupil.payload.id}/reset-password`);
   assert(reset.status === 200 && reset.payload.password !== pupil.payload.password, "Expected a new password");
