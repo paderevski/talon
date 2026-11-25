@@ -1,5 +1,6 @@
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import net from "node:net";
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
@@ -176,27 +177,56 @@ export function fixtureGitBin() {
   return gitWrapper;
 }
 
-// fetch() refuses the Fetch standard's "bad ports"; 6000 (X11) is the only
-// one in this range, and a backend there never passes its health check.
-const fetchBlockedPorts = new Set([6000]);
+// fetch() refuses the Fetch standard's "bad ports" (6000 is X11, and so on);
+// a backend on one never passes its health check. All are below the OS's
+// ephemeral range, so this is a guard only.
+const fetchBlockedPorts = new Set([6000, 6665, 6666, 6667, 6668, 6669, 6697, 10080]);
 
-function pickPort() {
-  const min = 5500;
-  const max = 6500;
-  let port;
-  do {
-    port = Math.floor(Math.random() * (max - min + 1)) + min;
-  } while (fetchBlockedPorts.has(port));
-  return port;
+// A port nothing is listening on, from the OS. A random pick could land on a
+// test backend that is still running: the new one then dies with EADDRINUSE
+// while the health check gets a 200 from the old one, and the test quietly
+// talks to the wrong server (seen in CI as ec2-jobs-access getting the
+// EC2-off menu).
+async function pickFreePort() {
+  for (;;) {
+    const port = await new Promise((resolve, reject) => {
+      const probe = net.createServer();
+      probe.unref();
+      probe.once("error", reject);
+      probe.listen(0, "127.0.0.1", () => {
+        const { port: assigned } = probe.address();
+        probe.close(() => resolve(assigned));
+      });
+    });
+    if (!fetchBlockedPorts.has(port)) {
+      return port;
+    }
+  }
 }
 
+// Spawns the backend on a free port and waits until it is healthy. If the
+// process exits first (another process took the port between the probe and
+// the bind, or a startup error), it fails at once with the backend's output
+// instead of waiting for the health-check timeout; a port clash is retried.
 export async function startBackendForTests({ env: extraEnv = {}, reset = true } = {}) {
-  const port = pickPort();
-  const baseUrl = `http://127.0.0.1:${port}`;
-
   if (reset) {
     await resetTestDatabase();
   }
+
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await spawnBackend(extraEnv);
+    } catch (error) {
+      if (!error.portInUse || attempt >= 3) {
+        throw error;
+      }
+    }
+  }
+}
+
+async function spawnBackend(extraEnv) {
+  const port = await pickFreePort();
+  const baseUrl = `http://127.0.0.1:${port}`;
 
   const child = spawn("node", ["src/server.js"], {
     cwd: backendRoot,
@@ -239,16 +269,36 @@ export async function startBackendForTests({ env: extraEnv = {}, reset = true } 
     bootOutput += chunk.toString("utf8");
   });
 
-  await waitFor(
+  const exited = new Promise((resolve) => child.once("exit", (code, signal) => resolve({ code, signal })));
+  let hasExited = false;
+  exited.then(() => {
+    hasExited = true;
+  });
+
+  const healthy = waitFor(
     async () => {
       const response = await fetch(`${baseUrl}/api/health`);
       return response.ok;
     },
     { timeoutMs: 30_000, intervalMs: 250, label: "backend health" },
-  ).catch((error) => {
+  );
+  // waitFor keeps polling if this one wins; a no-op catch keeps its later
+  // timeout from surfacing as an unhandled rejection.
+  healthy.catch(() => {});
+
+  try {
+    await Promise.race([
+      healthy,
+      exited.then(({ code, signal }) => {
+        throw new Error(`Backend exited before it was healthy (code ${code}, signal ${signal})`);
+      }),
+    ]);
+  } catch (error) {
     child.kill("SIGTERM");
-    throw new Error(`${error.message}\nBackend output:\n${bootOutput}`);
-  });
+    const failure = new Error(`${error.message}\nBackend output:\n${bootOutput}`);
+    failure.portInUse = /EADDRINUSE/.test(bootOutput);
+    throw failure;
+  }
 
   return {
     port,
@@ -256,17 +306,14 @@ export async function startBackendForTests({ env: extraEnv = {}, reset = true } 
     // Everything the backend has written to stdout/stderr so far.
     output: () => bootOutput,
     stop: async () => {
-      if (child.killed) {
+      if (hasExited) {
         return;
       }
 
       child.kill("SIGTERM");
-      await Promise.race([
-        new Promise((resolve) => child.once("exit", resolve)),
-        delay(5_000),
-      ]);
+      await Promise.race([exited, delay(5_000)]);
 
-      if (!child.killed) {
+      if (!hasExited) {
         child.kill("SIGKILL");
       }
     },
