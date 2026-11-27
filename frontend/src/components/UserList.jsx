@@ -248,7 +248,7 @@ export default function UserList({
                       </button>
                     </td>
                   ) : null}
-                  <td className="mono-sm">
+                  <td className="num meta-cell">
                     {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleDateString() : "never"}
                   </td>
                   <td>

@@ -795,9 +795,8 @@ export default function App() {
     return (
       <div className="login-shell">
         <div className="login-card">
-          <p className="login-kicker">Welcome</p>
+          <img src={talonLogo} alt="" className="login-logo" />
           <h1 className="login-title">Sign in to Talon</h1>
-          <img src={talonLogo} alt="Talon" className="login-logo" />
 
           {authOptions.entra ? (
             <>
@@ -858,7 +857,7 @@ export default function App() {
           >
             Menu
           </button>
-          <div className="topbar-brand">Academies of Loudoun</div>
+          <div className="topbar-brand">Talon</div>
         </div>
         <div className="topbar-right">
           <div className={`user-menu-wrap${isUserMenuOpen ? " menu-open" : ""}`} ref={userMenuRef}>

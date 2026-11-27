@@ -70,7 +70,7 @@ export default function ProfileDialog({ user, initials, onClose, onSaved }) {
         <div className="form-group">
           <label className="form-label" htmlFor="avatar-style">Avatar style</label>
           <div className="profile-style-row">
-            <select id="avatar-style" className="form-input" value={styleId} onChange={(event) => setStyleId(event.target.value)}>
+            <select id="avatar-style" className="form-select" value={styleId} onChange={(event) => setStyleId(event.target.value)}>
               {avatarStyleList.map((item) => (
                 <option key={item.id} value={item.id}>{item.title}</option>
               ))}

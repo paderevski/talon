@@ -171,10 +171,10 @@ export default function JobStatusPanel({
                       {statusLabel(job.status)}
                     </span>
                   </td>
-                  <td className="mono-sm">{job.gpu && job.gpu !== "—" ? job.gpu : "Local"}</td>
-                  <td className="mono-sm">{formatSubmittedValue(job)}</td>
-                  <td className="mono-sm">{job.duration}</td>
-                  <td className="mono-sm">{String(job?.cost ?? "").trim() || "$0.00"}</td>
+                  <td>{job.gpu && job.gpu !== "—" ? job.gpu : "Local"}</td>
+                  <td className="num">{formatSubmittedValue(job)}</td>
+                  <td className="num">{job.duration}</td>
+                  <td className="num">{String(job?.cost ?? "").trim() || "$0.00"}</td>
                   <td>
                     <button
                       className="btn btn-secondary btn-sm"

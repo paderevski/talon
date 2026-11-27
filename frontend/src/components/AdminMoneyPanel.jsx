@@ -92,7 +92,7 @@ export default function AdminMoneyPanel({ refreshKey = 0, onChanged }) {
             {cards.map((card) => (
               <div key={card.label} className="result-card stat-card">
                 <div className="result-job-name">{card.label}</div>
-                <div className="result-meta-value mono-sm">{formatDollars(card.value)}</div>
+                <div className="result-meta-value num">{formatDollars(card.value)}</div>
                 <div className="form-hint">{card.hint}</div>
               </div>
             ))}

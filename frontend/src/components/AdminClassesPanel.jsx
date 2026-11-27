@@ -442,7 +442,7 @@ export default function AdminClassesPanel({ classes, users, onChanged }) {
                   <tr className={isOpen ? "row-open" : undefined}>
                     <td className="cell-strong">{row.classItem.name}</td>
                     <td>{formatBlock(row.classItem.block) || <span className="form-hint">No block</span>}</td>
-                    <td className="mono-sm">{row.classItem.term || "—"}</td>
+                    <td>{row.classItem.term || "—"}</td>
                     <td>
                       {row.teacher ? (
                         <>

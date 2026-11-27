@@ -183,7 +183,7 @@ export default function AdminImportPanel({ onChanged }) {
               <tbody>
                 {preview.rows.map((row) => (
                   <tr key={row.line} className={row.action === "exists" ? "row-disabled" : undefined}>
-                    <td className="mono-sm">{row.line}</td>
+                    <td className="num">{row.line}</td>
                     <td>
                       {row.fullName}
                       <div className="form-hint mono-sm">{row.username}</div>
