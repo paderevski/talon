@@ -381,7 +381,7 @@ export default function AdminClassesPanel({ classes, users, onChanged }) {
 
       <div className="list-controls">
         <input
-          className="form-input"
+          className="form-input list-search"
           placeholder="Search class or teacher"
           aria-label="Search classes"
           value={search}
@@ -413,7 +413,7 @@ export default function AdminClassesPanel({ classes, users, onChanged }) {
             </span>
           ) : null}
           {isFormOpen ? null : (
-            <button type="button" className="btn btn-primary btn-sm" onClick={() => setIsFormOpen(true)}>
+            <button type="button" className="btn btn-primary" onClick={() => setIsFormOpen(true)}>
               Create class
             </button>
           )}
