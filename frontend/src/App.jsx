@@ -1019,6 +1019,7 @@ export default function App() {
                 jobActionError={jobActionError}
                 readOnly={activeView === "student"}
                 showOwner={activeView === "all-jobs"}
+                title={activeView === "all-jobs" ? "All jobs" : "Jobs"}
               />
               <ResultsPanel results={visibleResults} jobs={visibleJobs} filesByJobId={filesByJobId} />
             </>
