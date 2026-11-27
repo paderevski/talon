@@ -3,7 +3,8 @@ import {
   jobStatusFilters,
   statusLabel,
 } from "talon-shared/status";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { getJobFileDownloadUrl } from "../api/client";
 import FocusScrollRegion from "./FocusScrollRegion";
 import JobLogsPanel from "./JobLogsPanel";
 
@@ -63,6 +64,68 @@ const sorters = {
   cost: (a, b) => (a.costCents ?? 0) - (b.costCents ?? 0),
 };
 
+// A job's output files: live ones while it runs, else the stored result's.
+function outputFiles(job, result, filesByJobId) {
+  const files = filesByJobId?.[job.id] || result?.files || [];
+  return files.map((file, index) => {
+    const value = typeof file === "string" ? { name: file } : file || {};
+    return {
+      key: `${value.name || "file"}-${index}`,
+      name: value.name || "unnamed",
+      size: value.size || "",
+      source: value.source || "output_dir",
+    };
+  });
+}
+
+// The expanded row: what the job produced (files, or why it failed) and how it ran.
+function JobDetail({ job, result, filesByJobId }) {
+  const files = outputFiles(job, result, filesByJobId);
+  const error = result?.error || job.error || "";
+  const isActive = job.status === "queued" || job.status === "running";
+  const branch = job.source?.ref?.branch;
+  const facts = [
+    ["Source", job.source?.label, "mono"],
+    branch ? ["Branch", branch, "mono"] : null,
+    job.folder ? ["Folder", job.folder, "mono"] : null,
+    job.entryScript ? ["Entry script", [job.entryScript, job.scriptArgs].filter(Boolean).join(" "), "mono"] : null,
+    ["Submitted", submittedTitle(job) || "—", "num"],
+  ].filter(Boolean);
+
+  return (
+    <div className="job-detail">
+      {error ? <p className="job-detail-error">{error}</p> : null}
+      <div className="job-detail-files">
+        <h3 className="job-detail-title">Output files</h3>
+        {files.length ? (
+          <ul className="job-file-list">
+            {files.map((file) => (
+              <li key={file.key}>
+                <a className="job-file-name" href={getJobFileDownloadUrl(job.id, file.name, file.source)}>
+                  {file.name}
+                </a>
+                <span className="job-file-size num">{file.size}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="form-hint">
+            {isActive ? "Files appear here as the job writes them." : "This job saved no output files."}
+          </p>
+        )}
+      </div>
+      <dl className="job-detail-facts">
+        {facts.map(([label, value, className]) => (
+          <Fragment key={label}>
+            <dt>{label}</dt>
+            <dd className={className}>{value}</dd>
+          </Fragment>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
 // Count per tab from the full list (hidden jobs are not in it, so Hidden has no count).
 function tabCounts(allJobs) {
   const counts = { all: allJobs.length };
@@ -75,6 +138,8 @@ function tabCounts(allJobs) {
 export default function JobStatusPanel({
   jobs,
   allJobs = [],
+  results = [],
+  filesByJobId = {},
   focusJobId = null,
   activeFilter,
   setActiveFilter,
@@ -93,6 +158,22 @@ export default function JobStatusPanel({
   const [sort, setSort] = useState({ key: "submitted", dir: -1 });
   const counts = useMemo(() => tabCounts(allJobs), [allJobs]);
   const tabsRef = useRef(null);
+  // Jobs whose row is open to show its results; several may be open.
+  const [openJobIds, setOpenJobIds] = useState(() => new Set());
+  const resultsByJobId = useMemo(
+    () => new Map(results.filter((result) => result?.jobId).map((result) => [result.jobId, result])),
+    [results],
+  );
+  const columnCount = 9 + (showOwner ? 1 : 0) - (readOnly ? 1 : 0);
+
+  function toggleOpen(jobId) {
+    setOpenJobIds((current) => {
+      const next = new Set(current);
+      if (next.has(jobId)) next.delete(jobId);
+      else next.add(jobId);
+      return next;
+    });
+  }
 
   // On a phone the tab strip scrolls sideways: keep the selected tab in view.
   useEffect(() => {
@@ -210,14 +291,28 @@ export default function JobStatusPanel({
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td className="empty-row" colSpan={9 + (showOwner ? 1 : 0) - (readOnly ? 1 : 0)}>
+                  <td className="empty-row" colSpan={columnCount}>
                     {search.trim() ? "No jobs match the search." : `No ${activeFilter === "all" ? "" : `${statusLabel(activeFilter).toLowerCase()} `}jobs.`}
                   </td>
                 </tr>
               ) : null}
-              {rows.map((job) => (
-                <tr key={job.id}>
-                  <td className="job-name-cell">{job.name}</td>
+              {rows.map((job) => {
+                const isOpen = openJobIds.has(job.id);
+                return (
+                <Fragment key={job.id}>
+                <tr className={isOpen ? "row-open" : undefined}>
+                  <td className="job-name-cell">
+                    <button
+                      type="button"
+                      className="job-toggle"
+                      aria-expanded={isOpen}
+                      aria-controls={`job-detail-${job.id}`}
+                      onClick={() => toggleOpen(job.id)}
+                    >
+                      <span className="job-toggle-icon" aria-hidden="true">▸</span>
+                      {job.name}
+                    </button>
+                  </td>
                   {showOwner ? <td className="mono-sm">{job.ownerUsername}</td> : null}
                   <td className="repo-cell">{job.source?.label}</td>
                   <td>
@@ -260,7 +355,16 @@ export default function JobStatusPanel({
                   </td>
                   )}
                 </tr>
-              ))}
+                {isOpen ? (
+                  <tr className="job-detail-row" id={`job-detail-${job.id}`}>
+                    <td colSpan={columnCount}>
+                      <JobDetail job={job} result={resultsByJobId.get(job.id)} filesByJobId={filesByJobId} />
+                    </td>
+                  </tr>
+                ) : null}
+                </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </FocusScrollRegion>

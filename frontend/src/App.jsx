@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GatewayError, cancelJob, entraLoginUrl, fetchAuthOptions, fetchComputeOptions, fetchCurrentUser, fetchJobFiles, fetchJobs, fetchConnections, fetchResults, fetchTeacherRoster, hideJob, login, logout, setUnauthorizedHandler, submitJob, unhideJob } from "./api/client";
 import NewJobPanel from "./components/NewJobPanel";
 import JobStatusPanel from "./components/JobStatusPanel";
-import ResultsPanel from "./components/ResultsPanel";
 import ConnectionsPanel from "./components/ConnectionsPanel";
 import AdminConsole from "./components/AdminConsole";
 import ChangePasswordDialog from "./components/ChangePasswordDialog";
@@ -1005,24 +1004,23 @@ export default function App() {
           ) : null}
 
           {activeView === "jobs" || activeView === "student" || activeView === "all-jobs" ? (
-            <>
-              <JobStatusPanel
-                jobs={visibleJobs}
-                allJobs={visibleAllJobs}
-                focusJobId={activeView === "jobs" ? focusJobId : null}
-                activeFilter={activeFilter}
-                setActiveFilter={setActiveFilter}
-                statusAvailability={visibleStatusAvailability}
-                onCancelJob={onCancelJob}
-                onHideJob={onHideJob}
-                onUnhideJob={onUnhideJob}
-                jobActionError={jobActionError}
-                readOnly={activeView === "student"}
-                showOwner={activeView === "all-jobs"}
-                title={activeView === "all-jobs" ? "All jobs" : "Jobs"}
-              />
-              <ResultsPanel results={visibleResults} jobs={visibleJobs} filesByJobId={filesByJobId} />
-            </>
+            <JobStatusPanel
+              jobs={visibleJobs}
+              allJobs={visibleAllJobs}
+              results={visibleResults}
+              filesByJobId={filesByJobId}
+              focusJobId={activeView === "jobs" ? focusJobId : null}
+              activeFilter={activeFilter}
+              setActiveFilter={setActiveFilter}
+              statusAvailability={visibleStatusAvailability}
+              onCancelJob={onCancelJob}
+              onHideJob={onHideJob}
+              onUnhideJob={onUnhideJob}
+              jobActionError={jobActionError}
+              readOnly={activeView === "student"}
+              showOwner={activeView === "all-jobs"}
+              title={activeView === "all-jobs" ? "All jobs" : "Jobs"}
+            />
           ) : null}
 
           {activeView === "new-job" ? (
