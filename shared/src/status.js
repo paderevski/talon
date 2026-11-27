@@ -1,12 +1,13 @@
 export const jobStatusValues = ["queued", "running", "completed", "failed"];
 
+// Job list tabs, in lifecycle order; Hidden last since it is set apart.
 export const jobStatusFilters = [
-  "completed",
   "running",
   "queued",
+  "completed",
   "failed",
-  "hidden",
   "all",
+  "hidden",
 ];
 
 export function statusLabel(value) {

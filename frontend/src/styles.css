@@ -336,7 +336,11 @@ body {
   font-weight: 600;
   white-space: nowrap;
 }
-.view-tab:hover { color: var(--text-primary); }
+/* Tabs that switch a filter in place (Jobs) are buttons, not links. */
+button.view-tab { background: none; border: 0; border-bottom: 2px solid transparent; font: inherit; font-weight: 600; cursor: pointer; }
+.view-tab:disabled { color: var(--text-muted); cursor: default; opacity: 0.6; }
+.view-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.view-tab:hover:not(:disabled) { color: var(--text-primary); }
 .view-tab.active { color: var(--text-primary); border-bottom-color: var(--accent); }
 .view-tab-count {
   font-size: var(--fs-sm);
@@ -567,11 +571,6 @@ h3.panel-title { font-size: var(--fs-md); }
 .table-scroll-region::-webkit-scrollbar-corner {
   background: transparent;
 }
-.table-bar {
-  padding: 10px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-card);
-}
 .job-log-panel {
   margin-top: 12px;
   border: 1px solid var(--border);
@@ -597,62 +596,6 @@ h3.panel-title { font-size: var(--fs-md); }
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-.filter-chip {
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-secondary);
-  border-radius: 6px;
-  padding: 5px 9px;
-  cursor: pointer;
-}
-.filter-chip-wrap {
-  position: relative;
-  display: inline-block;
-  margin-right: 8px;
-}
-.job-status-filters-mobile {
-  display: none;
-}
-.filter-chip.active {
-  border-color: var(--accent);
-  color: var(--accent-text);
-  background: var(--accent-glow);
-}
-.filter-chip:disabled {
-  color: var(--text-muted);
-  border-color: var(--border);
-  background: transparent;
-  opacity: 0.62;
-  cursor: default;
-}
-.filter-chip-wrap.has-tooltip::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% + 8px);
-  transform: translate(-50%, 2px);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-card);
-  color: var(--text-secondary);
-  white-space: nowrap;
-  font-size: var(--fs-xs);
-  padding: 4px 8px;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 90ms ease, transform 90ms ease;
-  transition-delay: 140ms;
-  z-index: 12;
-}
-.filter-chip-wrap.has-tooltip:hover::after,
-.filter-chip-wrap.has-tooltip:focus-within::after {
-  opacity: 1;
-  transform: translate(-50%, 0);
-  transition-delay: 0ms;
-}
-.job-status-table-card {
-  overflow: visible;
 }
 
 table {
@@ -831,25 +774,6 @@ td:last-child, th:last-child { border-right: none; }
     display: none;
   }
 
-  .job-status-filters-desktop {
-    display: none;
-  }
-
-  .job-status-filters-mobile {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .job-status-filters-mobile .form-label {
-    margin: 0;
-    white-space: nowrap;
-  }
-
-  .job-status-filters-mobile .form-select {
-    min-width: 140px;
-    padding: 6px 8px;
-  }
 
   #job-status table th:nth-child(2),
   #job-status table td:nth-child(2),
@@ -1029,6 +953,7 @@ td:last-child, th:last-child { border-right: none; }
   padding: 0;
 }
 .sort-btn:hover { color: var(--accent-text); }
+.empty-row { color: var(--text-secondary); text-align: center; padding: 20px 10px; }
 .panel-head .panel-count { color: var(--text-muted); font-size: var(--fs-base); font-weight: 400; margin-left: 8px; }
 
 /* GitHub panel: one text size (13px) throughout; links styled as buttons
