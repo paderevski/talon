@@ -6,7 +6,7 @@ import {
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { getJobFileDownloadUrl } from "../api/client";
 import FocusScrollRegion from "./FocusScrollRegion";
-import JobLogsPanel from "./JobLogsPanel";
+import JobLog, { DownloadLogLink, JobLogDialog } from "./JobLog";
 
 // Under a day: "just now", "12m ago", "5h ago"; older: "Nov 7" ("Nov 7, 2025"
 // in another year). The full date and time is the cell's tooltip.
@@ -78,11 +78,54 @@ function outputFiles(job, result, filesByJobId) {
   });
 }
 
-// The expanded row: what the job produced (files, or why it failed) and how it ran.
-function JobDetail({ job, result, filesByJobId }) {
+const isLive = (job) => job.status === "queued" || job.status === "running";
+
+// The open row: Results (files, error, how it ran) or Logs, by tab.
+function JobDetail({ job, result, filesByJobId, tab, onTab, isPoppedOut, onExpand }) {
+  return (
+    <div className="job-detail-wrap">
+      <div className="job-detail-bar">
+        <div className="job-detail-tabs" role="tablist" aria-label={`${job.name} details`}>
+          {[["results", "Results"], ["logs", "Logs"]].map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={tab === id}
+              className={`view-tab${tab === id ? " active" : ""}`}
+              onClick={() => onTab(id)}
+            >
+              {label}
+              {id === "logs" && isLive(job) ? <span className="job-log-live">live</span> : null}
+            </button>
+          ))}
+        </div>
+        {tab === "logs" ? (
+          <div className="job-log-tools">
+            <DownloadLogLink job={job} />
+            {/* Stays enabled so focus can return here when the dialog closes. */}
+            <button type="button" className="btn btn-secondary btn-sm" onClick={onExpand}>
+              Expand
+            </button>
+          </div>
+        ) : null}
+      </div>
+      {tab === "results" ? (
+        <JobResults job={job} result={result} filesByJobId={filesByJobId} />
+      ) : isPoppedOut ? (
+        <p className="form-hint job-log-elsewhere">This log is open in the larger view.</p>
+      ) : (
+        <JobLog job={job} live={isLive(job)} />
+      )}
+    </div>
+  );
+}
+
+// What the job produced (files, or why it failed) and how it ran.
+function JobResults({ job, result, filesByJobId }) {
   const files = outputFiles(job, result, filesByJobId);
   const error = result?.error || job.error || "";
-  const isActive = job.status === "queued" || job.status === "running";
+  const isActive = isLive(job);
   const branch = job.source?.ref?.branch;
   const facts = [
     ["Source", job.source?.label, "mono"],
@@ -152,27 +195,33 @@ export default function JobStatusPanel({
   showOwner = false,
   title = "Jobs",
 }) {
-  const [logJobId, setLogJobId] = useState(null);
   const [search, setSearch] = useState("");
   // Newest first until a header is clicked.
   const [sort, setSort] = useState({ key: "submitted", dir: -1 });
   const counts = useMemo(() => tabCounts(allJobs), [allJobs]);
   const tabsRef = useRef(null);
-  // Jobs whose row is open to show its results; several may be open.
-  const [openJobIds, setOpenJobIds] = useState(() => new Set());
+  // Open rows and the tab each shows (jobId -> "results" | "logs"); several may be open.
+  const [openRows, setOpenRows] = useState(() => new Map());
+  // The job whose log is in the large view (Expand), if any.
+  const [poppedOutJobId, setPoppedOutJobId] = useState(null);
   const resultsByJobId = useMemo(
     () => new Map(results.filter((result) => result?.jobId).map((result) => [result.jobId, result])),
     [results],
   );
-  const columnCount = 9 + (showOwner ? 1 : 0) - (readOnly ? 1 : 0);
+  const columnCount = 8 + (showOwner ? 1 : 0) - (readOnly ? 1 : 0);
 
-  function toggleOpen(jobId) {
-    setOpenJobIds((current) => {
-      const next = new Set(current);
-      if (next.has(jobId)) next.delete(jobId);
-      else next.add(jobId);
+  // A running or queued job opens on its log; a finished one on its results.
+  function toggleOpen(job) {
+    setOpenRows((current) => {
+      const next = new Map(current);
+      if (next.has(job.id)) next.delete(job.id);
+      else next.set(job.id, isLive(job) ? "logs" : "results");
       return next;
     });
+  }
+
+  function setRowTab(jobId, tab) {
+    setOpenRows((current) => new Map(current).set(jobId, tab));
   }
 
   // On a phone the tab strip scrolls sideways: keep the selected tab in view.
@@ -197,8 +246,8 @@ export default function JobStatusPanel({
     setSort((current) => ({ key, dir: current.key === key ? -current.dir : firstDir }));
   }
 
-  const header = (key, label) => (
-    <th aria-sort={sort.key === key ? (sort.dir === 1 ? "ascending" : "descending") : "none"}>
+  const header = (key, label, className) => (
+    <th className={className} aria-sort={sort.key === key ? (sort.dir === 1 ? "ascending" : "descending") : "none"}>
       <button type="button" className="sort-btn" onClick={() => sortBy(key)}>
         {label}
         {sort.key === key ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
@@ -206,20 +255,20 @@ export default function JobStatusPanel({
     </th>
   );
   // Also look in all jobs: the status filter switches on its own (queued,
-  // running, completed) and must not close the panel of the job being watched.
-  const logJob = logJobId
-    ? jobs.find((job) => job.id === logJobId) || allJobs.find((job) => job.id === logJobId) || null
+  // running, completed) and must not close the large log view.
+  const poppedOutJob = poppedOutJobId
+    ? jobs.find((job) => job.id === poppedOutJobId) || allJobs.find((job) => job.id === poppedOutJobId) || null
     : null;
 
-  // A job just submitted: open its logs and progress, and bring them into view
+  // A job just submitted: open its row on the log and bring it into view
   // (after the new view's scroll to the top).
   useEffect(() => {
     if (!focusJobId) {
       return undefined;
     }
-    setLogJobId(focusJobId);
+    setOpenRows((current) => new Map(current).set(focusJobId, "logs"));
     const timer = setTimeout(() => {
-      document.getElementById("job-logs")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      document.getElementById(`job-row-${focusJobId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 300);
     return () => clearTimeout(timer);
   }, [focusJobId]);
@@ -276,15 +325,15 @@ export default function JobStatusPanel({
           <table>
             <thead>
               <tr>
+                {/* col-optional: hidden on phones. */}
                 {header("name", "Job")}
-                {showOwner ? header("owner", "Owner") : null}
-                {header("repo", "Repo")}
+                {showOwner ? header("owner", "Owner", "col-optional") : null}
+                {header("repo", "Repo", "col-optional")}
                 {header("status", "Status")}
-                {header("compute", "Compute")}
+                {header("compute", "Compute", "col-optional")}
                 {header("submitted", "Submitted")}
-                {header("duration", "Duration")}
-                {header("cost", "Cost")}
-                <th>Logs</th>
+                {header("duration", "Duration", "col-optional")}
+                {header("cost", "Cost", "col-optional")}
                 {readOnly ? null : <th>Actions</th>}
               </tr>
             </thead>
@@ -297,43 +346,35 @@ export default function JobStatusPanel({
                 </tr>
               ) : null}
               {rows.map((job) => {
-                const isOpen = openJobIds.has(job.id);
+                const tab = openRows.get(job.id);
+                const isOpen = Boolean(tab);
                 return (
                 <Fragment key={job.id}>
-                <tr className={isOpen ? "row-open" : undefined}>
+                <tr className={isOpen ? "row-open" : undefined} id={`job-row-${job.id}`}>
                   <td className="job-name-cell">
                     <button
                       type="button"
                       className="job-toggle"
                       aria-expanded={isOpen}
                       aria-controls={`job-detail-${job.id}`}
-                      onClick={() => toggleOpen(job.id)}
+                      onClick={() => toggleOpen(job)}
                     >
                       <span className="job-toggle-icon" aria-hidden="true">▸</span>
                       {job.name}
                     </button>
                   </td>
-                  {showOwner ? <td className="mono-sm">{job.ownerUsername}</td> : null}
-                  <td className="repo-cell">{job.source?.label}</td>
+                  {showOwner ? <td className="mono-sm col-optional">{job.ownerUsername}</td> : null}
+                  <td className="repo-cell col-optional">{job.source?.label}</td>
                   <td>
                     <span className={`status-pill ${job.status}`}>
                       <span className="sdot" />
                       {statusLabel(job.status)}
                     </span>
                   </td>
-                  <td>{computeLabel(job)}</td>
+                  <td className="col-optional">{computeLabel(job)}</td>
                   <td className="num" title={submittedTitle(job)}>{formatSubmittedValue(job)}</td>
-                  <td className="num">{job.duration}</td>
-                  <td className="num">{String(job?.cost ?? "").trim() || "$0.00"}</td>
-                  <td>
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      type="button"
-                      onClick={() => setLogJobId(logJobId === job.id ? null : job.id)}
-                    >
-                      {logJobId === job.id ? "Hide logs" : "Logs"}
-                    </button>
-                  </td>
+                  <td className="num col-optional">{job.duration}</td>
+                  <td className="num col-optional">{String(job?.cost ?? "").trim() || "$0.00"}</td>
                   {readOnly ? null : (
                   <td>
                       <>
@@ -358,7 +399,15 @@ export default function JobStatusPanel({
                 {isOpen ? (
                   <tr className="job-detail-row" id={`job-detail-${job.id}`}>
                     <td colSpan={columnCount}>
-                      <JobDetail job={job} result={resultsByJobId.get(job.id)} filesByJobId={filesByJobId} />
+                      <JobDetail
+                        job={job}
+                        result={resultsByJobId.get(job.id)}
+                        filesByJobId={filesByJobId}
+                        tab={tab}
+                        onTab={(next) => setRowTab(job.id, next)}
+                        isPoppedOut={poppedOutJobId === job.id}
+                        onExpand={() => setPoppedOutJobId(job.id)}
+                      />
                     </td>
                   </tr>
                 ) : null}
@@ -369,13 +418,8 @@ export default function JobStatusPanel({
           </table>
         </FocusScrollRegion>
       </div>
-      {logJob ? (
-        <JobLogsPanel
-          id="job-logs"
-          job={logJob}
-          live={logJob.status === "queued" || logJob.status === "running"}
-          onClose={() => setLogJobId(null)}
-        />
+      {poppedOutJob ? (
+        <JobLogDialog job={poppedOutJob} live={isLive(poppedOutJob)} onClose={() => setPoppedOutJobId(null)} />
       ) : null}
       {jobActionError ? <div className="repo-error">{jobActionError}</div> : null}
     </section>

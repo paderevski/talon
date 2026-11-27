@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fetchJobLogs } from "../api/client";
+import { fetchJobLogs, getJobLogDownloadUrl } from "../api/client";
 import { buildStages, isEc2Job, parseTalonLine } from "../utils/jobProgress";
 import { isPageHidden, logPollDelayMs } from "../utils/polling";
 import JobProgress from "./JobProgress";
@@ -12,7 +12,9 @@ const maxLines = 2000;
 // after it ends so the last lines show.
 // EC2 jobs also get a progress timeline built from the job record and the
 // log's "[talon]" step lines (kept apart: the visible log is capped).
-export default function JobLogsPanel({ id, job, live, onClose }) {
+// Shown in a job's open row and, larger, in JobLogDialog; only one at a time,
+// so a log is polled once.
+export default function JobLog({ job, live }) {
   const [lines, setLines] = useState([]);
   const [events, setEvents] = useState([]);
   const [lastOutput, setLastOutput] = useState("");
@@ -138,11 +140,7 @@ export default function JobLogsPanel({ id, job, live, onClose }) {
   }
 
   return (
-    <div className="job-log-panel" id={id}>
-      <div className="job-log-head">
-        <span className="job-log-title">Logs: {job.name}{live ? " (live)" : ""}</span>
-        <button className="btn btn-secondary btn-sm" type="button" onClick={onClose}>Close</button>
-      </div>
+    <div className="job-log">
       {/* EC2 jobs: progress beside the log; the progress sets the height and
           the log scrolls within it. */}
       <div className={progress ? "job-log-split" : undefined}>
@@ -155,5 +153,60 @@ export default function JobLogsPanel({ id, job, live, onClose }) {
       </div>
       {lines.length && message ? <div className="form-hint">{message}</div> : null}
     </div>
+  );
+}
+
+// Download log: the whole log from the server (the view keeps the last
+// lines only, and a very large EC2 log skips its middle).
+export function DownloadLogLink({ job }) {
+  return (
+    <a className="btn btn-secondary btn-sm" href={getJobLogDownloadUrl(job.id)} download>
+      Download log
+    </a>
+  );
+}
+
+// A job's log in a large modal (Expand). Esc or Close returns to the row.
+export function JobLogDialog({ job, live, onClose }) {
+  const dialogRef = useRef(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    // React removes the dialog on close, so the browser does not hand focus
+    // back; return it to what opened the dialog (the row's Expand button).
+    const opener = document.activeElement;
+    if (dialog && !dialog.open) {
+      dialog.showModal();
+    }
+    return () => {
+      dialog?.close();
+      opener?.focus?.();
+    };
+  }, []);
+
+  return (
+    <dialog
+      ref={dialogRef}
+      className="job-log-dialog"
+      aria-label={`Logs for ${job.name}`}
+      onCancel={(event) => {
+        event.preventDefault();
+        onClose();
+      }}
+    >
+      <div className="job-log-dialog-head">
+        <h2 className="job-log-dialog-title">
+          {job.name}
+          {live ? <span className="job-log-live">live</span> : null}
+        </h2>
+        <div className="job-log-tools">
+          <DownloadLogLink job={job} />
+          <button className="btn btn-secondary btn-sm" type="button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </div>
+      <JobLog job={job} live={live} />
+    </dialog>
   );
 }

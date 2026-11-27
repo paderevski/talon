@@ -112,6 +112,10 @@ export function fetchJobFiles(jobId) {
   return getJson(`/api/jobs/${encodeURIComponent(jobId)}/files`);
 }
 
+export function getJobLogDownloadUrl(jobId) {
+  return `/api/jobs/${encodeURIComponent(jobId)}/logs/download`;
+}
+
 export function getJobFileDownloadUrl(jobId, fileName, source) {
   const query = new URLSearchParams({
     name: String(fileName || ""),
