@@ -1,14 +1,36 @@
 # Talon infra - current status
 
-_Last updated: 2026-11-25 (avatars deployed with `main` at `fcd1192`, migration 018 on RDS; money model, UI pass and admin budget panel deployed earlier with `0d7d53d`, migration 017; nav grouped by role and a per-user job-running setting deployed earlier the same day; stale items across this file corrected the same day). Earlier updates: "Latest (2026-11-24)" below, the "Next up" items, and "History" at the end. The account-level items in "Gaps to production" were last reviewed 2026-10-25, with corrections through 2026-11-25._
+_Last updated: 2026-11-27 (UI theme and the jobs view rework deployed with `main` at `8934132`, no migrations; avatars deployed 2026-11-25 with `fcd1192`, migration 018 on RDS; money model, UI pass and admin budget panel deployed earlier with `0d7d53d`, migration 017; nav grouped by role and a per-user job-running setting deployed earlier the same day; stale items across this file corrected the same day). Earlier updates: "Latest (2026-11-24)" below, the "Next up" items, and "History" at the end. The account-level items in "Gaps to production" were last reviewed 2026-10-25, with corrections through 2026-11-25._
 Account IDs, instance ID, and IPs are in `CURRENT_STATUS.local.md`
 (gitignored). Architecture doc: `docs/talon-architecture-summary-v8.docx`
 (local, gitignored; 2026-11-05, describes the system as built, with where
 it differs from v7 and a short what-comes-next; v7 kept for history).
 
+## Latest (2026-11-27)
+
+Servers run `main` at `8934132` (PRs #69 to #73), deployed 2026-11-27 with
+`deploy.sh main --no-migrate` (no migrations; RDS stays at 018). #69 was
+deployed on its own earlier the same day. Frontend only, except the log
+download route in #73.
+
+- **Theme** (#69): one accent, the logo cyan (`--accent*`), replacing
+  Tailwind blue; status colors from an OKLCH palette built on the logo
+  ("Raptor": mint done, orange running/warning, coral failed/error, steel
+  blue queued/info; token names unchanged). Sentence-case labels, less
+  monospace (tabular digits for times and money), header and tab title
+  "Talon". The avatar style select now uses the styled picker.
+- **Users and Classes lists** (#70): tabs aligned with the heading, even
+  filter row, neutral role chips.
+- **Jobs and All jobs** (#71 to #73): status tabs with counts, search,
+  sortable columns. The Results cards are gone: a job's row opens in
+  place with Results (files, error, how it ran) and Logs tabs; Expand
+  shows the log in a large dialog. New `GET /api/jobs/:id/logs/download`
+  streams the whole log as `<job name>.log` (EC2: S3 `logs/job.log`;
+  local: `combined.log`). Checked on the live site 2026-11-27.
+
 ## Latest (2026-11-25)
 
-Servers run `main` at `fcd1192` (PR #68, avatars), deployed 2026-11-25
+Servers ran `main` at `fcd1192` (PR #68, avatars), deployed 2026-11-25
 15:07 (recorded in SSM `/talon/demo/deployed-commit`). Before that, the
 same day: `0d7d53d` (PRs #60, #61, #63, #64 and #66), checked on the live
 site. Migrations 016, 017 and 018 applied on RDS (016 and 018 add nullable
