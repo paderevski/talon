@@ -179,12 +179,12 @@ export default function TeacherStudentsPanel({ authUser, onOpenStudentView, onBu
           </div>
           <div className="result-card">
             <div className="result-job-name">Classes</div>
-            <div className="result-meta-value mono-sm">{roster.classes.length}</div>
+            <div className="result-meta-value num">{roster.classes.length}</div>
             <div className="form-hint">Students: {roster.students.length}</div>
           </div>
           <div className="result-card">
             <div className="result-job-name">Budget pool</div>
-            <div className="result-meta-value mono-sm">{formatDollars(roster.teacher.poolBalance)}</div>
+            <div className="result-meta-value num">{formatDollars(roster.teacher.poolBalance)}</div>
             <div className="form-hint">Add moves money from here to a student; Subtract returns it here</div>
           </div>
           {showOwn ? (

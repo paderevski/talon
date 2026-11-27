@@ -471,7 +471,7 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
           </div>
         </div>
         <div className="form-group form-group-inline">
-          <label className="form-label">Job Name</label>
+          <label className="form-label">Job name</label>
           <input className="form-input" value={form.name} onChange={onJobNameChange} placeholder="e.g. bert-nlp-7" />
         </div>
         <div className="form-group form-group-wide">
@@ -574,7 +574,7 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
           </span>
         </div>
         <div className="form-group form-group-inline">
-          <label className="form-label">Entry Script</label>
+          <label className="form-label">Entry script</label>
           {scriptOptions.length ? (
             <select className="form-select" value={form.entryScript} onChange={update("entryScript")} disabled={isLoadingScripts}>
               {scriptOptions.map((script) => (
@@ -671,7 +671,7 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
             </span>
           </div>
           <div className="form-group">
-            <label className="form-label" htmlFor="job-env-vars">Environment Variables</label>
+            <label className="form-label" htmlFor="job-env-vars">Environment variables</label>
             <textarea
               id="job-env-vars"
               className="form-input form-textarea mono-input"
@@ -684,7 +684,7 @@ export default function NewJobPanel({ onSubmit, defaultRepo, defaultBranch, gith
         </div>
         <div className="form-group full form-actions submit-actions-row">
           <button className="btn btn-primary" type="submit" disabled={submitting || overBudget || nowhereToRun || folderInvalid || (isDrive ? !driveItem || driveItem.kind === "google-doc" : !normalizeRepoInput(activeRepo))}>
-            {submitting ? "Submitting..." : "Submit Job"}
+            {submitting ? "Submitting..." : "Submit job"}
           </button>
         </div>
         {message ? <div className="form-group full"><span className="form-hint">{message}</span></div> : null}

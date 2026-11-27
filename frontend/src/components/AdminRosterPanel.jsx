@@ -80,7 +80,7 @@ export default function AdminRosterPanel({ authUser, refreshKey = 0 }) {
             ].map((stat) => (
               <a key={stat.label} className="result-card stat-card-link" href={stat.href}>
                 <div className="result-job-name">{stat.label}</div>
-                <div className="result-meta-value mono-sm">{stat.count}</div>
+                <div className="result-meta-value num">{stat.count}</div>
               </a>
             ))}
           </div>

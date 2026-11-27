@@ -58,11 +58,11 @@ export default function ResultsPanel({ results, jobs, filesByJobId }) {
             <div className="result-meta">
               <div className="result-meta-row">
                 <span className="result-meta-label">Source</span>
-                <span className="result-meta-value">{result.sourceLabel}</span>
+                <span className="result-meta-value mono-sm">{result.sourceLabel}</span>
               </div>
               <div className="result-meta-row">
                 <span className="result-meta-label">Duration</span>
-                <span className="result-meta-value">{result.duration}</span>
+                <span className="result-meta-value num">{result.duration}</span>
               </div>
               {result.error ? (
                 <div className="result-meta-row">

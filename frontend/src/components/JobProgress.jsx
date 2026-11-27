@@ -61,7 +61,7 @@ export default function JobProgress({ stages, startedAt, live }) {
           )}
         </span>
         {Number.isFinite(total) && total >= 0 ? (
-          <span className="job-progress-total mono-sm">{formatElapsed(total)} since launch</span>
+          <span className="job-progress-total num">{formatElapsed(total)} since launch</span>
         ) : null}
       </div>
       <ol className="job-progress-list">
@@ -79,7 +79,7 @@ export default function JobProgress({ stages, startedAt, live }) {
                   <span className="job-stage-where">{stage.where}</span>
                   <span className="sr-only">{stateLabel[stage.state]}</span>
                   {Number.isFinite(duration) && duration >= 0 && stage.state !== "waiting" ? (
-                    <span className="job-stage-time mono-sm">{formatElapsed(duration)}</span>
+                    <span className="job-stage-time num">{formatElapsed(duration)}</span>
                   ) : null}
                 </div>
                 {stage.state !== "waiting" ? <div className="job-stage-detail">{stage.detail}</div> : null}
@@ -87,7 +87,7 @@ export default function JobProgress({ stages, startedAt, live }) {
                   <ul className="job-stage-steps">
                     {stage.steps.map((step, index) => (
                       <li key={`${index}-${step.text}`} className={stage.state === "active" && index === stage.steps.length - 1 ? "current" : ""}>
-                        <span className="job-step-time mono-sm">
+                        <span className="job-step-time num">
                           +{formatElapsed(step.at - (stage.startedAt ?? step.at))}
                         </span>
                         {step.text}
