@@ -26,7 +26,7 @@ download route in #73.
   place with Results (files, error, how it ran) and Logs tabs; Expand
   shows the log in a large dialog. New `GET /api/jobs/:id/logs/download`
   streams the whole log as `<job name>.log` (EC2: S3 `logs/job.log`;
-  local: `combined.log`). Not yet tried on a real EC2 job.
+  local: `combined.log`). Checked on the live site 2026-11-27.
 
 ## Latest (2026-11-25)
 
