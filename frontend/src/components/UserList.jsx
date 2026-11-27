@@ -144,7 +144,7 @@ export default function UserList({
     <section className="panel admin-section" id={id}>
       <div className="list-controls">
         <input
-          className="form-input"
+          className="form-input list-search"
           placeholder="Search name, username, email or GitHub"
           aria-label={`Search ${title.toLowerCase()}`}
           value={search}
@@ -173,7 +173,7 @@ export default function UserList({
               {rows.length} of {users.length}
             </span>
           ) : null}
-          <button type="button" className="btn btn-primary btn-sm" onClick={() => onAdd(kind)}>
+          <button type="button" className="btn btn-primary" onClick={() => onAdd(kind)}>
             Add {kind}
           </button>
         </div>
@@ -206,7 +206,7 @@ export default function UserList({
                       {user.fullName}
                       <div className="form-hint mono-sm">{user.username}</div>
                       {user.roles.length > 1 ? (
-                        <div>
+                        <div className="role-chips">
                           {user.roles.map((role) => (
                             <span key={role} className={`role-chip ${role}`}>{role}</span>
                           ))}
