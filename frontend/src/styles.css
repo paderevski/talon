@@ -1625,7 +1625,7 @@ th.budget-adjust-cell, td.budget-adjust-cell { width: 1%; padding-left: 0; paddi
   background: #163842;
 }
 .profile-style-row { display: flex; gap: 8px; align-items: center; }
-.profile-style-row .form-input { flex: 1; }
+.profile-style-row .form-select { flex: 1; }
 .avatar-grid {
   display: grid;
   grid-template-columns: repeat(6, 1fr);
