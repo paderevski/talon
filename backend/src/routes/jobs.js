@@ -11,6 +11,7 @@ import {
   getExecutionStatus,
   ec2JobsEnabled,
   getEc2Adapter,
+  openExecutionLog,
   openExecutionOutputFile,
   submitExecution,
 } from "../services/jobExecutionService.js";
@@ -63,6 +64,26 @@ function failWith(res, req, error, fallback, event) {
   }
   log.error(fallback, { event, requestId: req.id, jobId: req.params?.id, err: error });
   return res.status(500).json({ message: fallback });
+}
+
+// Sends a { stream, size } as a download named downloadName. A failure after
+// the headers are out can only end the response.
+function pipeDownload(req, res, job, file, downloadName, failMessage) {
+  res.attachment(downloadName);
+  if (Number.isFinite(file.size)) {
+    res.setHeader("Content-Length", file.size);
+  }
+  file.stream.on("error", (error) => {
+    log.error("download stream failed", { event: "job.download_failed", requestId: req.id, jobId: job.id, err: error });
+    if (res.headersSent) {
+      res.destroy(error);
+    } else {
+      res.removeHeader("Content-Disposition");
+      res.removeHeader("Content-Length");
+      res.status(500).json({ message: failMessage });
+    }
+  });
+  return file.stream.pipe(res);
 }
 
 // Jobs the caller may not see are treated exactly like missing jobs, so
@@ -466,6 +487,22 @@ router.get("/:id/logs", async (req, res) => {
   }
 });
 
+// The whole log as a text file (the logs route above pages it and, for a
+// very large EC2 log, skips the middle). Named after the job.
+router.get("/:id/logs/download", async (req, res) => {
+  const job = await findVisibleJob(req);
+  if (!job || !job.executionRef) {
+    return res.status(404).json({ message: "Log not found" });
+  }
+  try {
+    const file = await openExecutionLog(job.executionRef);
+    const baseName = String(job.name || "job").replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "") || "job";
+    return pipeDownload(req, res, job, file, `${baseName}.log`, "Unable to download log");
+  } catch (error) {
+    return failWith(res, req, error, "Unable to download log", "job.log_download_failed");
+  }
+});
+
 router.get("/:id/files", async (req, res) => {
   const job = await findVisibleJob(req);
   if (!job) {
@@ -509,22 +546,7 @@ router.get("/:id/files/download", async (req, res) => {
   if (job.executionRef.provider === "ec2") {
     try {
       const file = await openExecutionOutputFile(job.executionRef, req.query.name, req.query.source);
-      res.attachment(file.downloadName);
-      if (Number.isFinite(file.size)) {
-        res.setHeader("Content-Length", file.size);
-      }
-      // A failure after the headers are out can only end the response.
-      file.stream.on("error", (error) => {
-        log.error("download stream failed", { event: "job.download_failed", requestId: req.id, jobId: job.id, err: error });
-        if (res.headersSent) {
-          res.destroy(error);
-        } else {
-          res.removeHeader("Content-Disposition");
-          res.removeHeader("Content-Length");
-          res.status(500).json({ message: "Unable to download file" });
-        }
-      });
-      return file.stream.pipe(res);
+      return pipeDownload(req, res, job, file, file.downloadName, "Unable to download file");
     } catch (error) {
       return failWith(res, req, error, "Unable to download file", "job.download_failed");
     }

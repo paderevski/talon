@@ -53,6 +53,17 @@ export async function openExecutionOutputFile(executionRef, name, source) {
   return typeof adapter.openOutputFile === "function" ? adapter.openOutputFile(executionRef, name, source) : null;
 }
 
+// The whole job log as a stream ({ stream, size }), for downloading.
+export async function openExecutionLog(executionRef) {
+  const adapter = adapterFor(executionRef);
+  if (typeof adapter.openLog !== "function") {
+    const error = new Error("Log not found");
+    error.status = 404;
+    throw error;
+  }
+  return adapter.openLog(executionRef);
+}
+
 export function getExecutionProvider() {
   return defaultAdapter.provider;
 }

@@ -616,6 +616,20 @@ export default function createEc2ExecutionAdapter({
     },
 
     // For the download route: a readable stream of one output file.
+    // The whole log as a stream, for downloading (getLogs never reads it whole).
+    async openLog(ref) {
+      const cfg = await getConfig();
+      try {
+        const out = await s3.send(new GetObjectCommand({ Bucket: cfg.bucket, Key: `${prefix(ref)}/logs/job.log` }));
+        return { stream: out.Body, size: out.ContentLength };
+      } catch (error) {
+        if (error?.name === "NoSuchKey") {
+          throw httpError("Log not found", 404);
+        }
+        throw error;
+      }
+    },
+
     async openOutputFile(ref, name, source = "output_dir") {
       const cfg = await getConfig();
       const clean = String(name || "").trim().replace(/\\/g, "/").replace(/^\/+/, "");

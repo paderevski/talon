@@ -2,12 +2,13 @@ import { spawn } from "node:child_process";
 import {
   mkdir,
   readdir,
+  readFile,
   stat,
   writeFile,
   appendFile,
   access,
 } from "node:fs/promises";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, createReadStream } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { assertRepoPath, normalizeFolder } from "talon-shared/repo";
@@ -616,20 +617,53 @@ export default function createLocalExecutionAdapter() {
     async getLogs(executionRef, cursor = 0) {
       const executionId = String(executionRef?.executionId || "").trim();
       const record = executionRecords.get(executionId);
+      const offset = Number.isFinite(cursor) && cursor >= 0 ? cursor : 0;
 
       if (!record) {
-        const error = new Error("Execution not found");
-        error.status = 404;
-        throw error;
+        // After a restart the record is gone but the run's combined.log is
+        // still on disk (the same file Download log serves).
+        const logPath = path.resolve(runsRootDir, executionId, "combined.log");
+        const text = executionId && path.basename(executionId) === executionId
+          ? await readFile(logPath, "utf8").catch(() => null)
+          : null;
+        if (text === null) {
+          const error = new Error("Execution not found");
+          error.status = 404;
+          throw error;
+        }
+        const lines = text.split("\n");
+        if (lines.at(-1) === "") lines.pop();
+        const page = lines.slice(offset);
+        return { lines: page, nextCursor: offset + page.length };
       }
 
-      const offset = Number.isFinite(cursor) && cursor >= 0 ? cursor : 0;
       const lines = record.logLines.slice(offset);
 
       return {
         lines,
         nextCursor: offset + lines.length,
       };
+    },
+
+    // The whole log, from the run's combined.log on disk (kept after the
+    // in-memory record is gone, e.g. after a restart).
+    async openLog(executionRef) {
+      const executionId = String(executionRef?.executionId || "").trim();
+      if (!executionId || path.basename(executionId) !== executionId) {
+        const error = new Error("Log not found");
+        error.status = 404;
+        throw error;
+      }
+      const logPath = path.resolve(runsRootDir, executionId, "combined.log");
+      let info;
+      try {
+        info = await stat(logPath);
+      } catch {
+        const error = new Error("Log not found");
+        error.status = 404;
+        throw error;
+      }
+      return { stream: createReadStream(logPath), size: info.size };
     },
 
     async listOutputFiles(executionRef) {
