@@ -30,14 +30,18 @@
   --accent-glow: rgba(61, 216, 232, 0.08);
   --accent-edge: rgba(61, 216, 232, 0.4);
   --on-accent: #06222a; /* text on a cyan fill */
-  --accent-green: #22c55e;
-  --accent-green-dim: rgba(34, 197, 94, 0.12);
-  --accent-amber: #f59e0b;
-  --accent-amber-dim: rgba(245, 158, 11, 0.12);
-  --accent-red: #ef4444;
-  --accent-red-dim: rgba(239, 68, 68, 0.12);
-  --accent-purple: #a78bfa;
-  --accent-purple-dim: rgba(167, 139, 250, 0.12);
+  /* Status palette "Raptor", built in OKLCH from the logo: cyan feathers and
+     the falcon's orange eye. Token names are by old hue; the roles are what
+     matter: green = done/success, amber = running/warning, red = failed/error,
+     purple = queued/info (a quiet steel blue: waiting is not news). */
+  --accent-green: #65dfaf;  /* oklch(0.82 0.13 165) mint */
+  --accent-green-dim: rgba(101, 223, 175, 0.12);
+  --accent-amber: #ff9b52;  /* oklch(0.78 0.148 55) eye orange */
+  --accent-amber-dim: rgba(255, 155, 82, 0.12);
+  --accent-red: #ee6570;    /* oklch(0.68 0.17 18) coral */
+  --accent-red-dim: rgba(238, 101, 112, 0.12);
+  --accent-purple: #94aec6; /* oklch(0.74 0.045 245) steel blue */
+  --accent-purple-dim: rgba(148, 174, 198, 0.12);
 }
 
 * { box-sizing: border-box; }
@@ -672,6 +676,7 @@ td:last-child, th:last-child { border-right: none; }
 .budget-panel-preview, .user-menu-budget-value, .nav-count, .view-tab-count {
   font-variant-numeric: tabular-nums;
 }
+.meta-cell { color: var(--text-secondary); }
 
 .status-pill {
   display: inline-flex;
